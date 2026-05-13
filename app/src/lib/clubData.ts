@@ -214,6 +214,70 @@ const KEYS = {
   chatMembers: 'dlbc_chat_members',
   stripeLink: 'dlbc_stripe_payment_link',
   fixtures: 'dlbc_fixtures',
+  membershipFees: 'dlbc_membership_fees',
+}
+
+/* ─────────────────── Membership Fees (per age group) ─────────────────── */
+// The manager can configure a monthly membership fee per age group. Used by
+// the Members view when recording a cash payment.
+export type MembershipFeeMap = Record<string, number>
+
+const defaultMembershipFees: MembershipFeeMap = {
+  u10: 30, u12: 35, u14: 40, u16: 45, u18: 45, u20: 50, senior: 50,
+}
+
+export const getMembershipFees = () =>
+  getStore<MembershipFeeMap>(KEYS.membershipFees, defaultMembershipFees)
+export const setMembershipFees = (v: MembershipFeeMap) =>
+  setStore(KEYS.membershipFees, v)
+
+// Returns the monthly fee for a given player based on the first team they
+// belong to. Falls back to their stored `amount` or 50.
+export function getMonthlyFeeForPlayer(playerId: string): number {
+  const player = getPlayers().find((p) => p.id === playerId)
+  if (!player) return 50
+  const team = getTeams().find((t) => player.teamIds.includes(t.id))
+  if (!team) return player.amount || 50
+  const fees = getMembershipFees()
+  return fees[team.ageGroupId] ?? player.amount ?? 50
+}
+
+// Has the player paid for the current month? True if their last successful
+// payment falls within this calendar month.
+export function hasPaidThisMonth(playerId: string, now = new Date()): boolean {
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  return getPayments().some(
+    (p) => p.playerId === playerId && p.status === 'succeeded' && p.date.startsWith(monthKey),
+  )
+}
+
+// Records a cash payment for the given player and flips their status to Paid.
+export function recordCashPayment(playerId: string, amount?: number): Payment | null {
+  const players = getPlayers()
+  const player = players.find((p) => p.id === playerId)
+  if (!player) return null
+  const finalAmount = amount ?? getMonthlyFeeForPlayer(playerId)
+  const payment: Payment = {
+    id: `pay-${Date.now().toString(36)}`,
+    playerId,
+    playerName: player.name,
+    amount: finalAmount,
+    status: 'succeeded',
+    date: new Date().toISOString().split('T')[0],
+    method: 'Cash',
+    plan: player.paymentPlan === 'None' ? 'Monthly' : player.paymentPlan,
+  }
+  const payments = getPayments()
+  payments.unshift(payment)
+  setPayments(payments)
+  // Flip the player's status to Paid and update their last payment date.
+  const updated = players.map((p) =>
+    p.id === playerId
+      ? { ...p, status: 'Paid' as const, lastPaymentDate: payment.date, amount: finalAmount }
+      : p,
+  )
+  setPlayers(updated)
+  return payment
 }
 
 /* ─────────────────── Public Fixtures (with Results) ─────────────────── */
@@ -235,6 +299,12 @@ export interface ClubFixture {
   competition: string
   ticketLink?: string
   soldOut?: boolean
+  // Ticket pricing — set per fixture from the manager dashboard. When
+  // `ticketsEnabled` is true and a price > 0, the public site shows a
+  // "Buy ticket" button that routes through Stripe (or cash fallback).
+  ticketsEnabled?: boolean
+  adultPrice?: number
+  kidPrice?: number
   result?: FixtureResult
 }
 

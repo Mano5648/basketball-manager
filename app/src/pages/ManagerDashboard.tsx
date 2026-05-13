@@ -107,6 +107,12 @@ import {
   deleteFixture,
   setFixtureResult,
   type ClubFixture,
+  getMembershipFees,
+  setMembershipFees,
+  type MembershipFeeMap,
+  hasPaidThisMonth,
+  recordCashPayment,
+  getMonthlyFeeForPlayer,
   type Product,
   type ChatMessage,
 } from '@/lib/clubData'
@@ -456,6 +462,7 @@ function TopBar({
   onSearch,
   onJumpToMembers,
   onQuickAction,
+  showSearch,
 }: {
   title: string
   onMenuToggle: () => void
@@ -466,6 +473,7 @@ function TopBar({
   onSearch: (s: string) => void
   onJumpToMembers: () => void
   onQuickAction: (action: 'add-member' | 'add-payment' | 'send-message' | 'add-fixture') => void
+  showSearch: boolean
 }) {
   const [showQuickActions, setShowQuickActions] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
@@ -485,17 +493,19 @@ function TopBar({
       </div>
 
       <div className="hidden md:flex items-center">
-        <div className="relative">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => onSearch(e.target.value)}
-            onFocus={onJumpToMembers}
-            placeholder="Search members..."
-            className="w-64 lg:w-96 bg-white/5 border border-[#334155] rounded-lg pl-10 pr-4 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 transition-all duration-200"
-          />
-        </div>
+        {showSearch && (
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => onSearch(e.target.value)}
+              onFocus={onJumpToMembers}
+              placeholder="Search members..."
+              className="w-64 lg:w-96 bg-white/5 border border-[#334155] rounded-lg pl-10 pr-4 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 transition-all duration-200"
+            />
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-3">
@@ -738,6 +748,78 @@ function DashboardView({ data, onNavigate }: { data: ReturnType<typeof useLiveDa
           </div>
         </div>
       </div>
+
+      <UnpaidThisMonthPanel data={data} onNavigate={onNavigate} />
+    </div>
+  )
+}
+
+/* ─── Dashboard widget: members who haven't paid this month ─── */
+function UnpaidThisMonthPanel({
+  data,
+  onNavigate,
+}: {
+  data: ReturnType<typeof useLiveData>
+  onNavigate: (view: string) => void
+}) {
+  const { players, refresh } = data
+  const [unpaid, setUnpaid] = useState(() => players.filter((p) => !hasPaidThisMonth(p.id)))
+
+  useEffect(() => {
+    setUnpaid(players.filter((p) => !hasPaidThisMonth(p.id)))
+  }, [players])
+
+  const handleMarkPaid = (playerId: string) => {
+    recordCashPayment(playerId)
+    refresh()
+  }
+
+  if (unpaid.length === 0) {
+    return (
+      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6 flex items-center gap-3">
+        <CheckCircle size={20} className="text-green-400" />
+        <p className="font-inter text-sm text-slate-300">Every member has paid this month. Nice work.</p>
+      </div>
+    )
+  }
+
+  const monthLabel = new Date().toLocaleDateString('en-IE', { month: 'long', year: 'numeric' })
+
+  return (
+    <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl">
+      <div className="flex items-center justify-between p-6 pb-4">
+        <div>
+          <h3 className="font-inter font-semibold text-lg text-white">Unpaid this month</h3>
+          <p className="font-inter text-xs text-slate-500 mt-0.5">{unpaid.length} member{unpaid.length !== 1 ? 's' : ''} outstanding for {monthLabel}</p>
+        </div>
+        <button
+          onClick={() => onNavigate('payments')}
+          className="font-inter text-xs text-blue-400 hover:text-blue-300"
+        >
+          View all payments →
+        </button>
+      </div>
+      <div className="divide-y divide-white/[0.06] max-h-96 overflow-y-auto">
+        {unpaid.map((p) => (
+          <div key={p.id} className="flex items-center gap-3 px-6 py-3 hover:bg-white/[0.03]">
+            <InitialsAvatar name={p.name} size={32} />
+            <div className="flex-1 min-w-0">
+              <p className="font-inter font-medium text-sm text-white truncate">{p.name}</p>
+              <p className="font-inter text-xs text-slate-500 truncate">
+                €{getMonthlyFeeForPlayer(p.id)} · last paid {p.lastPaymentDate || '—'}
+              </p>
+            </div>
+            <StatusBadge status={p.status} />
+            <button
+              onClick={() => handleMarkPaid(p.id)}
+              className="ml-2 inline-flex items-center gap-1 bg-green-500/10 hover:bg-green-500/20 text-green-300 border border-green-500/20 font-inter font-semibold text-xs px-3 py-1.5 rounded transition-colors"
+              title="Record a cash payment for this month"
+            >
+              <Banknote size={14} /> Mark Paid (Cash)
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -967,6 +1049,21 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2">
+                      {!hasPaidThisMonth(member.id) && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (confirm(`Record a cash payment of €${getMonthlyFeeForPlayer(member.id)} for ${member.name}?`)) {
+                              recordCashPayment(member.id)
+                              data.refresh()
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 bg-green-500/10 hover:bg-green-500/20 text-green-300 border border-green-500/20 font-inter font-semibold text-xs px-2 py-1 rounded transition-colors"
+                          title="Record a cash payment for this month"
+                        >
+                          <Banknote size={12} /> Mark Paid
+                        </button>
+                      )}
                       <button
                         onClick={(e) => { e.stopPropagation(); openEdit(member) }}
                         className="text-slate-400 hover:text-blue-400 transition-colors"
@@ -1723,10 +1820,46 @@ function FixtureForm({ fixture, onClose, onSave }: { fixture: ClubFixture | null
             <input type="text" value={form.competition} onChange={(e) => setForm({ ...form, competition: e.target.value })} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500" />
           ))}
         </div>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" checked={!!form.soldOut} onChange={(e) => setForm({ ...form, soldOut: e.target.checked })} className="w-4 h-4 accent-blue-500" />
-          <span className="font-inter text-sm text-slate-300">Mark as sold out</span>
-        </label>
+        <div className="border-t border-white/[0.06] pt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="font-inter font-semibold text-sm text-white">Tickets</p>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!form.ticketsEnabled}
+                onChange={(e) => setForm({ ...form, ticketsEnabled: e.target.checked })}
+                className="w-4 h-4 accent-blue-500"
+              />
+              <span className="font-inter text-xs text-slate-300">Sell tickets for this match</span>
+            </label>
+          </div>
+          {form.ticketsEnabled && (
+            <div className="grid grid-cols-2 gap-3">
+              {formField('Adult price (€)', (
+                <input
+                  type="number"
+                  min={0}
+                  value={form.adultPrice ?? 0}
+                  onChange={(e) => setForm({ ...form, adultPrice: Number(e.target.value) })}
+                  className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
+                />
+              ))}
+              {formField('Kid price (€)', (
+                <input
+                  type="number"
+                  min={0}
+                  value={form.kidPrice ?? 0}
+                  onChange={(e) => setForm({ ...form, kidPrice: Number(e.target.value) })}
+                  className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
+                />
+              ))}
+            </div>
+          )}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={!!form.soldOut} onChange={(e) => setForm({ ...form, soldOut: e.target.checked })} className="w-4 h-4 accent-blue-500" />
+            <span className="font-inter text-sm text-slate-300">Mark as sold out</span>
+          </label>
+        </div>
         <div className="flex justify-end gap-2 pt-2">
           <button onClick={onClose} className="bg-white/5 border border-white/[0.06] text-slate-300 font-inter text-sm px-4 py-2 rounded-lg hover:bg-white/10">Cancel</button>
           <button onClick={() => valid && onSave(form)} disabled={!valid} className="bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white font-inter font-semibold text-sm px-4 py-2 rounded-lg">Save</button>
@@ -2934,6 +3067,7 @@ function SettingsView() {
   }
 
   const isValid = !stripeLink.trim() || /^https:\/\/(buy\.stripe\.com|.*\.stripe\.com)\//i.test(stripeLink.trim())
+  const isTestMode = /\/test_/i.test(stripeLink.trim()) || /\btest\b/i.test(stripeLink.trim())
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -2982,12 +3116,83 @@ function SettingsView() {
           )}
         </div>
 
-        <div className="mt-6 bg-amber-500/5 border border-amber-500/20 rounded-lg p-4">
+        {isTestMode && (
+          <div className="mt-4 bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 flex items-start gap-3">
+            <span className="bg-amber-400 text-deep-navy text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded">Test mode</span>
+            <p className="font-inter text-xs text-blue-200/90">
+              This is a Stripe test Payment Link — real money won't be charged. Use Stripe's test card <span className="font-mono">4242 4242 4242 4242</span> with any future expiry and any CVC.
+            </p>
+          </div>
+        )}
+
+        <div className="mt-4 bg-amber-500/5 border border-amber-500/20 rounded-lg p-4">
           <p className="font-inter text-xs text-amber-200/90">
             <strong className="text-amber-200">Note:</strong> Stripe Payment Links accept a fixed amount per link. For per-item pricing (e.g. different ticket prices), create one Payment Link per amount and switch the URL above before publishing that fixture, or upgrade to a backend Checkout Session in the future.
           </p>
         </div>
       </div>
+
+      <MembershipFeesPanel />
+    </div>
+  )
+}
+
+/* ─── Membership Fees (per age group) ─── */
+function MembershipFeesPanel() {
+  const [fees, setFeesState] = useState<MembershipFeeMap>(() => getMembershipFees())
+  const [saved, setSaved] = useState(false)
+
+  const labels: Array<[string, string]> = [
+    ['u10', 'U10'], ['u12', 'U12'], ['u14', 'U14'], ['u16', 'U16'],
+    ['u18', 'U18'], ['u20', 'U20'], ['senior', 'Senior'],
+  ]
+
+  const update = (key: string, value: number) => {
+    setFeesState((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const save = () => {
+    setMembershipFees(fees)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 1500)
+  }
+
+  return (
+    <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6 md:p-8">
+      <div className="flex items-start gap-3 mb-5">
+        <Euro size={22} className="text-blue-400 mt-1 shrink-0" />
+        <div>
+          <h3 className="font-inter font-semibold text-lg text-white">Monthly Membership Fees</h3>
+          <p className="font-inter text-sm text-slate-400 mt-1">
+            Set the monthly fee for each age group. Used when recording cash payments for members from the dashboard.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {labels.map(([key, label]) => (
+          <div key={key}>
+            <label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-1">{label}</label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 font-inter text-sm">€</span>
+              <input
+                type="number"
+                min={0}
+                value={fees[key] ?? 0}
+                onChange={(e) => update(key, Number(e.target.value))}
+                className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg pl-7 pr-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <button
+        onClick={save}
+        className="mt-5 inline-flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-5 py-2.5 rounded-lg transition-colors"
+      >
+        {saved ? <><Check size={16} /> Saved</> : 'Save Fees'}
+      </button>
     </div>
   )
 }
@@ -3110,6 +3315,7 @@ export default function ManagerDashboard() {
         onClearNotifications={() => setDismissedIds(new Set(derivedNotifications.map((n) => n.id)))}
         search={globalSearch}
         onSearch={setGlobalSearch}
+        showSearch={activeView === 'members'}
         onJumpToMembers={() => setActiveView('members')}
         onQuickAction={(action) => {
           if (action === 'add-member') { setActiveView('members'); window.dispatchEvent(new Event('dlbc-open-add-member')) }

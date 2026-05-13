@@ -305,11 +305,19 @@ export default function Fixtures() {
     )
   })()
 
-  const filteredFixtures = fixtures.filter((f) => {
-    if (filter === 'home') return f.venue === 'Home'
-    if (filter === 'away') return f.venue === 'Away'
-    return true
-  })
+  const filteredFixtures = fixtures
+    .filter((f) => {
+      if (filter === 'home') return f.venue === 'Home'
+      if (filter === 'away') return f.venue === 'Away'
+      return true
+    })
+    // Sort latest first (most recent date at the top).
+    .slice()
+    .sort((a, b) => {
+      const da = new Date(`${a.monthLong} ${a.date} ${a.time}`).getTime()
+      const db = new Date(`${b.monthLong} ${b.date} ${b.time}`).getTime()
+      return db - da
+    })
 
   const grouped = filteredFixtures.reduce<Record<string, Fixture[]>>((acc, f) => {
     if (!acc[f.monthLong]) acc[f.monthLong] = []

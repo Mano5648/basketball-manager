@@ -7,7 +7,7 @@ import {
   Ticket, CreditCard, Banknote, CheckCircle,
 } from 'lucide-react'
 import {
-  setTicketPrice, type TicketPrice, getTicketPrice,
+  type TicketPrice,
   getPayments, setPayments, type Payment, addTicketPurchase,
   buildStripeCheckoutUrl,
   getFixtures, type ClubFixture,
@@ -459,7 +459,7 @@ function TeamsSection() {
 }
 
 /* ─────────────────────── Schedule Section ─────────────────────── */
-function ScheduleSection({ isManager }: { isManager: boolean }) {
+function ScheduleSection() {
   const [activeTab, setActiveTab] = useState<'upcoming' | 'results'>('upcoming')
   const [allFixtures, setAllFixtures] = useState<ClubFixture[]>(() => getFixtures())
   const headerReveal = useScrollReveal()
@@ -482,16 +482,21 @@ function ScheduleSection({ isManager }: { isManager: boolean }) {
   }
 
   // Public fixtures show the next 5 upcoming and most recent 4 completed.
+  // Future fixtures listed soonest-first.
   const fixtures = allFixtures
     .filter((f) => !f.result)
     .sort((a, b) => `${a.date}T${a.time}`.localeCompare(`${b.date}T${b.time}`))
     .slice(0, 5)
     .map((f) => ({
       ...toRowParts(f),
+      id: f.id,
       opponent: f.opponent,
       venue: `${f.venue} — ${f.venue === 'Home' ? 'Coláiste Bríde' : f.opponent + ' Arena'}`,
       time: f.time,
       soldOut: !!f.soldOut,
+      ticketsEnabled: !!f.ticketsEnabled,
+      adultPrice: f.adultPrice ?? 0,
+      kidPrice: f.kidPrice ?? 0,
     }))
 
   const results = allFixtures
@@ -510,7 +515,6 @@ function ScheduleSection({ isManager }: { isManager: boolean }) {
       }
     })
 
-  const getFixtureKey = (f: typeof fixtures[0]) => `${f.date}-${f.month}-${f.opponent}`
 
   return (
     <>
@@ -564,15 +568,18 @@ function ScheduleSection({ isManager }: { isManager: boolean }) {
 
           {/* List */}
           <div ref={listReveal.ref} className="space-y-4">
+            {activeTab === 'upcoming' && fixtures.length === 0 && (
+              <p className="text-center font-inter text-sm text-slate-500 py-8">
+                No upcoming fixtures right now — check back soon.
+              </p>
+            )}
             {activeTab === 'upcoming' &&
               fixtures.map((f, i) => (
                 <FixtureRow
-                  key={`${f.date}-${f.month}-${f.opponent}`}
+                  key={f.id}
                   fixture={f}
                   index={i}
                   listVisible={listReveal.visible}
-                  isManager={isManager}
-                  fixtureKey={getFixtureKey(f)}
                 />
               ))}
 
@@ -642,22 +649,25 @@ function FixtureRow({
   fixture,
   index,
   listVisible,
-  isManager,
-  fixtureKey,
 }: {
-  fixture: { day: string; date: string; month: string; opponent: string; venue: string; time: string; soldOut: boolean }
+  fixture: {
+    id: string; day: string; date: string; month: string; opponent: string;
+    venue: string; time: string; soldOut: boolean;
+    ticketsEnabled: boolean; adultPrice: number; kidPrice: number;
+  }
   index: number
   listVisible: boolean
-  isManager: boolean
-  fixtureKey: string
 }) {
   const [ticketModalOpen, setTicketModalOpen] = useState(false)
-  const [price, setPrice] = useState<TicketPrice | null>(() => getTicketPrice(fixtureKey))
 
-  const handlePriceUpdate = (adultPrice: number, kidPrice: number, enabled: boolean) => {
-    setTicketPrice(fixtureKey, adultPrice, kidPrice, enabled)
-    setPrice(getTicketPrice(fixtureKey))
+  // Build a TicketPrice-shaped object from the fixture for the TicketModal.
+  const price: TicketPrice = {
+    fixtureKey: fixture.id,
+    adultPrice: fixture.adultPrice,
+    kidPrice: fixture.kidPrice,
+    enabled: fixture.ticketsEnabled,
   }
+  const showBuy = price.enabled && (price.adultPrice > 0 || price.kidPrice > 0)
 
   // Fixture dates are short-form (e.g. "Jan 18"); assume current year and skip
   // fixtures whose tip-off time has already passed.
@@ -665,8 +675,6 @@ function FixtureRow({
     const year = new Date().getFullYear()
     const d = new Date(`${fixture.month} ${fixture.date} ${year} ${fixture.time}`)
     if (isNaN(d.getTime())) return false
-    // If the parsed date is more than 6 months in the future, it was probably
-    // last season — treat as past.
     const sixMonths = 1000 * 60 * 60 * 24 * 183
     if (d.getTime() - Date.now() > sixMonths) return true
     return d.getTime() < Date.now()
@@ -706,112 +714,45 @@ function FixtureRow({
           </p>
         </div>
 
-        {/* Manager: editable prices */}
-        {isManager && (
-          <ManagerPriceEditor
-            fixtureKey={fixtureKey}
-            currentPrice={price}
-            onUpdate={handlePriceUpdate}
-          />
-        )}
-
-        {/* Public: ticket button */}
-        {!isManager && (
-          <div className="shrink-0">
-            {isPast ? (
-              <span className="inline-block font-inter font-semibold text-xs uppercase tracking-widest text-slate-500 bg-slate-100 px-3 py-1 rounded">
-                Tickets Closed
-              </span>
-            ) : fixture.soldOut ? (
-              <span className="inline-block font-inter font-semibold text-xs uppercase tracking-widest text-red-500 bg-red-50 px-3 py-1 rounded">
-                SOLD OUT
-              </span>
-            ) : price && price.enabled && (price.adultPrice > 0 || price.kidPrice > 0) ? (
-              <button
-                onClick={() => setTicketModalOpen(true)}
-                className="bg-electric-blue text-white font-inter font-semibold text-sm uppercase tracking-widest px-4 py-2 rounded hover:bg-blue-400 transition-all duration-150 inline-flex items-center gap-2"
-              >
-                <Ticket size={16} />
-                {price.adultPrice > 0 && `Adult €${price.adultPrice}`}
-                {price.adultPrice > 0 && price.kidPrice > 0 && ' · '}
-                {price.kidPrice > 0 && `Kid €${price.kidPrice}`}
-              </button>
-            ) : (
-              <span className="inline-block font-inter font-semibold text-xs uppercase tracking-widest text-slate-400 bg-slate-100 px-3 py-1 rounded">
-                Tickets not yet available
-              </span>
-            )}
-          </div>
-        )}
+        <div className="shrink-0">
+          {isPast ? (
+            <span className="inline-block font-inter font-semibold text-xs uppercase tracking-widest text-slate-500 bg-slate-100 px-3 py-1 rounded">
+              Tickets Closed
+            </span>
+          ) : fixture.soldOut ? (
+            <span className="inline-block font-inter font-semibold text-xs uppercase tracking-widest text-red-500 bg-red-50 px-3 py-1 rounded">
+              SOLD OUT
+            </span>
+          ) : showBuy ? (
+            <button
+              onClick={() => setTicketModalOpen(true)}
+              className="bg-electric-blue text-white font-inter font-semibold text-sm uppercase tracking-widest px-4 py-2 rounded hover:bg-blue-400 transition-all duration-150 inline-flex items-center gap-2"
+            >
+              <Ticket size={16} />
+              {price.adultPrice > 0 && `Adult €${price.adultPrice}`}
+              {price.adultPrice > 0 && price.kidPrice > 0 && ' · '}
+              {price.kidPrice > 0 && `Kid €${price.kidPrice}`}
+            </button>
+          ) : (
+            <span className="inline-block font-inter font-semibold text-xs uppercase tracking-widest text-slate-400 bg-slate-100 px-3 py-1 rounded">
+              Tickets not yet available
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* Ticket Purchase Modal */}
-      {ticketModalOpen && price && (
+      {ticketModalOpen && (
         <TicketModal
           fixtureName={`Dublin Lions vs ${fixture.opponent}`}
           fixtureDate={`${fixture.day} ${fixture.date} ${fixture.month}`}
           venue={fixture.venue}
           time={fixture.time}
           price={price}
-          fixtureKey={fixtureKey}
+          fixtureKey={fixture.id}
           onClose={() => setTicketModalOpen(false)}
         />
       )}
     </>
-  )
-}
-
-/* ─── Manager Price Editor ─── */
-function ManagerPriceEditor({
-  fixtureKey: _fixtureKey,
-  currentPrice,
-  onUpdate,
-}: {
-  fixtureKey: string
-  currentPrice: TicketPrice | null
-  onUpdate: (adultPrice: number, kidPrice: number, enabled: boolean) => void
-}) {
-  const [adult, setAdult] = useState(currentPrice?.adultPrice ?? 0)
-  const [kid, setKid] = useState(currentPrice?.kidPrice ?? 0)
-  const [enabled, setEnabled] = useState(currentPrice?.enabled ?? false)
-
-  return (
-    <div className="shrink-0 flex flex-col sm:flex-row items-start sm:items-center gap-2">
-      <label className="flex items-center gap-2 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => {
-            setEnabled(e.target.checked)
-            onUpdate(adult, kid, e.target.checked)
-          }}
-          className="w-4 h-4 accent-electric-blue"
-        />
-        <span className="font-inter text-xs text-slate-500">Enable</span>
-      </label>
-      <div className="flex items-center gap-2">
-        <span className="font-inter text-xs text-slate-400">Adult €</span>
-        <input
-          type="number"
-          min={0}
-          value={adult}
-          onChange={(e) => setAdult(Number(e.target.value))}
-          onBlur={() => onUpdate(adult, kid, enabled)}
-          className="w-16 border border-slate-300 rounded px-2 py-1 font-inter text-sm text-deep-navy focus:border-electric-blue outline-none"
-        />
-      </div>
-      <div className="flex items-center gap-2">
-        <span className="font-inter text-xs text-slate-400">Kid €</span>
-        <input
-          type="number"
-          min={0}
-          value={kid}
-          onChange={(e) => setKid(Number(e.target.value))}
-          onBlur={() => onUpdate(adult, kid, enabled)}
-          className="w-16 border border-slate-300 rounded px-2 py-1 font-inter text-sm text-deep-navy focus:border-electric-blue outline-none"
-        />
-      </div>
-    </div>
   )
 }
 
@@ -1525,30 +1466,12 @@ function ContactSection() {
 
 /* ─────────────────────── Home Page ─────────────────────── */
 export default function Home() {
-  const [isManager, setIsManager] = useState(false)
-
-  useEffect(() => {
-    const check = () => {
-      try {
-        const raw = localStorage.getItem('dlbc_user')
-        setIsManager(!!raw && JSON.parse(raw).role === 'manager')
-      } catch { setIsManager(false) }
-    }
-    check()
-    window.addEventListener('storage', check)
-    window.addEventListener('dlbc-auth-change', check)
-    return () => {
-      window.removeEventListener('storage', check)
-      window.removeEventListener('dlbc-auth-change', check)
-    }
-  }, [])
-
   return (
     <div>
       <HeroSection />
       <AboutSection />
       <TeamsSection />
-      <ScheduleSection isManager={isManager} />
+      <ScheduleSection />
       <GallerySection />
       <ContactSection />
     </div>
