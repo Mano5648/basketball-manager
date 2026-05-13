@@ -213,6 +213,63 @@ const KEYS = {
   chatMessages: 'dlbc_chat_messages',
   chatMembers: 'dlbc_chat_members',
   stripeLink: 'dlbc_stripe_payment_link',
+  fixtures: 'dlbc_fixtures',
+}
+
+/* ─────────────────── Public Fixtures (with Results) ─────────────────── */
+// A ClubFixture represents a single competitive match shown on the public
+// site. The manager can add, edit, and enter results from the dashboard.
+
+export interface FixtureResult {
+  lionsScore: number
+  opponentScore: number
+  mvp?: string
+}
+
+export interface ClubFixture {
+  id: string
+  date: string        // ISO date — YYYY-MM-DD
+  time: string        // 24h time — HH:MM
+  opponent: string
+  venue: 'Home' | 'Away'
+  competition: string
+  ticketLink?: string
+  soldOut?: boolean
+  result?: FixtureResult
+}
+
+export const defaultFixtures: ClubFixture[] = [
+  { id: 'fx1', date: '2025-01-11', time: '18:00', opponent: 'Killester', venue: 'Away', competition: "Domino's Division 1", result: { lionsScore: 82, opponentScore: 74, mvp: 'Kevin Anyanwu' } },
+  { id: 'fx2', date: '2025-01-18', time: '19:00', opponent: 'Neptune BC', venue: 'Home', competition: "Domino's Division 1" },
+  { id: 'fx3', date: '2025-01-25', time: '18:30', opponent: 'UCD Marian', venue: 'Away', competition: "Domino's Division 1" },
+  { id: 'fx4', date: '2025-02-01', time: '19:00', opponent: 'Belfast Star', venue: 'Home', competition: "Domino's Division 1" },
+  { id: 'fx5', date: '2025-02-08', time: '18:30', opponent: 'DCU Saints', venue: 'Away', competition: "Domino's Division 1" },
+  { id: 'fx6', date: '2025-02-15', time: '19:00', opponent: 'Templeogue', venue: 'Home', competition: "Domino's Division 1" },
+  { id: 'fx7', date: '2025-02-22', time: '18:00', opponent: 'Éanna', venue: 'Away', competition: "Domino's Division 1" },
+]
+
+export const getFixtures = () => getStore<ClubFixture[]>(KEYS.fixtures, defaultFixtures)
+export const setFixtures = (v: ClubFixture[]) => setStore(KEYS.fixtures, v)
+
+export function upsertFixture(fixture: ClubFixture) {
+  const list = getFixtures()
+  const idx = list.findIndex((f) => f.id === fixture.id)
+  if (idx === -1) list.push(fixture)
+  else list[idx] = fixture
+  setFixtures(list)
+}
+
+export function deleteFixture(id: string) {
+  setFixtures(getFixtures().filter((f) => f.id !== id))
+}
+
+export function setFixtureResult(id: string, result: FixtureResult | null) {
+  const list = getFixtures()
+  const idx = list.findIndex((f) => f.id === id)
+  if (idx === -1) return
+  if (result == null) delete list[idx].result
+  else list[idx].result = result
+  setFixtures(list)
 }
 
 /* ─────────────────── Stripe Payment Link ─────────────────── */

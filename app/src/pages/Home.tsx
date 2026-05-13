@@ -10,6 +10,7 @@ import {
   setTicketPrice, type TicketPrice, getTicketPrice,
   getPayments, setPayments, type Payment, addTicketPurchase,
   buildStripeCheckoutUrl,
+  getFixtures, type ClubFixture,
 } from '@/lib/clubData'
 
 /* ─────────────────────── Scroll Reveal Hook ─────────────────────── */
@@ -460,23 +461,54 @@ function TeamsSection() {
 /* ─────────────────────── Schedule Section ─────────────────────── */
 function ScheduleSection({ isManager }: { isManager: boolean }) {
   const [activeTab, setActiveTab] = useState<'upcoming' | 'results'>('upcoming')
+  const [allFixtures, setAllFixtures] = useState<ClubFixture[]>(() => getFixtures())
   const headerReveal = useScrollReveal()
   const listReveal = useScrollReveal()
 
-  const fixtures = [
-    { day: 'SAT', date: '18', month: 'Jan', opponent: 'Neptune BC', venue: 'Home — Coláiste Bríde', time: '19:00', soldOut: false },
-    { day: 'SAT', date: '25', month: 'Jan', opponent: 'UCD Marian', venue: 'Away — UCD Sports Centre', time: '18:30', soldOut: false },
-    { day: 'SAT', date: '01', month: 'Feb', opponent: 'Belfast Star', venue: 'Home — Coláiste Bríde', time: '19:00', soldOut: false },
-    { day: 'SAT', date: '08', month: 'Feb', opponent: 'Templeogue', venue: 'Away — Oblate Hall', time: '18:00', soldOut: false },
-    { day: 'SAT', date: '15', month: 'Feb', opponent: 'Killester', venue: 'Home — Coláiste Bríde', time: '19:00', soldOut: false },
-  ]
+  useEffect(() => {
+    const sync = () => setAllFixtures(getFixtures())
+    const h = (e: StorageEvent) => { if (e.key === 'dlbc_fixtures') sync() }
+    window.addEventListener('storage', h)
+    return () => window.removeEventListener('storage', h)
+  }, [])
 
-  const results = [
-    { day: 'SAT', date: '14', month: 'Dec', opponent: 'Portlaoise Panthers', venue: 'Home — Coláiste Bríde', result: 'W 78-65' },
-    { day: 'SAT', date: '07', month: 'Dec', opponent: 'Moycullen', venue: 'Away — Kingfisher', result: 'L 82-88' },
-    { day: 'SAT', date: '30', month: 'Nov', opponent: 'Ballincollig', venue: 'Home — Coláiste Bríde', result: 'W 91-74' },
-    { day: 'SAT', date: '23', month: 'Nov', opponent: 'Limerick Celtics', venue: 'Away — Crescent', result: 'W 85-79' },
-  ]
+  const toRowParts = (f: ClubFixture) => {
+    const d = new Date(`${f.date}T${f.time || '00:00'}`)
+    return {
+      day: d.toLocaleDateString('en-IE', { weekday: 'short' }).toUpperCase(),
+      date: String(d.getDate()).padStart(2, '0'),
+      month: d.toLocaleDateString('en-IE', { month: 'short' }),
+    }
+  }
+
+  // Public fixtures show the next 5 upcoming and most recent 4 completed.
+  const fixtures = allFixtures
+    .filter((f) => !f.result)
+    .sort((a, b) => `${a.date}T${a.time}`.localeCompare(`${b.date}T${b.time}`))
+    .slice(0, 5)
+    .map((f) => ({
+      ...toRowParts(f),
+      opponent: f.opponent,
+      venue: `${f.venue} — ${f.venue === 'Home' ? 'Coláiste Bríde' : f.opponent + ' Arena'}`,
+      time: f.time,
+      soldOut: !!f.soldOut,
+    }))
+
+  const results = allFixtures
+    .filter((f) => !!f.result)
+    .sort((a, b) => `${b.date}T${b.time}`.localeCompare(`${a.date}T${a.time}`))
+    .slice(0, 4)
+    .map((f) => {
+      const parts = toRowParts(f)
+      const r = f.result!
+      const tag = r.lionsScore > r.opponentScore ? 'W' : 'L'
+      return {
+        ...parts,
+        opponent: f.opponent,
+        venue: `${f.venue} — ${f.venue === 'Home' ? 'Coláiste Bríde' : f.opponent + ' Arena'}`,
+        result: `${tag} ${r.lionsScore}-${r.opponentScore}`,
+      }
+    })
 
   const getFixtureKey = (f: typeof fixtures[0]) => `${f.date}-${f.month}-${f.opponent}`
 
@@ -1311,6 +1343,11 @@ function ContactSection() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    // Open the user's mail client with the message pre-populated so the
+    // form actually delivers something instead of pretending to.
+    const body = `Name: ${formData.name}\nEmail: ${formData.email}\n\n${formData.message}`
+    const href = `mailto:info@dublinlions.ie?subject=${encodeURIComponent(`[${formData.subject}] ${formData.name}`)}&body=${encodeURIComponent(body)}`
+    window.location.href = href
     setSubmitted(true)
     setTimeout(() => {
       setSubmitted(false)

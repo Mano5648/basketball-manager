@@ -102,6 +102,11 @@ import {
   type ChatRoomMembership,
   getStripePaymentLink,
   setStripePaymentLink,
+  getFixtures,
+  upsertFixture,
+  deleteFixture,
+  setFixtureResult,
+  type ClubFixture,
   type Product,
   type ChatMessage,
 } from '@/lib/clubData'
@@ -307,6 +312,51 @@ function Modal({ open, onClose, title, children, maxWidth = 'max-w-lg' }: {
   )
 }
 
+/* ─── Sidebar User Card — reads the signed-in user from localStorage ─── */
+function SidebarUserCard({ onLogout }: { onLogout: () => void }) {
+  const [user, setUser] = useState<{ name?: string; email?: string; role?: string } | null>(() => {
+    try {
+      const raw = localStorage.getItem('dlbc_user')
+      return raw ? JSON.parse(raw) : null
+    } catch { return null }
+  })
+
+  useEffect(() => {
+    const sync = () => {
+      try {
+        const raw = localStorage.getItem('dlbc_user')
+        setUser(raw ? JSON.parse(raw) : null)
+      } catch { setUser(null) }
+    }
+    window.addEventListener('storage', sync)
+    window.addEventListener('dlbc-auth-change', sync)
+    return () => {
+      window.removeEventListener('storage', sync)
+      window.removeEventListener('dlbc-auth-change', sync)
+    }
+  }, [])
+
+  const name = user?.name || user?.email || 'Club Manager'
+  const subtitle = user?.role === 'manager' ? 'Manager' : user?.role || 'Signed in'
+
+  return (
+    <div className="mt-3 px-3 py-3 rounded-lg bg-white/5 flex items-center gap-3">
+      <InitialsAvatar name={name} size={32} />
+      <div className="flex-1 min-w-0">
+        <p className="font-inter font-medium text-sm text-white truncate">{name}</p>
+        <p className="font-inter text-xs text-slate-500 truncate">{subtitle}</p>
+      </div>
+      <button
+        onClick={onLogout}
+        className="text-slate-400 hover:text-red-400 transition-colors duration-150"
+        title="Logout"
+      >
+        <LogOut size={18} />
+      </button>
+    </div>
+  )
+}
+
 /* ─────────────────────── Sidebar ─────────────────────── */
 
 function Sidebar({
@@ -387,20 +437,7 @@ function Sidebar({
             <Settings size={20} />
             Settings
           </button>
-          <div className="mt-3 px-3 py-3 rounded-lg bg-white/5 flex items-center gap-3">
-            <InitialsAvatar name="Club Manager" size={32} />
-            <div className="flex-1 min-w-0">
-              <p className="font-inter font-medium text-sm text-white truncate">Rob White</p>
-              <p className="font-inter text-xs text-slate-500">Head Coach</p>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="text-slate-400 hover:text-red-400 transition-colors duration-150"
-              title="Logout"
-            >
-              <LogOut size={18} />
-            </button>
-          </div>
+          <SidebarUserCard onLogout={handleLogout} />
         </div>
       </aside>
     </>
@@ -601,7 +638,7 @@ function DashboardView({ data, onNavigate }: { data: ReturnType<typeof useLiveDa
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
         <div>
           <h1 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">
-            Welcome back, Rob
+            Welcome back{(() => { try { const u = JSON.parse(localStorage.getItem('dlbc_user') || 'null'); return u?.name ? `, ${u.name.split(' ')[0]}` : '' } catch { return '' } })()}
           </h1>
           <p className="font-inter text-base text-slate-400 mt-1">
             Here&apos;s what&apos;s happening with the club today.
@@ -1525,6 +1562,214 @@ function PaymentsView({ data }: { data: ReturnType<typeof useLiveData> }) {
 
 /* ─────────────────────── View: Schedule ─────────────────────── */
 
+/* ─── Public Fixtures (with results) — embedded in Schedule view ─── */
+function PublicFixturesPanel() {
+  const [list, setList] = useState<ClubFixture[]>(() => getFixtures())
+  const [showForm, setShowForm] = useState(false)
+  const [editing, setEditing] = useState<ClubFixture | null>(null)
+  const [resultFor, setResultFor] = useState<ClubFixture | null>(null)
+
+  const refresh = useCallback(() => setList(getFixtures()), [])
+
+  useEffect(() => {
+    const h = (e: StorageEvent) => { if (e.key === 'dlbc_fixtures') refresh() }
+    window.addEventListener('storage', h)
+    return () => window.removeEventListener('storage', h)
+  }, [refresh])
+
+  const sorted = useMemo(
+    () => [...list].sort((a, b) => `${b.date}T${b.time}`.localeCompare(`${a.date}T${a.time}`)),
+    [list],
+  )
+
+  const handleDelete = (id: string) => {
+    if (!confirm('Delete this fixture? This cannot be undone.')) return
+    deleteFixture(id)
+    refresh()
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Public Fixtures & Results</h2>
+          <p className="font-inter text-sm text-slate-400 mt-1">Add upcoming games and record final scores. Visible on the homepage and Fixtures page.</p>
+        </div>
+        <button
+          onClick={() => { setEditing(null); setShowForm(true) }}
+          className="flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-4 py-2 rounded hover:scale-[1.03] hover:shadow-lg transition-all duration-150 shrink-0"
+        >
+          <Plus size={16} />
+          Add Fixture
+        </button>
+      </div>
+
+      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-white/[0.06]">
+                {['Date', 'Time', 'Opponent', 'Venue', 'Competition', 'Result', 'Actions'].map((col) => (
+                  <th key={col} className="px-4 py-3 font-inter font-semibold text-xs uppercase tracking-widest text-slate-400 text-left">{col}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/[0.06]">
+              {sorted.length === 0 ? (
+                <tr><td colSpan={7} className="px-4 py-6 text-center font-inter text-sm text-slate-400">No fixtures yet. Click "Add Fixture" to create one.</td></tr>
+              ) : sorted.map((f) => (
+                <tr key={f.id} className="hover:bg-white/[0.03]">
+                  <td className="px-4 py-3 font-inter text-sm text-white">{f.date}</td>
+                  <td className="px-4 py-3 font-inter text-sm text-slate-300">{f.time}</td>
+                  <td className="px-4 py-3 font-inter text-sm text-white">{f.opponent}</td>
+                  <td className="px-4 py-3 font-inter text-sm text-slate-300">{f.venue}</td>
+                  <td className="px-4 py-3 font-inter text-sm text-slate-300">{f.competition}</td>
+                  <td className="px-4 py-3 font-inter text-sm">
+                    {f.result ? (
+                      <span className={`font-mono font-semibold ${f.result.lionsScore > f.result.opponentScore ? 'text-green-400' : 'text-red-400'}`}>
+                        {f.result.lionsScore}-{f.result.opponentScore}
+                      </span>
+                    ) : (
+                      <span className="text-slate-500">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setResultFor(f)}
+                        title={f.result ? 'Edit result' : 'Record result'}
+                        className="p-2 text-slate-400 hover:text-amber-400 rounded hover:bg-white/5"
+                      >
+                        <Trophy size={16} />
+                      </button>
+                      <button
+                        onClick={() => { setEditing(f); setShowForm(true) }}
+                        title="Edit fixture"
+                        className="p-2 text-slate-400 hover:text-blue-400 rounded hover:bg-white/5"
+                      >
+                        <Pencil size={16} />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(f.id)}
+                        title="Delete"
+                        className="p-2 text-slate-400 hover:text-red-400 rounded hover:bg-white/5"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {showForm && (
+        <FixtureForm
+          fixture={editing}
+          onClose={() => setShowForm(false)}
+          onSave={(f) => { upsertFixture(f); refresh(); setShowForm(false) }}
+        />
+      )}
+
+      {resultFor && (
+        <ResultForm
+          fixture={resultFor}
+          onClose={() => setResultFor(null)}
+          onSave={(r) => { setFixtureResult(resultFor.id, r); refresh(); setResultFor(null) }}
+          onClear={() => { setFixtureResult(resultFor.id, null); refresh(); setResultFor(null) }}
+        />
+      )}
+    </div>
+  )
+}
+
+function FixtureForm({ fixture, onClose, onSave }: { fixture: ClubFixture | null; onClose: () => void; onSave: (f: ClubFixture) => void }) {
+  const [form, setForm] = useState<ClubFixture>(
+    fixture ?? {
+      id: `fx-${Date.now().toString(36)}`,
+      date: new Date().toISOString().split('T')[0],
+      time: '19:00',
+      opponent: '',
+      venue: 'Home',
+      competition: "Domino's Division 1",
+    },
+  )
+  const valid = form.opponent.trim() && form.date && form.time
+
+  return (
+    <Modal open onClose={onClose} title={fixture ? 'Edit Fixture' : 'Add Fixture'} maxWidth="max-w-lg">
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          {formField('Date', (
+            <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500" />
+          ))}
+          {formField('Tip-off', (
+            <input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500" />
+          ))}
+        </div>
+        {formField('Opponent', (
+          <input type="text" value={form.opponent} onChange={(e) => setForm({ ...form, opponent: e.target.value })} placeholder="e.g. Neptune BC" className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500" />
+        ))}
+        <div className="grid grid-cols-2 gap-3">
+          {formField('Venue', (
+            <select value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value as 'Home' | 'Away' })} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
+              <option value="Home">Home</option>
+              <option value="Away">Away</option>
+            </select>
+          ))}
+          {formField('Competition', (
+            <input type="text" value={form.competition} onChange={(e) => setForm({ ...form, competition: e.target.value })} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500" />
+          ))}
+        </div>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" checked={!!form.soldOut} onChange={(e) => setForm({ ...form, soldOut: e.target.checked })} className="w-4 h-4 accent-blue-500" />
+          <span className="font-inter text-sm text-slate-300">Mark as sold out</span>
+        </label>
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} className="bg-white/5 border border-white/[0.06] text-slate-300 font-inter text-sm px-4 py-2 rounded-lg hover:bg-white/10">Cancel</button>
+          <button onClick={() => valid && onSave(form)} disabled={!valid} className="bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white font-inter font-semibold text-sm px-4 py-2 rounded-lg">Save</button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+function ResultForm({ fixture, onClose, onSave, onClear }: { fixture: ClubFixture; onClose: () => void; onSave: (r: { lionsScore: number; opponentScore: number; mvp?: string }) => void; onClear: () => void }) {
+  const [lionsScore, setLions] = useState(fixture.result?.lionsScore ?? 0)
+  const [oppScore, setOpp] = useState(fixture.result?.opponentScore ?? 0)
+  const [mvp, setMvp] = useState(fixture.result?.mvp ?? '')
+
+  return (
+    <Modal open onClose={onClose} title={`Result — Dublin Lions vs ${fixture.opponent}`} maxWidth="max-w-md">
+      <p className="font-inter text-sm text-slate-400 mb-4">{fixture.date} · {fixture.time} · {fixture.venue}</p>
+      <div className="grid grid-cols-2 gap-3">
+        {formField('Dublin Lions', (
+          <input type="number" min={0} value={lionsScore} onChange={(e) => setLions(Number(e.target.value))} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-base text-white text-center focus:outline-none focus:border-blue-500" />
+        ))}
+        {formField(fixture.opponent, (
+          <input type="number" min={0} value={oppScore} onChange={(e) => setOpp(Number(e.target.value))} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-base text-white text-center focus:outline-none focus:border-blue-500" />
+        ))}
+      </div>
+      <div className="mt-3">
+        {formField('MVP (optional)', (
+          <input type="text" value={mvp} onChange={(e) => setMvp(e.target.value)} placeholder="e.g. Kevin Anyanwu" className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500" />
+        ))}
+      </div>
+      <div className="flex justify-between gap-2 pt-4">
+        {fixture.result ? (
+          <button onClick={onClear} className="text-red-400 hover:text-red-300 font-inter text-sm px-3 py-2 rounded-lg">Clear result</button>
+        ) : <span />}
+        <div className="flex gap-2">
+          <button onClick={onClose} className="bg-white/5 border border-white/[0.06] text-slate-300 font-inter text-sm px-4 py-2 rounded-lg hover:bg-white/10">Cancel</button>
+          <button onClick={() => onSave({ lionsScore, opponentScore: oppScore, mvp: mvp.trim() || undefined })} className="bg-amber-500 hover:bg-amber-400 text-deep-navy font-inter font-semibold text-sm px-4 py-2 rounded-lg">Save Result</button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
   const { sessions, teams, players, saveSessions } = data
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -1575,8 +1820,10 @@ function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
 
   return (
     <div className="space-y-6">
+      <PublicFixturesPanel />
+
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Schedule</h2>
+        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Training Schedule</h2>
         <button
           onClick={() => setShowCreateModal(true)}
           className="flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-4 py-2 rounded hover:scale-[1.03] hover:shadow-lg transition-all duration-150"
@@ -2782,12 +3029,30 @@ export default function ManagerDashboard() {
   const [isAuthorized, setIsAuthorized] = useState(false)
   const [globalSearch, setGlobalSearch] = useState('')
 
-  const [notifications, setNotifications] = useState([
-    { id: 'n1', text: 'Payment received', detail: 'Kevin Anyanwu — €50', type: 'success' },
-    { id: 'n2', text: 'Payment failed', detail: 'Mark Doyle — retry needed', type: 'alert' },
-  ])
-
   const data = useLiveData()
+
+  // Derive notifications from real payments + overdue players so the bell
+  // reflects actual state instead of placeholder copy.
+  const derivedNotifications = useMemo(() => {
+    const out: { id: string; text: string; detail: string; type: string }[] = []
+    data.payments.slice(0, 3).forEach((p) => {
+      if (p.status === 'succeeded') {
+        out.push({ id: `pay-${p.id}`, text: 'Payment received', detail: `${p.playerName} — €${p.amount}`, type: 'success' })
+      } else if (p.status === 'failed') {
+        out.push({ id: `pay-${p.id}`, text: 'Payment failed', detail: `${p.playerName} — retry needed`, type: 'alert' })
+      } else if (p.status === 'pending') {
+        out.push({ id: `pay-${p.id}`, text: 'Payment pending', detail: `${p.playerName} — €${p.amount}`, type: 'warning' })
+      }
+    })
+    const overdue = data.players.filter((p) => p.status === 'Overdue').slice(0, 2)
+    overdue.forEach((p) => {
+      out.push({ id: `over-${p.id}`, text: 'Membership overdue', detail: p.name, type: 'alert' })
+    })
+    return out
+  }, [data.payments, data.players])
+
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
+  const notifications = derivedNotifications.filter((n) => !dismissedIds.has(n.id))
 
   useEffect(() => {
     const userJson = localStorage.getItem('dlbc_user')
@@ -2841,8 +3106,8 @@ export default function ManagerDashboard() {
         title={viewTitles[activeView] || 'Dashboard'}
         onMenuToggle={() => setMobileSidebarOpen(!mobileSidebarOpen)}
         notifications={notifications}
-        onDismissNotification={(id) => setNotifications((prev) => prev.filter((n) => n.id !== id))}
-        onClearNotifications={() => setNotifications([])}
+        onDismissNotification={(id) => setDismissedIds((prev) => new Set(prev).add(id))}
+        onClearNotifications={() => setDismissedIds(new Set(derivedNotifications.map((n) => n.id)))}
         search={globalSearch}
         onSearch={setGlobalSearch}
         onJumpToMembers={() => setActiveView('members')}

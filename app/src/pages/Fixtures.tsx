@@ -12,6 +12,7 @@ import {
   ArrowRight,
 } from 'lucide-react'
 import { asset } from '@/hooks/useSiteImages'
+import { getFixtures, getTeams, type ClubFixture } from '@/lib/clubData'
 
 // ─── Types ───
 interface Fixture {
@@ -54,6 +55,48 @@ function isFixturePast(f: Pick<Fixture, 'date' | 'monthLong' | 'time'>): boolean
   return parsed.getTime() < Date.now()
 }
 
+// Convert a ClubFixture (manager-editable) into the display shape that the
+// page renders.
+function toDisplayFixture(f: ClubFixture, index: number): Fixture {
+  const d = new Date(`${f.date}T${f.time || '00:00'}`)
+  const day = d.toLocaleDateString('en-IE', { weekday: 'short' }).toUpperCase()
+  const monthShort = d.toLocaleDateString('en-IE', { month: 'short' }).toUpperCase()
+  const monthLong = d.toLocaleDateString('en-IE', { month: 'long', year: 'numeric' })
+  const status: 'upcoming' | 'completed' | 'live' = f.result ? 'completed' : 'upcoming'
+  return {
+    id: index + 1,
+    date: String(d.getDate()),
+    day,
+    monthShort,
+    monthLong,
+    time: f.time,
+    opponent: f.opponent,
+    venue: f.venue,
+    competition: f.competition,
+    status,
+    result: f.result ? {
+      lionsScore: f.result.lionsScore,
+      opponentScore: f.result.opponentScore,
+      won: f.result.lionsScore > f.result.opponentScore,
+    } : undefined,
+    mvp: f.result?.mvp,
+    ticketLink: f.ticketLink,
+  }
+}
+
+// Live hook: returns fixtures from the store and refreshes when they change.
+function useLiveFixtures(): Fixture[] {
+  const [list, setList] = useState<Fixture[]>(() => getFixtures().map(toDisplayFixture))
+  useEffect(() => {
+    const sync = () => setList(getFixtures().map(toDisplayFixture))
+    sync()
+    const h = (e: StorageEvent) => { if (e.key === 'dlbc_fixtures') sync() }
+    window.addEventListener('storage', h)
+    return () => window.removeEventListener('storage', h)
+  }, [])
+  return list
+}
+
 // ─── Data ───
 const standings: Standing[] = [
   { pos: 1, team: 'Templeogue', p: 14, w: 11, l: 3, pf: 1120, pa: 980, diff: 140, pts: 33 },
@@ -66,165 +109,6 @@ const standings: Standing[] = [
   { pos: 8, team: '\u00C9anna', p: 14, w: 3, l: 11, pf: 920, pa: 1120, diff: -200, pts: 11 },
 ]
 
-const fixtures: Fixture[] = [
-  {
-    id: 1,
-    date: '18',
-    day: 'SAT',
-    monthShort: 'JAN',
-    monthLong: 'January 2025',
-    time: '19:00',
-    opponent: 'Neptune BC',
-    venue: 'Home',
-    competition: "Domino's Division 1",
-    status: 'upcoming',
-    ticketLink: '/contact',
-  },
-  {
-    id: 2,
-    date: '25',
-    day: 'SAT',
-    monthShort: 'JAN',
-    monthLong: 'January 2025',
-    time: '18:30',
-    opponent: 'UCD Marian',
-    venue: 'Away',
-    competition: "Domino's Division 1",
-    status: 'upcoming',
-  },
-  {
-    id: 3,
-    date: '1',
-    day: 'SAT',
-    monthShort: 'FEB',
-    monthLong: 'February 2025',
-    time: '19:00',
-    opponent: 'Belfast Star',
-    venue: 'Home',
-    competition: "Domino's Division 1",
-    status: 'upcoming',
-    ticketLink: '/contact',
-  },
-  {
-    id: 4,
-    date: '8',
-    day: 'SAT',
-    monthShort: 'FEB',
-    monthLong: 'February 2025',
-    time: '18:30',
-    opponent: 'DCU Saints',
-    venue: 'Away',
-    competition: "Domino's Division 1",
-    status: 'upcoming',
-  },
-  {
-    id: 5,
-    date: '15',
-    day: 'SAT',
-    monthShort: 'FEB',
-    monthLong: 'February 2025',
-    time: '19:00',
-    opponent: 'Templeogue',
-    venue: 'Home',
-    competition: "Domino's Division 1",
-    status: 'upcoming',
-    ticketLink: '/contact',
-  },
-  {
-    id: 6,
-    date: '22',
-    day: 'SAT',
-    monthShort: 'FEB',
-    monthLong: 'February 2025',
-    time: '18:00',
-    opponent: '\u00C9anna',
-    venue: 'Away',
-    competition: "Domino's Division 1",
-    status: 'upcoming',
-  },
-  {
-    id: 7,
-    date: '11',
-    day: 'SAT',
-    monthShort: 'JAN',
-    monthLong: 'January 2025',
-    time: '18:00',
-    opponent: 'Killester',
-    venue: 'Away',
-    competition: "Domino's Division 1",
-    status: 'completed',
-    result: { lionsScore: 82, opponentScore: 74, won: true },
-    mvp: 'Kevin Anyanwu',
-  },
-  {
-    id: 8,
-    date: '4',
-    day: 'SAT',
-    monthShort: 'JAN',
-    monthLong: 'January 2025',
-    time: '19:00',
-    opponent: 'DCU Saints',
-    venue: 'Home',
-    competition: "Domino's Division 1",
-    status: 'completed',
-    result: { lionsScore: 91, opponentScore: 68, won: true },
-    mvp: 'Tiago Pereira',
-  },
-  {
-    id: 9,
-    date: '21',
-    day: 'SAT',
-    monthShort: 'DEC',
-    monthLong: 'December 2024',
-    time: '18:30',
-    opponent: 'Templeogue',
-    venue: 'Away',
-    competition: "Domino's Division 1",
-    status: 'completed',
-    result: { lionsScore: 75, opponentScore: 88, won: false },
-  },
-  {
-    id: 10,
-    date: '14',
-    day: 'SAT',
-    monthShort: 'DEC',
-    monthLong: 'December 2024',
-    time: '19:00',
-    opponent: '\u00C9anna',
-    venue: 'Home',
-    competition: "Domino's Division 1",
-    status: 'completed',
-    result: { lionsScore: 86, opponentScore: 72, won: true },
-    mvp: 'Russ Marr',
-  },
-  {
-    id: 11,
-    date: '7',
-    day: 'SAT',
-    monthShort: 'DEC',
-    monthLong: 'December 2024',
-    time: '18:00',
-    opponent: 'Belfast Star',
-    venue: 'Away',
-    competition: "Domino's Division 1",
-    status: 'completed',
-    result: { lionsScore: 71, opponentScore: 79, won: false },
-  },
-  {
-    id: 12,
-    date: '30',
-    day: 'SAT',
-    monthShort: 'NOV',
-    monthLong: 'November 2024',
-    time: '19:00',
-    opponent: 'UCD Marian',
-    venue: 'Home',
-    competition: "Domino's Division 1",
-    status: 'completed',
-    result: { lionsScore: 84, opponentScore: 77, won: true },
-    mvp: 'Kevin Anyanwu',
-  },
-]
 
 // ─── Scroll Reveal Hook ───
 function useScrollReveal() {
@@ -398,6 +282,29 @@ export default function Fixtures() {
   const venueReveal = useScrollReveal()
   const venueImageReveal = useScrollReveal()
 
+  const fixtures = useLiveFixtures()
+
+  // Pull the men's senior team's live stats into the standings table so the
+  // Dublin Lions row reflects the data the manager edits in the dashboard.
+  const liveStandings: Standing[] = (() => {
+    const lions = getTeams().find((t) => t.id === 'men-senior-d1')
+    if (!lions) return standings
+    return standings.map((row) =>
+      row.isLions
+        ? {
+            ...row,
+            p: lions.wins + lions.losses,
+            w: lions.wins,
+            l: lions.losses,
+            pf: lions.pointsFor,
+            pa: lions.pointsAgainst,
+            diff: lions.pointsFor - lions.pointsAgainst,
+            pts: lions.wins * 3 + lions.losses,
+          }
+        : row
+    )
+  })()
+
   const filteredFixtures = fixtures.filter((f) => {
     if (filter === 'home') return f.venue === 'Home'
     if (filter === 'away') return f.venue === 'Away'
@@ -471,7 +378,7 @@ export default function Fixtures() {
                     </tr>
                   </thead>
                   <tbody>
-                    {standings.map((s, i) => (
+                    {liveStandings.map((s, i) => (
                       <tr
                         key={s.team}
                         className={`font-inter text-sm ${
