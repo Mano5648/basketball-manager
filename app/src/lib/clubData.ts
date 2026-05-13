@@ -212,6 +212,33 @@ const KEYS = {
   ticketPurchases: 'dlbc_ticket_purchases',
   chatMessages: 'dlbc_chat_messages',
   chatMembers: 'dlbc_chat_members',
+  stripeLink: 'dlbc_stripe_payment_link',
+}
+
+/* ─────────────────── Stripe Payment Link ─────────────────── */
+// Single configurable Stripe Payment Link used as the card-checkout URL for
+// tickets, store orders, and membership sign-ups. Stripe Payment Links are
+// hosted by Stripe so no backend is required — the manager creates one in
+// the Stripe dashboard and pastes the URL into Settings.
+export function getStripePaymentLink(): string {
+  return getStore<string>(KEYS.stripeLink, '')
+}
+export function setStripePaymentLink(url: string) {
+  setStore(KEYS.stripeLink, url)
+}
+// Returns the Stripe checkout URL with a pending order id appended as
+// `client_reference_id` so the manager can reconcile the payment to the
+// order in the Stripe dashboard.
+export function buildStripeCheckoutUrl(referenceId: string): string | null {
+  const base = getStripePaymentLink().trim()
+  if (!base) return null
+  try {
+    const u = new URL(base)
+    u.searchParams.set('client_reference_id', referenceId)
+    return u.toString()
+  } catch {
+    return null
+  }
 }
 
 export interface ChatRoomMembership {

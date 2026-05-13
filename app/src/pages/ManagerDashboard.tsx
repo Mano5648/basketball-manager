@@ -99,6 +99,8 @@ import {
   removeChatMember,
   setChatAdmin,
   type ChatRoomMembership,
+  getStripePaymentLink,
+  setStripePaymentLink,
   type Product,
   type ChatMessage,
 } from '@/lib/clubData'
@@ -532,7 +534,7 @@ function TopBar({
 
 /* ─────────────────────── View: Dashboard ─────────────────────── */
 
-function DashboardView({ data }: { data: ReturnType<typeof useLiveData> }) {
+function DashboardView({ data, onNavigate }: { data: ReturnType<typeof useLiveData>; onNavigate: (view: string) => void }) {
   const { sessions, announcements, payments } = data
   const stats = computeClubStats()
 
@@ -642,19 +644,31 @@ function DashboardView({ data }: { data: ReturnType<typeof useLiveData> }) {
           <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6">
             <h3 className="font-inter font-semibold text-lg text-white mb-4">Quick Actions</h3>
             <div className="space-y-3">
-              <button className="w-full flex items-center justify-center gap-2 bg-transparent border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white font-inter font-semibold text-sm px-4 py-3 rounded transition-all duration-200">
+              <button
+                onClick={() => { onNavigate('members'); setTimeout(() => window.dispatchEvent(new Event('dlbc-open-add-member')), 0) }}
+                className="w-full flex items-center justify-center gap-2 bg-transparent border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white font-inter font-semibold text-sm px-4 py-3 rounded transition-all duration-200"
+              >
                 <UserPlus size={16} />
                 Add New Member
               </button>
-              <button className="w-full flex items-center justify-center gap-2 bg-transparent border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white font-inter font-semibold text-sm px-4 py-3 rounded transition-all duration-200">
+              <button
+                onClick={() => onNavigate('payments')}
+                className="w-full flex items-center justify-center gap-2 bg-transparent border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white font-inter font-semibold text-sm px-4 py-3 rounded transition-all duration-200"
+              >
                 <Banknote size={16} />
                 Record Cash Payment
               </button>
-              <button className="w-full flex items-center justify-center gap-2 bg-transparent border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white font-inter font-semibold text-sm px-4 py-3 rounded transition-all duration-200">
+              <button
+                onClick={() => onNavigate('chat')}
+                className="w-full flex items-center justify-center gap-2 bg-transparent border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white font-inter font-semibold text-sm px-4 py-3 rounded transition-all duration-200"
+              >
                 <Send size={16} />
                 Send Announcement
               </button>
-              <button className="w-full flex items-center justify-center gap-2 bg-transparent border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white font-inter font-semibold text-sm px-4 py-3 rounded transition-all duration-200">
+              <button
+                onClick={() => onNavigate('reports')}
+                className="w-full flex items-center justify-center gap-2 bg-transparent border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white font-inter font-semibold text-sm px-4 py-3 rounded transition-all duration-200"
+              >
                 <FileText size={16} />
                 Generate Report
               </button>
@@ -2655,13 +2669,69 @@ function AddChatMemberModal({
 /* ─────────────────────── View: Settings ─────────────────────── */
 
 function SettingsView() {
+  const [stripeLink, setStripeLink] = useState<string>(() => getStripePaymentLink())
+  const [saved, setSaved] = useState(false)
+
+  const handleSave = () => {
+    setStripePaymentLink(stripeLink.trim())
+    setSaved(true)
+    setTimeout(() => setSaved(false), 1500)
+  }
+
+  const isValid = !stripeLink.trim() || /^https:\/\/(buy\.stripe\.com|.*\.stripe\.com)\//i.test(stripeLink.trim())
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-3xl">
       <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Settings</h2>
-      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-8 text-center">
-        <Settings size={48} className="text-slate-500 mx-auto mb-4" />
-        <p className="font-inter text-lg text-slate-300">Settings panel coming soon.</p>
-        <p className="font-inter text-sm text-slate-400 mt-2">Manage club profile, notification preferences, and integrations.</p>
+
+      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6 md:p-8">
+        <div className="flex items-start gap-3 mb-5">
+          <CreditCard size={22} className="text-blue-400 mt-1 shrink-0" />
+          <div>
+            <h3 className="font-inter font-semibold text-lg text-white">Stripe Payment Link</h3>
+            <p className="font-inter text-sm text-slate-400 mt-1">
+              Paste a Stripe Payment Link URL. All card payments (tickets, store orders, membership) will redirect to this hosted Stripe checkout. Create one at <a className="text-blue-400 hover:underline" href="https://dashboard.stripe.com/payment-links" target="_blank" rel="noopener noreferrer">dashboard.stripe.com/payment-links</a>.
+            </p>
+          </div>
+        </div>
+
+        <label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-2">Payment Link URL</label>
+        <input
+          type="url"
+          value={stripeLink}
+          onChange={(e) => setStripeLink(e.target.value)}
+          placeholder="https://buy.stripe.com/test_..."
+          className={`w-full bg-[#0A1628] border ${isValid ? 'border-white/[0.06]' : 'border-red-500/50'} rounded-lg px-4 py-2.5 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500`}
+        />
+        {!isValid && (
+          <p className="font-inter text-xs text-red-400 mt-2">Must be a Stripe URL (e.g. https://buy.stripe.com/…).</p>
+        )}
+
+        <div className="flex items-center gap-3 mt-5">
+          <button
+            onClick={handleSave}
+            disabled={!isValid}
+            className="inline-flex items-center gap-2 bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white font-inter font-semibold text-sm px-5 py-2.5 rounded-lg transition-colors"
+          >
+            {saved ? <><Check size={16} /> Saved</> : 'Save'}
+          </button>
+          {stripeLink.trim() && isValid && (
+            <a
+              href={stripeLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 text-sm font-inter text-slate-400 hover:text-white"
+            >
+              <ExternalLink size={14} /> Open link
+            </a>
+          )}
+        </div>
+
+        <div className="mt-6 bg-amber-500/5 border border-amber-500/20 rounded-lg p-4">
+          <p className="font-inter text-xs text-amber-200/90">
+            <strong className="text-amber-200">Note:</strong> Stripe Payment Links accept a fixed amount per link. For per-item pricing (e.g. different ticket prices), create one Payment Link per amount and switch the URL above before publishing that fixture, or upgrade to a backend Checkout Session in the future.
+          </p>
+        </div>
       </div>
     </div>
   )
@@ -2777,7 +2847,7 @@ export default function ManagerDashboard() {
       />
 
       <main className="ml-0 md:ml-64 mt-16 min-h-[calc(100dvh-4rem)] p-6 md:p-8">
-        {activeView === 'dashboard' && <DashboardView data={data} />}
+        {activeView === 'dashboard' && <DashboardView data={data} onNavigate={setActiveView} />}
         {activeView === 'members' && <MembersView data={data} initialSearch={globalSearch} />}
         {activeView === 'payments' && <PaymentsView data={data} />}
         {activeView === 'teams' && <TeamsView data={data} />}

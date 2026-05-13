@@ -20,6 +20,7 @@ import {
   getCartTotal,
   getCartCount,
   placeOrder,
+  buildStripeCheckoutUrl,
   type Product,
 } from '@/lib/clubData'
 
@@ -154,14 +155,24 @@ function CheckoutButton({ onSuccess }: { onSuccess: () => void }) {
   const [method, setMethod] = useState<'card' | 'cash'>('card')
   const [done, setDone] = useState(false)
   const [orderId, setOrderId] = useState('')
+  const [error, setError] = useState('')
 
   const handleCheckout = () => {
+    setError('')
     if (!name.trim() || !email.trim()) return
     const order = placeOrder(name.trim(), email.trim())
-    if (order) {
-      setOrderId(order.id)
-      setDone(true)
+    if (!order) return
+    if (method === 'card') {
+      const url = buildStripeCheckoutUrl(order.id)
+      if (!url) {
+        setError('Card payments are not yet configured. Choose Cash on Collection, or ask a manager to set up a Stripe Payment Link in Settings.')
+        return
+      }
+      window.location.href = url
+      return
     }
+    setOrderId(order.id)
+    setDone(true)
   }
 
   const closeAll = () => {
@@ -239,6 +250,11 @@ function CheckoutButton({ onSuccess }: { onSuccess: () => void }) {
                     </div>
                   </div>
                 </div>
+                {error && (
+                  <p className="font-inter text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded mx-5 mb-3 px-3 py-2">
+                    {error}
+                  </p>
+                )}
                 <div className="p-5 border-t border-white/[0.06] flex gap-3">
                   <button onClick={() => setOpen(false)} className="flex-1 bg-white/5 border border-white/[0.06] text-slate-300 font-inter font-medium text-sm rounded-lg px-4 py-2.5 hover:bg-white/10">
                     Cancel
@@ -248,7 +264,7 @@ function CheckoutButton({ onSuccess }: { onSuccess: () => void }) {
                     disabled={!name.trim() || !email.trim()}
                     className="flex-1 bg-electric-blue hover:bg-blue-400 disabled:opacity-40 text-white font-inter font-semibold text-sm rounded-lg px-4 py-2.5 transition-colors"
                   >
-                    Place Order
+                    {method === 'card' ? 'Pay with Stripe' : 'Place Order'}
                   </button>
                 </div>
               </>

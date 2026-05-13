@@ -159,12 +159,12 @@ export default function ManagerLogin() {
               />
               <span className="font-inter text-sm text-slate-400">Remember me</span>
             </label>
-            <button
-              type="button"
+            <a
+              href="mailto:secretary@dublinlions.ie?subject=Manager%20portal%20password%20reset"
               className="font-inter font-medium text-sm text-blue-500 hover:underline transition-all duration-200"
             >
               Forgot password?
-            </button>
+            </a>
           </div>
 
           {/* Submit Button */}

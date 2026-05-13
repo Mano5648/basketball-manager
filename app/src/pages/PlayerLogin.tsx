@@ -253,12 +253,12 @@ export default function PlayerLogin() {
                 />
                 <span className="font-inter text-sm text-slate-300">Remember me</span>
               </label>
-              <button
-                type="button"
+              <a
+                href="mailto:secretary@dublinlions.ie?subject=Player%20portal%20password%20reset"
                 className="font-inter text-sm text-blue-400 hover:text-blue-300 transition-colors"
               >
                 Forgot password?
-              </button>
+              </a>
             </div>
 
             {/* Submit */}

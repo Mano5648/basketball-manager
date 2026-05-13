@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { asset } from '@/hooks/useSiteImages'
+import { buildStripeCheckoutUrl } from '@/lib/clubData'
 import {
   LayoutDashboard,
   CreditCard,
@@ -541,6 +542,7 @@ function PaymentsTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (
   const [payments, setPayments] = useState<PaymentTx[]>(getMockPayments)
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [checkoutPlan, setCheckoutPlan] = useState({ name: '', amount: '' })
+  const [payError, setPayError] = useState('')
 
   const statusColor =
     user.membershipStatus === 'paid'
@@ -581,12 +583,38 @@ function PaymentsTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (
   }
 
   const openCheckout = (name: string, amount: string) => {
+    setPayError('')
+    const refId = `DLBC-MEM-${user.id}-${Date.now().toString(36).toUpperCase()}`
+    const stripeUrl = buildStripeCheckoutUrl(refId)
+    if (stripeUrl) {
+      // Record as pending and redirect to Stripe-hosted Payment Link
+      const newTx: PaymentTx = {
+        id: refId,
+        date: new Date().toLocaleDateString('en-IE', { day: 'numeric', month: 'short', year: 'numeric' }),
+        description: name,
+        amount,
+        method: 'Stripe',
+        status: 'Pending',
+      }
+      const updatedPayments = [newTx, ...payments]
+      setPayments(updatedPayments)
+      savePayments(updatedPayments)
+      window.location.href = stripeUrl
+      return
+    }
+    // No Stripe link configured — fall back to the in-app simulated checkout
     setCheckoutPlan({ name, amount })
     setCheckoutOpen(true)
+    setPayError('Card payments are not yet configured by the club. A manager must set up a Stripe Payment Link in Settings — using demo mode for now.')
   }
 
   return (
     <div className="space-y-6 animate-[fade-in-up_0.4s_ease-out]">
+      {payError && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-3 font-inter text-sm text-amber-200">
+          {payError}
+        </div>
+      )}
       <div>
         <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">My Payments</h2>
         <p className="font-inter text-base text-slate-400 mt-1">

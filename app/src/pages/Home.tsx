@@ -9,6 +9,7 @@ import {
 import {
   setTicketPrice, type TicketPrice, getTicketPrice,
   getPayments, setPayments, type Payment, addTicketPurchase,
+  buildStripeCheckoutUrl,
 } from '@/lib/clubData'
 
 /* ─────────────────────── Scroll Reveal Hook ─────────────────────── */
@@ -815,19 +816,15 @@ function TicketModal({
   const user = getUser()
   const isLoggedIn = !!user
 
-  const handleSubmit = () => {
-    if (total <= 0) return
-    if (!buyerName.trim()) return
-    if (!buyerEmail.trim()) return
+  const [stripeError, setStripeError] = useState('')
 
-    const receiptId = `DLBC-${Date.now().toString(36).toUpperCase()}`
-
+  const persistPurchase = (receiptId: string, status: 'succeeded' | 'pending') => {
     const paymentEntry: Payment = {
       id: receiptId,
       playerId: user?.id || 'guest',
       playerName: buyerName,
       amount: total,
-      status: paymentMethod === 'card' ? 'succeeded' : 'pending',
+      status,
       date: new Date().toISOString().split('T')[0],
       method: paymentMethod === 'card' ? 'Stripe' : 'Cash',
       plan: `Ticket - ${fixtureName}`,
@@ -854,7 +851,29 @@ function TicketModal({
         buyerEmail,
       })
     }
+  }
 
+  const handleSubmit = () => {
+    if (total <= 0) return
+    if (!buyerName.trim()) return
+    if (!buyerEmail.trim()) return
+
+    const receiptId = `DLBC-${Date.now().toString(36).toUpperCase()}`
+
+    if (paymentMethod === 'card') {
+      const url = buildStripeCheckoutUrl(receiptId)
+      if (!url) {
+        setStripeError('Card payments are not yet configured. Please choose Pay at Gate, or contact the club to set up a Stripe Payment Link.')
+        return
+      }
+      // Record the purchase as pending; manager confirms once Stripe webhook
+      // (or manual reconciliation) marks it succeeded.
+      persistPurchase(receiptId, 'pending')
+      window.location.href = url
+      return
+    }
+
+    persistPurchase(receiptId, 'pending')
     setReceipt({
       receiptId,
       total,
@@ -1022,6 +1041,11 @@ function TicketModal({
 
             {/* Footer */}
             <div className="p-6 border-t border-slate-100">
+              {stripeError && (
+                <p className="font-inter text-sm text-red-600 bg-red-50 border border-red-100 rounded px-3 py-2 mb-3">
+                  {stripeError}
+                </p>
+              )}
               <button
                 onClick={handleSubmit}
                 disabled={total <= 0 || !buyerName.trim() || !buyerEmail.trim()}
@@ -1030,7 +1054,7 @@ function TicketModal({
                 {paymentMethod === 'card' ? (
                   <>
                     <CreditCard size={18} />
-                    Pay Now
+                    Pay with Stripe
                   </>
                 ) : (
                   <>
@@ -1375,9 +1399,12 @@ function MembershipSection() {
                     </li>
                   ))}
                 </ul>
-                <button className="w-full bg-electric-blue text-white font-inter font-semibold text-sm uppercase tracking-widest px-4 py-3 rounded hover:bg-blue-400 transition-all duration-150">
+                <Link
+                  to="/player/login"
+                  className="block text-center w-full bg-electric-blue text-white font-inter font-semibold text-sm uppercase tracking-widest px-4 py-3 rounded hover:bg-blue-400 transition-all duration-150"
+                >
                   Sign Up
-                </button>
+                </Link>
               </div>
             ))}
           </div>
