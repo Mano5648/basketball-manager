@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import type { LucideIcon } from 'lucide-react'
 import {
   LayoutDashboard,
@@ -36,6 +36,7 @@ import {
   MapPin,
   ShieldAlert,
   Loader2,
+  Home,
   Image,
   Upload,
   RotateCcw,
@@ -339,13 +340,20 @@ function Sidebar({
         }`}
         style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}
       >
-        <div className="flex items-center gap-3 mb-8 px-2">
+        <Link to="/" className="flex items-center gap-3 mb-2 px-2 hover:opacity-80 transition-opacity" title="Back to Dublin Lions home">
           <img src={logoUrl} alt="Dublin Lions" className="h-9 w-auto brightness-0 invert" />
           <div>
             <p className="font-inter font-semibold text-sm text-white">Dublin Lions</p>
             <p className="font-inter text-xs text-slate-400">Manager Portal</p>
           </div>
-        </div>
+        </Link>
+        <Link
+          to="/"
+          className="flex items-center gap-2 mb-6 mx-2 px-3 py-2 rounded-lg bg-white/[0.03] hover:bg-white/[0.07] text-slate-300 hover:text-white font-inter text-xs transition-all"
+        >
+          <Home size={14} />
+          Back to Site
+        </Link>
         <nav className="flex-1 space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon
@@ -834,14 +842,14 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
       </div>
 
       <div className="bg-[#1E293B] rounded-lg p-3 flex flex-wrap items-center gap-3">
-        <div className="relative">
+        <div className="relative md:hidden">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             type="text"
             placeholder="Search members..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-48 md:w-64 bg-white/5 border border-[#334155] rounded-lg pl-9 pr-3 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 transition-all duration-200"
+            className="w-48 bg-white/5 border border-[#334155] rounded-lg pl-9 pr-3 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 transition-all duration-200"
           />
         </div>
         <select

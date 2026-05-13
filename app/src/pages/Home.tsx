@@ -627,6 +627,19 @@ function FixtureRow({
     setPrice(getTicketPrice(fixtureKey))
   }
 
+  // Fixture dates are short-form (e.g. "Jan 18"); assume current year and skip
+  // fixtures whose tip-off time has already passed.
+  const isPast = (() => {
+    const year = new Date().getFullYear()
+    const d = new Date(`${fixture.month} ${fixture.date} ${year} ${fixture.time}`)
+    if (isNaN(d.getTime())) return false
+    // If the parsed date is more than 6 months in the future, it was probably
+    // last season — treat as past.
+    const sixMonths = 1000 * 60 * 60 * 24 * 183
+    if (d.getTime() - Date.now() > sixMonths) return true
+    return d.getTime() < Date.now()
+  })()
+
   return (
     <>
       <div
@@ -673,7 +686,11 @@ function FixtureRow({
         {/* Public: ticket button */}
         {!isManager && (
           <div className="shrink-0">
-            {fixture.soldOut ? (
+            {isPast ? (
+              <span className="inline-block font-inter font-semibold text-xs uppercase tracking-widest text-slate-500 bg-slate-100 px-3 py-1 rounded">
+                Tickets Closed
+              </span>
+            ) : fixture.soldOut ? (
               <span className="inline-block font-inter font-semibold text-xs uppercase tracking-widest text-red-500 bg-red-50 px-3 py-1 rounded">
                 SOLD OUT
               </span>
@@ -1279,145 +1296,6 @@ function GallerySection() {
   )
 }
 
-/* ─────────────────────── Membership CTA Section ─────────────────────── */
-function MembershipSection() {
-  const headerReveal = useScrollReveal()
-  const cardsReveal = useScrollReveal()
-
-  const tiers = [
-    {
-      title: 'YOUTH MEMBER',
-      price: '€150 / season',
-      features: [
-        'Weekly training sessions',
-        'Club jersey included',
-        'Access to club facilities',
-        'Priority match tickets',
-      ],
-      featured: false,
-    },
-    {
-      title: 'ADULT PLAYER',
-      price: '€250 / season',
-      features: [
-        'Weekly training sessions',
-        'Club jersey included',
-        'Access to club facilities',
-        'Priority match tickets',
-        'Division 1 squad eligibility',
-        'Gym membership',
-        'Travel to away games',
-      ],
-      featured: true,
-      badge: 'MOST POPULAR',
-    },
-    {
-      title: 'SUPPORTER',
-      price: '€50 / season',
-      features: [
-        'Season ticket to all home games',
-        'Club newsletter',
-        'Supporters club events',
-        'Club merchandise discount',
-      ],
-      featured: false,
-    },
-  ]
-
-  return (
-    <>
-      <div className="h-16 section-transition-dark-to-gradient" style={{ background: 'linear-gradient(to bottom, #0A1628, #0A1628)' }} />
-      <section
-        id="membership"
-        className="cta-gradient py-24 md:py-32"
-      >
-        <div className="max-w-4xl mx-auto px-4 md:px-8 lg:px-12 text-center">
-          <div
-            ref={headerReveal.ref}
-            className={`transition-all duration-600 ${
-              headerReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
-            }`}
-          >
-            <h2
-              className="font-oswald font-bold text-white"
-              style={{
-                fontSize: 'clamp(2.5rem, 5vw, 4rem)',
-                lineHeight: 0.95,
-                letterSpacing: '-0.02em',
-              }}
-            >
-              Be Part of the Pride
-            </h2>
-            <p className="font-inter text-lg text-slate-300 max-w-2xl mx-auto mt-6 leading-relaxed">
-              Join Dublin Lions Basketball Club for the 2025/26 season. Membership includes training access, matchday tickets, club gear, and entry to exclusive club events. Open to all skill levels — from beginners to Division 1 hopefuls.
-            </p>
-          </div>
-
-          {/* Tier Cards */}
-          <div
-            ref={cardsReveal.ref}
-            className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-12"
-          >
-            {tiers.map((tier, i) => (
-              <div
-                key={tier.title}
-                className={`relative rounded-xl border border-white/10 bg-white/5 backdrop-blur-sm p-8 text-left transition-all duration-300 hover:-translate-y-1 hover:border-electric-blue/50 ${
-                  tier.featured ? 'md:-mt-4 md:mb-4 md:py-10' : ''
-                } ${
-                  cardsReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
-                }`}
-                style={{
-                  transitionDelay: `${i * 150}ms`,
-                  transform: cardsReveal.visible
-                    ? tier.featured ? 'translateY(-8px)' : 'translateY(0)'
-                    : 'translateY(20px)',
-                }}
-              >
-                {tier.badge && (
-                  <span className="absolute -top-3 right-4 bg-accent-gold text-deep-navy font-inter font-semibold text-xs uppercase tracking-wider px-3 py-1 rounded">
-                    {tier.badge}
-                  </span>
-                )}
-                <p className="font-inter font-semibold text-xs uppercase tracking-widest text-white mb-2">
-                  {tier.title}
-                </p>
-                <p
-                  className="font-oswald font-bold text-accent-gold mb-6"
-                  style={{
-                    fontSize: 'clamp(1.5rem, 3vw, 2.5rem)',
-                  }}
-                >
-                  {tier.price}
-                </p>
-                <ul className="space-y-3 mb-8">
-                  {tier.features.map((feature) => (
-                    <li key={feature} className="flex items-start gap-2">
-                      <Check size={16} className="text-electric-blue shrink-0 mt-1" />
-                      <span className="font-inter text-sm text-slate-300">
-                        {feature}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-                <Link
-                  to="/player/login"
-                  className="block text-center w-full bg-electric-blue text-white font-inter font-semibold text-sm uppercase tracking-widest px-4 py-3 rounded hover:bg-blue-400 transition-all duration-150"
-                >
-                  Sign Up
-                </Link>
-              </div>
-            ))}
-          </div>
-
-          <p className="font-inter text-sm text-slate-500 max-w-xl mx-auto mt-8">
-            All membership fees support player development, facility hire, and competition costs. Dublin Lions is a registered amateur sports club.
-          </p>
-        </div>
-      </section>
-    </>
-  )
-}
-
 /* ─────────────────────── Contact Section ─────────────────────── */
 function ContactSection() {
   const headerReveal = useScrollReveal()
@@ -1635,7 +1513,6 @@ export default function Home() {
       <TeamsSection />
       <ScheduleSection isManager={isManager} />
       <GallerySection />
-      <MembershipSection />
       <ContactSection />
     </div>
   )

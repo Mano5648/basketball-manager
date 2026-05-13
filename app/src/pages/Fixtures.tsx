@@ -47,6 +47,13 @@ interface Standing {
   isLions?: boolean
 }
 
+// Returns true if the fixture's date+time has already passed.
+function isFixturePast(f: Pick<Fixture, 'date' | 'monthLong' | 'time'>): boolean {
+  const parsed = new Date(`${f.monthLong} ${f.date} ${f.time}`)
+  if (isNaN(parsed.getTime())) return false
+  return parsed.getTime() < Date.now()
+}
+
 // ─── Data ───
 const standings: Standing[] = [
   { pos: 1, team: 'Templeogue', p: 14, w: 11, l: 3, pf: 1120, pa: 980, diff: 140, pts: 33 },
@@ -310,7 +317,7 @@ function FixtureCard({ fixture, index }: { fixture: Fixture; index: number }) {
 
           {/* Result / Action */}
           <div className="shrink-0 flex items-center">
-            {fixture.status === 'upcoming' && (
+            {fixture.status === 'upcoming' && !isFixturePast(fixture) && (
               <Link
                 to={fixture.ticketLink || '/contact'}
                 className="bg-electric-blue text-white font-inter font-semibold text-sm px-5 py-2.5 rounded hover:bg-blue-400 hover:scale-[1.03] hover:shadow-lg transition-all duration-150 flex items-center gap-2"
@@ -318,6 +325,11 @@ function FixtureCard({ fixture, index }: { fixture: Fixture; index: number }) {
                 <Ticket className="w-4 h-4" />
                 Get Tickets
               </Link>
+            )}
+            {fixture.status === 'upcoming' && isFixturePast(fixture) && (
+              <span className="font-inter font-semibold text-xs uppercase tracking-widest text-slate-500 bg-slate-700/40 border border-slate-700 px-3 py-2 rounded">
+                Tickets Closed
+              </span>
             )}
             {fixture.status === 'completed' && fixture.result && (
               <div className="text-right">
