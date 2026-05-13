@@ -11,6 +11,7 @@ import {
   Home,
   ArrowRight,
 } from 'lucide-react'
+import { asset } from '@/hooks/useSiteImages'
 
 // ─── Types ───
 interface Fixture {
@@ -619,7 +620,7 @@ export default function Fixtures() {
               style={{ transitionDelay: '150ms' }}
             >
               <img
-                src="/venue-colaiste-bride.jpg"
+                src={asset('venue-colaiste-bride.jpg')}
                 alt="Col\u00E1iste Br\u00EDde"
                 className="w-full aspect-video object-cover"
               />

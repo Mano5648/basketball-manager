@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { Instagram, Facebook, Twitter, MapPin, Mail, User } from 'lucide-react'
-import { useSiteImage } from '@/hooks/useSiteImages'
+import { useSiteImage, asset } from '@/hooks/useSiteImages'
 
 export default function Footer() {
   const logoUrl = useSiteImage('logo')
@@ -125,12 +125,12 @@ export default function Footer() {
           </p>
           <div className="flex flex-wrap items-center justify-center gap-8">
             <img
-              src="/sponsor-joels.png"
+              src={asset('sponsor-joels.png')}
               alt="JOELS"
               className="h-8 w-auto grayscale opacity-70 hover:opacity-100 transition-opacity duration-200"
             />
             <img
-              src="/sponsor-abbey-seals.png"
+              src={asset('sponsor-abbey-seals.png')}
               alt="Abbey Seals"
               className="h-8 w-auto grayscale opacity-70 hover:opacity-100 transition-opacity duration-200"
             />

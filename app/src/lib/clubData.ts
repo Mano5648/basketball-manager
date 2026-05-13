@@ -211,6 +211,12 @@ const KEYS = {
   ticketPrices: 'dlbc_ticket_prices',
   ticketPurchases: 'dlbc_ticket_purchases',
   chatMessages: 'dlbc_chat_messages',
+  chatMembers: 'dlbc_chat_members',
+}
+
+export interface ChatRoomMembership {
+  memberIds: string[]
+  adminIds: string[]
 }
 
 /* ─────────────────── Helpers ─────────────────── */
@@ -343,6 +349,58 @@ export function getChatMessages(): ChatMessage[] {
 
 export function setChatMessages(v: ChatMessage[]) {
   setStore(KEYS.chatMessages, v)
+}
+
+/* ─────────────────── Chat Membership (per team/room) ─────────────────── */
+
+type ChatMembersMap = Record<string, ChatRoomMembership>
+
+export function getChatMembersMap(): ChatMembersMap {
+  return getStore<ChatMembersMap>(KEYS.chatMembers, {})
+}
+
+export function setChatMembersMap(v: ChatMembersMap) {
+  setStore(KEYS.chatMembers, v)
+}
+
+export function getChatRoom(teamId: string): ChatRoomMembership {
+  const map = getChatMembersMap()
+  if (map[teamId]) return map[teamId]
+  // Default: seed from the team's roster, no admins yet.
+  const team = getTeams().find((t) => t.id === teamId)
+  return { memberIds: team ? [...team.players] : [], adminIds: [] }
+}
+
+export function setChatRoom(teamId: string, room: ChatRoomMembership) {
+  const map = getChatMembersMap()
+  map[teamId] = room
+  setChatMembersMap(map)
+}
+
+export function addChatMember(teamId: string, playerId: string) {
+  const room = getChatRoom(teamId)
+  if (!room.memberIds.includes(playerId)) {
+    room.memberIds = [...room.memberIds, playerId]
+    setChatRoom(teamId, room)
+  }
+}
+
+export function removeChatMember(teamId: string, playerId: string) {
+  const room = getChatRoom(teamId)
+  room.memberIds = room.memberIds.filter((id) => id !== playerId)
+  room.adminIds = room.adminIds.filter((id) => id !== playerId)
+  setChatRoom(teamId, room)
+}
+
+export function setChatAdmin(teamId: string, playerId: string, isAdmin: boolean) {
+  const room = getChatRoom(teamId)
+  if (isAdmin) {
+    if (!room.adminIds.includes(playerId)) room.adminIds = [...room.adminIds, playerId]
+    if (!room.memberIds.includes(playerId)) room.memberIds = [...room.memberIds, playerId]
+  } else {
+    room.adminIds = room.adminIds.filter((id) => id !== playerId)
+  }
+  setChatRoom(teamId, room)
 }
 
 export function addChatMessage(teamId: string, senderName: string, senderRole: string, text: string) {

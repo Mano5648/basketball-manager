@@ -49,9 +49,13 @@ export default function PlayerLogin() {
   const [regJersey, setRegJersey] = useState('')
 
   useEffect(() => {
+    if (localStorage.getItem('dlbc_user')) {
+      navigate('/', { replace: true })
+      return
+    }
     const saved = localStorage.getItem('dlbc_remember_email')
     if (saved) setEmail(saved)
-  }, [])
+  }, [navigate])
 
   const triggerShake = useCallback(() => {
     setShake(true)
@@ -70,13 +74,14 @@ export default function PlayerLogin() {
       if (player) {
         const user = { ...player, role: 'player' as const }
         localStorage.setItem('dlbc_user', JSON.stringify(user))
+        window.dispatchEvent(new Event('dlbc-auth-change'))
         if (rememberMe) {
           localStorage.setItem('dlbc_remember_email', email)
         } else {
           localStorage.removeItem('dlbc_remember_email')
         }
         setStatus('success')
-        setTimeout(() => navigate('/player/dashboard'), 500)
+        setTimeout(() => navigate('/'), 500)
       } else {
         setStatus('error')
         setErrorMsg('Invalid email or password. Please try again.')
@@ -117,7 +122,7 @@ export default function PlayerLogin() {
       const user = { ...newPlayer, role: 'player' as const }
       localStorage.setItem('dlbc_user', JSON.stringify(user))
       setStatus('success')
-      setTimeout(() => navigate('/player/dashboard'), 500)
+      setTimeout(() => navigate('/'), 500)
     }, 800)
   }
 

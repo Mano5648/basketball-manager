@@ -5,7 +5,7 @@ import { inspectAttr } from 'plugin-inspect-react-code'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: './',
+  base: '/basketball-manager/',
   plugins: [inspectAttr(), react()],
   server: {
     port: 3000,

@@ -1,24 +1,35 @@
 import { useState, useEffect, useCallback } from 'react'
 
+// Resolve a public-folder asset to a URL that includes Vite's base path.
+// Works under both root (`/`) and subdir (`/basketball-manager/`) deployments.
+export function asset(p: string): string {
+  if (!p) return p
+  // pass through data URIs / absolute URLs / blob URLs unchanged
+  if (/^(data:|blob:|https?:)/i.test(p)) return p
+  const base = import.meta.env.BASE_URL || '/'
+  const clean = p.startsWith('/') ? p.slice(1) : p
+  return base.endsWith('/') ? base + clean : base + '/' + clean
+}
+
 // Default image paths (bundled in public/)
 export const defaultImageMap: Record<string, { path: string; title: string; usedOn: string }> = {
-  hero: { path: '/hero-team-celebration.jpg', title: 'Homepage Hero Background', usedOn: 'Landing page hero section' },
-  about: { path: '/about-team-huddle.jpg', title: 'About the Club', usedOn: 'About section on homepage' },
-  match1: { path: '/match-action-1.jpg', title: 'Gallery Photo 1', usedOn: 'Homepage gallery grid, position 1' },
-  match2: { path: '/match-action-2.jpg', title: 'Gallery Photo 2', usedOn: 'Homepage gallery grid, position 2' },
-  match3: { path: '/match-action-3.jpg', title: 'Gallery Photo 3', usedOn: 'Homepage gallery grid, position 3' },
-  match4: { path: '/match-action-4.jpg', title: 'Gallery Photo 4', usedOn: 'Homepage gallery grid, position 4' },
-  match5: { path: '/match-action-5.jpg', title: 'Gallery Photo 5', usedOn: 'Homepage gallery grid, position 5' },
-  match6: { path: '/match-action-6.jpg', title: 'Gallery Photo 6', usedOn: 'Homepage gallery grid, position 6' },
-  match7: { path: '/match-action-7.jpg', title: 'Gallery Photo 7', usedOn: 'Homepage gallery grid, position 7' },
-  match8: { path: '/match-action-8.jpg', title: 'Gallery Photo 8', usedOn: 'Homepage gallery grid, position 8' },
-  playerKevin: { path: '/player-kevin-anyanwu.jpg', title: "Men's Team: Kevin Anyanwu", usedOn: 'Teams page / Homepage men\'s squad' },
-  playerTiago: { path: '/player-tiago-pereira.jpg', title: "Men's Team: Tiago Pereira", usedOn: 'Teams page / Homepage men\'s squad' },
-  playerTara: { path: '/player-tara-nevin.jpg', title: "Women's Team: Tara Nevin", usedOn: 'Teams page / Homepage women\'s squad' },
-  playerEmily: { path: '/player-emily-smyth.jpg', title: "Women's Team: Emily Smyth", usedOn: 'Teams page / Homepage women\'s squad' },
-  coachRob: { path: '/coach-rob-white.jpg', title: "Head Coach: Rob White", usedOn: 'Teams page coach profile' },
-  venue: { path: '/venue-colaiste-bride.jpg', title: 'Venue: Coláiste Bríde', usedOn: 'Contact page venue section' },
-  logo: { path: '/logo-lions-emblem.png', title: 'Club Logo', usedOn: 'Navbar, Footer, Login pages, Dashboard sidebar' },
+  hero: { path: asset('hero-team-celebration.jpg'), title: 'Homepage Hero Background', usedOn: 'Landing page hero section' },
+  about: { path: asset('about-team-huddle.jpg'), title: 'About the Club', usedOn: 'About section on homepage' },
+  match1: { path: asset('match-action-1.jpg'), title: 'Gallery Photo 1', usedOn: 'Homepage gallery grid, position 1' },
+  match2: { path: asset('match-action-2.jpg'), title: 'Gallery Photo 2', usedOn: 'Homepage gallery grid, position 2' },
+  match3: { path: asset('match-action-3.jpg'), title: 'Gallery Photo 3', usedOn: 'Homepage gallery grid, position 3' },
+  match4: { path: asset('match-action-4.jpg'), title: 'Gallery Photo 4', usedOn: 'Homepage gallery grid, position 4' },
+  match5: { path: asset('match-action-5.jpg'), title: 'Gallery Photo 5', usedOn: 'Homepage gallery grid, position 5' },
+  match6: { path: asset('match-action-6.jpg'), title: 'Gallery Photo 6', usedOn: 'Homepage gallery grid, position 6' },
+  match7: { path: asset('match-action-7.jpg'), title: 'Gallery Photo 7', usedOn: 'Homepage gallery grid, position 7' },
+  match8: { path: asset('match-action-8.jpg'), title: 'Gallery Photo 8', usedOn: 'Homepage gallery grid, position 8' },
+  playerKevin: { path: asset('player-kevin-anyanwu.jpg'), title: "Men's Team: Kevin Anyanwu", usedOn: 'Teams page / Homepage men\'s squad' },
+  playerTiago: { path: asset('player-tiago-pereira.jpg'), title: "Men's Team: Tiago Pereira", usedOn: 'Teams page / Homepage men\'s squad' },
+  playerTara: { path: asset('player-tara-nevin.jpg'), title: "Women's Team: Tara Nevin", usedOn: 'Teams page / Homepage women\'s squad' },
+  playerEmily: { path: asset('player-emily-smyth.jpg'), title: "Women's Team: Emily Smyth", usedOn: 'Teams page / Homepage women\'s squad' },
+  coachRob: { path: asset('coach-rob-white.jpg'), title: "Head Coach: Rob White", usedOn: 'Teams page coach profile' },
+  venue: { path: asset('venue-colaiste-bride.jpg'), title: 'Venue: Coláiste Bríde', usedOn: 'Contact page venue section' },
+  logo: { path: asset('logo-lions-emblem.png'), title: 'Club Logo', usedOn: 'Navbar, Footer, Login pages, Dashboard sidebar' },
 }
 
 // Helper: get current image URL for a key

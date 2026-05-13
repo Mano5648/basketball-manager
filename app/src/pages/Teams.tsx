@@ -4,7 +4,7 @@ import {
   X, Trophy, TrendingUp, Users, ChevronRight, Pencil, Trash2, Camera,
   AlertTriangle, Check
 } from 'lucide-react'
-import { useSiteImages, useSiteImage } from '@/hooks/useSiteImages'
+import { useSiteImages, useSiteImage, asset } from '@/hooks/useSiteImages'
 import {
   getPlayers, setPlayers, getTeams, setTeams,
   type Player
@@ -71,7 +71,7 @@ function toDisplayPlayer(p: Player): DisplayPlayer {
     age: p.age || 25,
     since: p.since || 2021,
     nationality: p.gender === 'Male' ? 'IRL' : 'IRL',
-    image: p.photoUrl || '',
+    image: p.photoUrl ? asset(p.photoUrl) : '',
     ppg: p.ppg || 0,
     rpg: p.rpg || 0,
     apg: p.apg || 0,

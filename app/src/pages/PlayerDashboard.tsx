@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { asset } from '@/hooks/useSiteImages'
 import {
   LayoutDashboard,
   CreditCard,
@@ -1288,7 +1289,7 @@ export default function PlayerDashboard() {
       >
         {/* Brand */}
         <div className="h-16 flex items-center gap-3 px-6 border-b border-white/5">
-          <img src="/logo-lions-emblem.png" alt="Dublin Lions" className="h-9 w-auto brightness-0 invert" />
+          <img src={asset('logo-lions-emblem.png')} alt="Dublin Lions" className="h-9 w-auto brightness-0 invert" />
           <div>
             <p className="font-inter font-semibold text-sm text-white leading-tight">Dublin Lions</p>
             <p className="font-inter text-xs text-slate-400 leading-tight">Player Portal</p>

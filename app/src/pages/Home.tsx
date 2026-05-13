@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { useSiteImage } from '@/hooks/useSiteImages'
+import { useSiteImage, asset } from '@/hooks/useSiteImages'
 import {
   Trophy, Users, TrendingUp, Instagram, MapPin, Mail,
   User, Maximize2, ChevronLeft, ChevronRight, X, Check,
@@ -347,7 +347,7 @@ function TeamsSection() {
           <div ref={mensReveal.ref} className="mb-16">
             <div className="flex items-center gap-4 mb-6">
               <img
-                src="/sponsor-joels.png"
+                src={asset('sponsor-joels.png')}
                 alt="JOELS"
                 className="h-10 w-auto brightness-0 invert opacity-90"
               />
@@ -396,7 +396,7 @@ function TeamsSection() {
           <div ref={womensReveal.ref}>
             <div className="flex items-center gap-4 mb-6">
               <img
-                src="/sponsor-abbey-seals.png"
+                src={asset('sponsor-abbey-seals.png')}
                 alt="Abbey Seals"
                 className="h-10 w-auto brightness-0 invert opacity-90"
               />

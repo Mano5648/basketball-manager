@@ -1,7 +1,18 @@
 import { useState, useEffect } from 'react'
-import { Link, useLocation } from 'react-router-dom'
-import { Menu, X } from 'lucide-react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Menu, X, LogOut } from 'lucide-react'
 import { useSiteImage } from '@/hooks/useSiteImages'
+
+type AuthUser = { role: 'manager' | 'player'; name?: string; email?: string } | null
+
+function readUser(): AuthUser {
+  try {
+    const raw = localStorage.getItem('dlbc_user')
+    return raw ? (JSON.parse(raw) as AuthUser) : null
+  } catch {
+    return null
+  }
+}
 
 const navLinks = [
   { label: 'About', href: '/#about' },
@@ -15,8 +26,31 @@ const navLinks = [
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [user, setUser] = useState<AuthUser>(() => readUser())
   const location = useLocation()
+  const navigate = useNavigate()
   const logoUrl = useSiteImage('logo')
+
+  useEffect(() => {
+    const sync = () => setUser(readUser())
+    window.addEventListener('storage', sync)
+    window.addEventListener('dlbc-auth-change', sync)
+    return () => {
+      window.removeEventListener('storage', sync)
+      window.removeEventListener('dlbc-auth-change', sync)
+    }
+  }, [])
+
+  const handleLogout = () => {
+    localStorage.removeItem('dlbc_user')
+    localStorage.removeItem('dlbc_remember_email')
+    window.dispatchEvent(new Event('dlbc-auth-change'))
+    setUser(null)
+    setMobileOpen(false)
+    navigate('/')
+  }
+
+  const dashboardPath = user?.role === 'manager' ? '/manager/dashboard' : '/player/dashboard'
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 100)
@@ -105,18 +139,38 @@ export default function Navbar() {
 
           {/* Desktop CTA + Auth links */}
           <div className="hidden md:flex items-center gap-4">
-            <Link
-              to="/player/login"
-              className="font-inter font-medium text-sm uppercase tracking-widest text-white/70 hover:text-electric-blue transition-colors duration-200"
-            >
-              Player Login
-            </Link>
-            <Link
-              to="/manager/login"
-              className="bg-electric-blue text-white font-inter font-semibold text-sm uppercase tracking-widest px-6 py-3 rounded hover:bg-blue-400 hover:scale-[1.03] hover:shadow-lg transition-all duration-150"
-            >
-              Join the Pride
-            </Link>
+            {user ? (
+              <>
+                <Link
+                  to={dashboardPath}
+                  className="bg-electric-blue text-white font-inter font-semibold text-sm uppercase tracking-widest px-6 py-3 rounded hover:bg-blue-400 hover:scale-[1.03] hover:shadow-lg transition-all duration-150"
+                >
+                  Dashboard
+                </Link>
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center gap-2 font-inter font-medium text-sm uppercase tracking-widest text-white/70 hover:text-electric-blue transition-colors duration-200"
+                >
+                  <LogOut size={16} />
+                  Logout
+                </button>
+              </>
+            ) : (
+              <>
+                <Link
+                  to="/player/login"
+                  className="font-inter font-medium text-sm uppercase tracking-widest text-white/70 hover:text-electric-blue transition-colors duration-200"
+                >
+                  Player Login
+                </Link>
+                <Link
+                  to="/manager/login"
+                  className="bg-electric-blue text-white font-inter font-semibold text-sm uppercase tracking-widest px-6 py-3 rounded hover:bg-blue-400 hover:scale-[1.03] hover:shadow-lg transition-all duration-150"
+                >
+                  Join the Pride
+                </Link>
+              </>
+            )}
           </div>
 
           {/* Mobile Hamburger */}
@@ -175,20 +229,41 @@ export default function Navbar() {
             )
           )}
           <div className="flex flex-col gap-4 mt-4 items-center">
-            <Link
-              to="/player/login"
-              onClick={() => setMobileOpen(false)}
-              className="font-inter font-semibold text-base uppercase tracking-widest text-white/80 hover:text-electric-blue transition-colors duration-200"
-            >
-              Player Login
-            </Link>
-            <Link
-              to="/manager/login"
-              onClick={() => setMobileOpen(false)}
-              className="bg-electric-blue text-white font-inter font-semibold text-base uppercase tracking-widest px-8 py-4 rounded hover:bg-blue-400 transition-all duration-150"
-            >
-              Join the Pride
-            </Link>
+            {user ? (
+              <>
+                <Link
+                  to={dashboardPath}
+                  onClick={() => setMobileOpen(false)}
+                  className="bg-electric-blue text-white font-inter font-semibold text-base uppercase tracking-widest px-8 py-4 rounded hover:bg-blue-400 transition-all duration-150"
+                >
+                  Dashboard
+                </Link>
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center gap-2 font-inter font-semibold text-base uppercase tracking-widest text-white/80 hover:text-electric-blue transition-colors duration-200"
+                >
+                  <LogOut size={18} />
+                  Logout
+                </button>
+              </>
+            ) : (
+              <>
+                <Link
+                  to="/player/login"
+                  onClick={() => setMobileOpen(false)}
+                  className="font-inter font-semibold text-base uppercase tracking-widest text-white/80 hover:text-electric-blue transition-colors duration-200"
+                >
+                  Player Login
+                </Link>
+                <Link
+                  to="/manager/login"
+                  onClick={() => setMobileOpen(false)}
+                  className="bg-electric-blue text-white font-inter font-semibold text-base uppercase tracking-widest px-8 py-4 rounded hover:bg-blue-400 transition-all duration-150"
+                >
+                  Join the Pride
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </div>

@@ -16,7 +16,6 @@ import {
   Plus,
   LogOut,
   ChevronDown,
-  MoreVertical,
   UserPlus,
   Banknote,
   Send,
@@ -95,6 +94,11 @@ import {
   getOrders,
   getChatMessages,
   addChatMessage,
+  getChatRoom,
+  addChatMember,
+  removeChatMember,
+  setChatAdmin,
+  type ChatRoomMembership,
   type Product,
   type ChatMessage,
 } from '@/lib/clubData'
@@ -113,7 +117,6 @@ const navItems: NavItem[] = [
   { key: 'payments', label: 'Payments', icon: CreditCard },
   { key: 'teams', label: 'Teams', icon: Trophy },
   { key: 'schedule', label: 'Schedule', icon: Calendar },
-  { key: 'communications', label: 'Communications', icon: MessageSquare },
   { key: 'chat', label: 'Team Chat', icon: MessageCircle },
   { key: 'reports', label: 'Reports', icon: BarChart3 },
   { key: 'images', label: 'Images', icon: Image },
@@ -402,12 +405,20 @@ function TopBar({
   notifications,
   onDismissNotification,
   onClearNotifications,
+  search,
+  onSearch,
+  onJumpToMembers,
+  onQuickAction,
 }: {
   title: string
   onMenuToggle: () => void
   notifications: { id: string; text: string; detail: string; type: string }[]
   onDismissNotification: (id: string) => void
   onClearNotifications: () => void
+  search: string
+  onSearch: (s: string) => void
+  onJumpToMembers: () => void
+  onQuickAction: (action: 'add-member' | 'add-payment' | 'send-message' | 'add-fixture') => void
 }) {
   const [showQuickActions, setShowQuickActions] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
@@ -431,7 +442,10 @@ function TopBar({
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             type="text"
-            placeholder="Search members, payments..."
+            value={search}
+            onChange={(e) => onSearch(e.target.value)}
+            onFocus={onJumpToMembers}
+            placeholder="Search members..."
             className="w-64 lg:w-96 bg-white/5 border border-[#334155] rounded-lg pl-10 pr-4 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 transition-all duration-200"
           />
         </div>
@@ -493,16 +507,16 @@ function TopBar({
           </button>
           {showQuickActions && (
             <div className="absolute right-0 top-full mt-2 w-56 bg-[#1E293B] border border-white/[0.06] rounded-xl shadow-xl z-50 py-2">
-              {[
-                { label: 'Add Member', icon: UserPlus },
-                { label: 'Record Payment', icon: Banknote },
-                { label: 'Send Message', icon: Send },
-                { label: 'Add Fixture', icon: Calendar },
-              ].map((item) => (
+              {([
+                { label: 'Add Member', icon: UserPlus, action: 'add-member' as const },
+                { label: 'Record Payment', icon: Banknote, action: 'add-payment' as const },
+                { label: 'Send Message', icon: Send, action: 'send-message' as const },
+                { label: 'Add Fixture', icon: Calendar, action: 'add-fixture' as const },
+              ]).map((item) => (
                 <button
                   key={item.label}
                   className="w-full flex items-center gap-3 px-4 py-2.5 font-inter text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-colors duration-150"
-                  onClick={() => setShowQuickActions(false)}
+                  onClick={() => { setShowQuickActions(false); onQuickAction(item.action) }}
                 >
                   <item.icon size={16} />
                   {item.label}
@@ -674,9 +688,17 @@ function DashboardView({ data }: { data: ReturnType<typeof useLiveData> }) {
 const POSITIONS = ['Guard', 'Forward', 'Center', 'Point Guard', 'Shooting Guard', 'Small Forward', 'Power Forward']
 const PAYMENT_PLANS = ['Monthly', 'Full Session', 'Per Session', 'None']
 
-function MembersView({ data }: { data: ReturnType<typeof useLiveData> }) {
+function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof useLiveData>; initialSearch?: string }) {
   const { players, teams, ageGroups, savePlayers, saveTeams } = data
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(initialSearch)
+
+  useEffect(() => { setSearch(initialSearch) }, [initialSearch])
+
+  useEffect(() => {
+    const h = () => setShowAddModal(true)
+    window.addEventListener('dlbc-open-add-member', h)
+    return () => window.removeEventListener('dlbc-open-add-member', h)
+  }, [])
   const [teamFilter, setTeamFilter] = useState('All')
   const [statusFilter, setStatusFilter] = useState('All')
   const [ageGroupFilter, setAgeGroupFilter] = useState('All')
@@ -1682,133 +1704,6 @@ function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
   )
 }
 
-/* ─────────────────────── View: Communications ─────────────────────── */
-
-function CommunicationsView({ data }: { data: ReturnType<typeof useLiveData> }) {
-  const { announcements, teams, saveAnnouncements } = data
-  const [subject, setSubject] = useState('')
-  const [message, setMessage] = useState('')
-  const [recipient, setRecipient] = useState('All Members')
-  const [showToast, setShowToast] = useState(false)
-
-  const handleSend = () => {
-    if (!subject.trim() || !message.trim()) return
-    const newAnnouncement: Announcement = {
-      id: `a${Date.now()}`,
-      subject,
-      message,
-      recipients: recipient,
-      date: new Date().toISOString().split('T')[0],
-      status: 'Sent',
-    }
-    const next = [newAnnouncement, ...announcements]
-    saveAnnouncements(next)
-    setSubject('')
-    setMessage('')
-    setRecipient('All Members')
-    setShowToast(true)
-    setTimeout(() => setShowToast(false), 3000)
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Communications</h2>
-      </div>
-
-      {showToast && (
-        <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4 flex items-center gap-3">
-          <CheckCircle size={20} className="text-green-400" />
-          <p className="font-inter text-sm text-green-400">Announcement sent successfully!</p>
-        </div>
-      )}
-
-      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6 space-y-4">
-        <h3 className="font-inter font-semibold text-lg text-white">Send Announcement</h3>
-        <div>
-          <label className="block font-inter text-sm text-slate-300 mb-1">Recipients</label>
-          <select
-            value={recipient}
-            onChange={(e) => setRecipient(e.target.value)}
-            className="w-full md:w-64 bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400"
-          >
-            <option>All Members</option>
-            {teams.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
-            <option>Unpaid Members</option>
-            <option>Custom</option>
-          </select>
-        </div>
-        <div>
-          <label className="block font-inter text-sm text-slate-300 mb-1">Subject</label>
-          <input
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30"
-            placeholder="Enter announcement subject..."
-          />
-        </div>
-        <div>
-          <label className="block font-inter text-sm text-slate-300 mb-1">Message</label>
-          <textarea
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            rows={5}
-            className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 resize-none"
-            placeholder="Type your announcement here..."
-            maxLength={500}
-          />
-          <p className="font-inter text-xs text-slate-500 mt-1 text-right">{message.length}/500</p>
-        </div>
-        <div className="flex justify-end">
-          <button
-            onClick={handleSend}
-            className="flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-6 py-3 rounded hover:scale-[1.03] hover:shadow-lg transition-all duration-150"
-          >
-            <Send size={16} />
-            Send Message
-          </button>
-        </div>
-      </div>
-
-      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl overflow-hidden">
-        <div className="p-6 pb-4">
-          <h3 className="font-inter font-semibold text-lg text-white">Recent Announcements</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-white/[0.06]">
-                {['Date', 'Subject', 'Recipients', 'Status', 'Actions'].map((col) => (
-                  <th key={col} className="px-6 py-4 font-inter font-semibold text-xs uppercase tracking-widest text-slate-400 text-left">{col}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/[0.06]">
-              {announcements.map((a) => (
-                <tr key={a.id} className="hover:bg-white/5 transition-colors duration-150">
-                  <td className="px-6 py-4 font-inter text-sm text-slate-300">{a.date}</td>
-                  <td className="px-6 py-4 font-inter font-medium text-sm text-white">{a.subject}</td>
-                  <td className="px-6 py-4 font-inter text-sm text-slate-300">{a.recipients}</td>
-                  <td className="px-6 py-4"><StatusBadge status={a.status} /></td>
-                  <td className="px-6 py-4">
-                    <button className="text-slate-400 hover:text-white transition-colors"><MoreVertical size={18} /></button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {announcements.length === 0 && (
-          <div className="px-6 py-8 text-center">
-            <MessageSquare size={32} className="text-slate-500 mx-auto mb-3" />
-            <p className="font-inter text-sm text-slate-400">No announcements yet</p>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
 /* ─────────────────────── View: Reports ─────────────────────── */
 
 function ReportsView({ data }: { data: ReturnType<typeof useLiveData> }) {
@@ -2440,22 +2335,33 @@ function ProductForm({ product, onSave, onCancel }: { product?: Product | null; 
 /* ─────────────────────── View: Chat ─────────────────────── */
 
 function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
-  const { teams } = data
+  const { teams, players } = data
   const [activeTeamId, setActiveTeamId] = useState<string>(teams[0]?.id || '')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [text, setText] = useState('')
+  const [room, setRoom] = useState<ChatRoomMembership>({ memberIds: [], adminIds: [] })
+  const [showMembers, setShowMembers] = useState(false)
+  const [showAddMember, setShowAddMember] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  const refreshRoom = useCallback(() => {
+    if (activeTeamId) setRoom(getChatRoom(activeTeamId))
+  }, [activeTeamId])
+
+  useEffect(() => { refreshRoom() }, [refreshRoom])
 
   useEffect(() => {
     const sync = () => setMessages(getChatMessages())
     sync()
-    const h = (e: StorageEvent) => { if (e.key === 'dlbc_chat_messages') sync() }
+    const h = (e: StorageEvent) => {
+      if (e.key === 'dlbc_chat_messages') sync()
+      if (e.key === 'dlbc_chat_members') refreshRoom()
+    }
     window.addEventListener('storage', h)
-    // BroadcastChannel for same-tab sync
     let bc: BroadcastChannel | null = null
     try { bc = new BroadcastChannel('dlbc_chat'); bc.onmessage = sync } catch {}
     return () => { window.removeEventListener('storage', h); bc?.close() }
-  }, [])
+  }, [refreshRoom])
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -2509,15 +2415,24 @@ function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
 
         {/* Chat Area */}
         <div className="flex-1 flex flex-col min-w-0">
-          <div className="p-4 border-b border-white/[0.06] flex items-center justify-between">
-            <div>
-              <p className="font-inter font-semibold text-white">
+          <div className="p-4 border-b border-white/[0.06] flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="font-inter font-semibold text-white truncate">
                 {teams.find((t) => t.id === activeTeamId)?.name || 'Select a team'}
               </p>
               <p className="font-inter text-xs text-slate-500">
-                {filtered.length} message{filtered.length !== 1 ? 's' : ''}
+                {filtered.length} message{filtered.length !== 1 ? 's' : ''} · {room.memberIds.length} member{room.memberIds.length !== 1 ? 's' : ''}
               </p>
             </div>
+            {activeTeamId && (
+              <button
+                onClick={() => setShowMembers(true)}
+                className="shrink-0 inline-flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/[0.08] text-white font-inter font-medium text-sm px-3 py-2 rounded-lg transition-colors"
+              >
+                <Users size={16} />
+                Members
+              </button>
+            )}
           </div>
 
           <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -2564,6 +2479,173 @@ function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+
+      {showMembers && activeTeamId && (
+        <ChatMembersModal
+          teamName={teams.find((t) => t.id === activeTeamId)?.name || 'Chat'}
+          room={room}
+          players={players}
+          onClose={() => setShowMembers(false)}
+          onAddClick={() => setShowAddMember(true)}
+          onRemove={(pid) => { removeChatMember(activeTeamId, pid); refreshRoom() }}
+          onToggleAdmin={(pid, makeAdmin) => { setChatAdmin(activeTeamId, pid, makeAdmin); refreshRoom() }}
+        />
+      )}
+
+      {showAddMember && activeTeamId && (
+        <AddChatMemberModal
+          players={players}
+          excludeIds={room.memberIds}
+          onClose={() => setShowAddMember(false)}
+          onAdd={(pid) => { addChatMember(activeTeamId, pid); refreshRoom() }}
+        />
+      )}
+    </div>
+  )
+}
+
+/* ─── Chat Members Modal ─── */
+function ChatMembersModal({
+  teamName,
+  room,
+  players,
+  onClose,
+  onAddClick,
+  onRemove,
+  onToggleAdmin,
+}: {
+  teamName: string
+  room: ChatRoomMembership
+  players: Player[]
+  onClose: () => void
+  onAddClick: () => void
+  onRemove: (playerId: string) => void
+  onToggleAdmin: (playerId: string, makeAdmin: boolean) => void
+}) {
+  const memberDetails = room.memberIds
+    .map((id) => players.find((p) => p.id === id))
+    .filter((p): p is Player => !!p)
+
+  return (
+    <div className="fixed inset-0 z-[120] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-[#1E293B] border border-white/[0.08] rounded-xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
+          <div>
+            <h3 className="font-oswald font-bold text-xl text-white">{teamName}</h3>
+            <p className="font-inter text-xs text-slate-400">{memberDetails.length} chat member{memberDetails.length !== 1 ? 's' : ''}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={22} /></button>
+        </div>
+
+        <div className="p-5 border-b border-white/[0.06]">
+          <button
+            onClick={onAddClick}
+            className="w-full inline-flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-4 py-2.5 rounded-lg transition-colors"
+          >
+            <UserPlus size={16} /> Add Member
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-2">
+          {memberDetails.length === 0 ? (
+            <p className="text-center font-inter text-sm text-slate-400 py-8">No members in this chat yet.</p>
+          ) : (
+            memberDetails.map((p) => {
+              const isAdmin = room.adminIds.includes(p.id)
+              return (
+                <div key={p.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/[0.03]">
+                  <InitialsAvatar name={p.name} size={36} />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-inter font-medium text-sm text-white truncate">{p.name}</p>
+                    <p className="font-inter text-xs text-slate-500 truncate">{p.position} · #{p.jerseyNumber}</p>
+                  </div>
+                  {isAdmin && (
+                    <span className="inline-flex items-center gap-1 bg-amber-500/10 text-amber-300 border border-amber-500/20 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded">
+                      <ShieldCheck size={11} /> Admin
+                    </span>
+                  )}
+                  <button
+                    onClick={() => onToggleAdmin(p.id, !isAdmin)}
+                    title={isAdmin ? 'Revoke admin' : 'Make admin'}
+                    className="text-slate-400 hover:text-amber-400 transition-colors p-1.5"
+                  >
+                    <ShieldCheck size={16} />
+                  </button>
+                  <button
+                    onClick={() => onRemove(p.id)}
+                    title="Remove from chat"
+                    className="text-slate-400 hover:text-red-400 transition-colors p-1.5"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              )
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ─── Add Chat Member Modal ─── */
+function AddChatMemberModal({
+  players,
+  excludeIds,
+  onClose,
+  onAdd,
+}: {
+  players: Player[]
+  excludeIds: string[]
+  onClose: () => void
+  onAdd: (playerId: string) => void
+}) {
+  const [q, setQ] = useState('')
+  const available = players
+    .filter((p) => !excludeIds.includes(p.id))
+    .filter((p) => !q.trim() || p.name.toLowerCase().includes(q.toLowerCase()) || p.email.toLowerCase().includes(q.toLowerCase()))
+
+  return (
+    <div className="fixed inset-0 z-[130] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-[#1E293B] border border-white/[0.08] rounded-xl shadow-2xl w-full max-w-md max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
+          <h3 className="font-oswald font-bold text-lg text-white">Add Member to Chat</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={20} /></button>
+        </div>
+        <div className="p-4 border-b border-white/[0.06]">
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              autoFocus
+              type="text"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search players..."
+              className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg pl-9 pr-3 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2">
+          {available.length === 0 ? (
+            <p className="text-center font-inter text-sm text-slate-400 py-8">No players to add.</p>
+          ) : (
+            available.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => { onAdd(p.id); onClose() }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/[0.05] text-left"
+              >
+                <InitialsAvatar name={p.name} size={32} />
+                <div className="flex-1 min-w-0">
+                  <p className="font-inter font-medium text-sm text-white truncate">{p.name}</p>
+                  <p className="font-inter text-xs text-slate-500 truncate">{p.email}</p>
+                </div>
+                <UserPlus size={16} className="text-blue-400" />
+              </button>
+            ))
+          )}
         </div>
       </div>
     </div>
@@ -2620,6 +2702,7 @@ export default function ManagerDashboard() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   const [isAuthorized, setIsAuthorized] = useState(false)
+  const [globalSearch, setGlobalSearch] = useState('')
 
   const [notifications, setNotifications] = useState([
     { id: 'n1', text: 'Payment received', detail: 'Kevin Anyanwu — €50', type: 'success' },
@@ -2661,7 +2744,6 @@ export default function ManagerDashboard() {
     payments: 'Payments',
     teams: 'Teams',
     schedule: 'Schedule',
-    communications: 'Communications',
     chat: 'Team Chat',
     reports: 'Reports',
     images: 'Image Manager',
@@ -2683,15 +2765,23 @@ export default function ManagerDashboard() {
         notifications={notifications}
         onDismissNotification={(id) => setNotifications((prev) => prev.filter((n) => n.id !== id))}
         onClearNotifications={() => setNotifications([])}
+        search={globalSearch}
+        onSearch={setGlobalSearch}
+        onJumpToMembers={() => setActiveView('members')}
+        onQuickAction={(action) => {
+          if (action === 'add-member') { setActiveView('members'); window.dispatchEvent(new Event('dlbc-open-add-member')) }
+          else if (action === 'add-payment') setActiveView('payments')
+          else if (action === 'send-message') setActiveView('chat')
+          else if (action === 'add-fixture') setActiveView('schedule')
+        }}
       />
 
       <main className="ml-0 md:ml-64 mt-16 min-h-[calc(100dvh-4rem)] p-6 md:p-8">
         {activeView === 'dashboard' && <DashboardView data={data} />}
-        {activeView === 'members' && <MembersView data={data} />}
+        {activeView === 'members' && <MembersView data={data} initialSearch={globalSearch} />}
         {activeView === 'payments' && <PaymentsView data={data} />}
         {activeView === 'teams' && <TeamsView data={data} />}
         {activeView === 'schedule' && <ScheduleView data={data} />}
-        {activeView === 'communications' && <CommunicationsView data={data} />}
         {activeView === 'chat' && <ChatView data={data} />}
         {activeView === 'reports' && <ReportsView data={data} />}
         {activeView === 'images' && <ImagesView />}

@@ -16,12 +16,16 @@ export default function ManagerLogin() {
   const [success, setSuccess] = useState(false)
 
   useEffect(() => {
+    if (localStorage.getItem('dlbc_user')) {
+      navigate('/', { replace: true })
+      return
+    }
     const savedEmail = localStorage.getItem('dlbc_remember_email')
     if (savedEmail) {
       setEmail(savedEmail)
       setRememberMe(true)
     }
-  }, [])
+  }, [navigate])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -34,13 +38,14 @@ export default function ManagerLogin() {
       setSuccess(true)
       const user = { role: 'manager', email: 'manager@dublinlions.ie', name: 'Club Manager' }
       localStorage.setItem('dlbc_user', JSON.stringify(user))
+      window.dispatchEvent(new Event('dlbc-auth-change'))
       if (rememberMe) {
         localStorage.setItem('dlbc_remember_email', email)
       } else {
         localStorage.removeItem('dlbc_remember_email')
       }
       setTimeout(() => {
-        navigate('/manager/dashboard')
+        navigate('/')
       }, 500)
     } else {
       setIsLoading(false)
