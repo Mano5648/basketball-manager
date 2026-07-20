@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { useAuth } from '@/lib/AuthContext'
+import { CommandPalette, type CommandItem } from '@/components/dashboard/CommandPalette'
 import type { LucideIcon } from 'lucide-react'
 import {
   LayoutDashboard,
@@ -15,7 +17,7 @@ import {
   Bell,
   Plus,
   LogOut,
-  ChevronDown,
+  ChevronRight,
   UserPlus,
   Banknote,
   Send,
@@ -27,7 +29,6 @@ import {
   XCircle,
   TrendingUp,
   Euro,
-  Eye,
   Download,
   Trash2,
   RefreshCw,
@@ -50,6 +51,15 @@ import {
   Package,
   Camera,
   Check,
+  Flag,
+  PlayCircle,
+  StopCircle,
+  History,
+  Ticket,
+  UserMinus,
+  UserCheck,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react'
 import {
   BarChart,
@@ -65,7 +75,9 @@ import {
   AreaChart,
   Area,
 } from 'recharts'
-import { useSiteImage } from '@/hooks/useSiteImages'
+import { useSiteImage, LABEL_PREFIX } from '@/hooks/useSiteImages'
+import { isSupabaseConfigured } from '@/lib/supabase'
+import { fetchSiteImages, uploadSiteImage, saveSiteImageUrl, resetSiteImage } from '@/lib/siteImages'
 import {
   type Player,
   type Team,
@@ -107,15 +119,36 @@ import {
   deleteFixture,
   setFixtureResult,
   type ClubFixture,
-  getMembershipFees,
-  setMembershipFees,
-  type MembershipFeeMap,
+  getMembershipFeeConfig,
+  setMembershipFeeConfig,
+  type MembershipFeeConfigMap,
+  type AgeGroupFeeConfig,
   hasPaidThisMonth,
   recordCashPayment,
   getMonthlyFeeForPlayer,
+  getOneTimeFeeForPlayer,
   type Product,
   type ChatMessage,
+  type SeasonState,
+  type SeasonHistoryEntry,
+  type DefaultTicketPrice,
+  type PendingTeamAssignment,
+  getSeason,
+  getSeasonHistory,
+  getDefaultTicketPrice,
+  getPendingSeniorPlayers,
+  clearPendingSeniorPlayer,
+  getPendingTeamAssignments,
+  clearPendingTeamAssignment,
+  removePlayerFromClub,
+  clearMemberRevocation,
+  startNewSeason,
+  endSeason,
+  restoreSeasonFromHistory,
+  applyDefaultTicketPriceToAllFixtures,
+  type StartSeasonResult,
 } from '@/lib/clubData'
+import { fetchPurchases, isPurchasesDbConfigured, type PurchaseRecord } from '@/lib/purchases'
 
 /* ─────────────────────── Types ─────────────────────── */
 
@@ -125,16 +158,37 @@ type NavItem = {
   icon: LucideIcon
 }
 
-const navItems: NavItem[] = [
-  { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { key: 'members', label: 'Members', icon: Users },
-  { key: 'payments', label: 'Payments', icon: CreditCard },
-  { key: 'teams', label: 'Teams', icon: Trophy },
-  { key: 'schedule', label: 'Schedule', icon: Calendar },
-  { key: 'chat', label: 'Team Chat', icon: MessageCircle },
-  { key: 'reports', label: 'Reports', icon: BarChart3 },
-  { key: 'images', label: 'Images', icon: Image },
-  { key: 'store', label: 'Store', icon: ShoppingBag },
+type NavSection = {
+  section: string
+  items: NavItem[]
+}
+
+const navSections: NavSection[] = [
+  {
+    section: 'Overview',
+    items: [{ key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }],
+  },
+  {
+    section: 'Club',
+    items: [
+      { key: 'members', label: 'Members', icon: Users },
+      { key: 'teams', label: 'Teams', icon: Trophy },
+      { key: 'schedule', label: 'Schedule', icon: Calendar },
+      { key: 'chat', label: 'Team Chat', icon: MessageCircle },
+    ],
+  },
+  {
+    section: 'Business',
+    items: [
+      { key: 'payments', label: 'Payments', icon: CreditCard },
+      { key: 'store', label: 'Store', icon: ShoppingBag },
+      { key: 'reports', label: 'Reports', icon: BarChart3 },
+    ],
+  },
+  {
+    section: 'Content',
+    items: [{ key: 'images', label: 'Images', icon: Image }],
+  },
 ]
 
 /* ─────────────────────── useLiveData Hook ─────────────────────── */
@@ -146,6 +200,11 @@ function useLiveData() {
   const [announcements, setAnnouncementsState] = useState<Announcement[]>(getAnnouncements)
   const [payments, setPaymentsState] = useState<Payment[]>(getPayments)
   const [ageGroups, setAgeGroupsState] = useState<AgeGroup[]>(getAgeGroups)
+  const [season, setSeasonState] = useState<SeasonState>(getSeason)
+  const [seasonHistory, setSeasonHistoryState] = useState<SeasonHistoryEntry[]>(getSeasonHistory)
+  const [defaultTicketPrice, setDefaultTicketPriceState] = useState<DefaultTicketPrice>(getDefaultTicketPrice)
+  const [pendingSeniorPlayerIds, setPendingSeniorPlayerIdsState] = useState<string[]>(getPendingSeniorPlayers)
+  const [pendingTeamAssignments, setPendingTeamAssignmentsState] = useState<PendingTeamAssignment[]>(getPendingTeamAssignments)
 
   const refresh = useCallback(() => {
     setPlayersState(getPlayers())
@@ -154,6 +213,11 @@ function useLiveData() {
     setAnnouncementsState(getAnnouncements())
     setPaymentsState(getPayments())
     setAgeGroupsState(getAgeGroups())
+    setSeasonState(getSeason())
+    setSeasonHistoryState(getSeasonHistory())
+    setDefaultTicketPriceState(getDefaultTicketPrice())
+    setPendingSeniorPlayerIdsState(getPendingSeniorPlayers())
+    setPendingTeamAssignmentsState(getPendingTeamAssignments())
   }, [])
 
   useEffect(() => {
@@ -175,10 +239,46 @@ function useLiveData() {
   const savePayments = useCallback((v: Payment[]) => { setPayments(v); setPaymentsState(v) }, [])
   const saveAgeGroups = useCallback((v: AgeGroup[]) => { setAgeGroups(v); setAgeGroupsState(v) }, [])
 
+  const runStartNewSeason = useCallback((label: string): StartSeasonResult => {
+    const result = startNewSeason(label)
+    refresh()
+    return result
+  }, [refresh])
+
+  const runEndSeason = useCallback((): SeasonHistoryEntry => {
+    const entry = endSeason()
+    refresh()
+    return entry
+  }, [refresh])
+
+  const runApplyDefaultTicketPrice = useCallback((adultPrice: number, kidPrice: number) => {
+    applyDefaultTicketPriceToAllFixtures(adultPrice, kidPrice)
+    refresh()
+  }, [refresh])
+
+  const dismissPendingSenior = useCallback((playerId: string) => {
+    clearPendingSeniorPlayer(playerId)
+    refresh()
+  }, [refresh])
+
+  const dismissPendingTeamAssignment = useCallback((playerId: string) => {
+    clearPendingTeamAssignment(playerId)
+    refresh()
+  }, [refresh])
+
+  const runRestoreSeason = useCallback((historyIndex: number): SeasonHistoryEntry | null => {
+    const entry = restoreSeasonFromHistory(historyIndex)
+    refresh()
+    return entry
+  }, [refresh])
+
   return {
     players, teams, sessions, announcements, payments, ageGroups,
+    season, seasonHistory, defaultTicketPrice, pendingSeniorPlayerIds, pendingTeamAssignments,
     refresh,
     savePlayers, saveTeams, saveSessions, saveAnnouncements, savePayments, saveAgeGroups,
+    runStartNewSeason, runEndSeason, runApplyDefaultTicketPrice, dismissPendingSenior,
+    dismissPendingTeamAssignment, runRestoreSeason,
   }
 }
 
@@ -203,9 +303,9 @@ function StatusBadge({ status }: { status: string }) {
     Succeeded: 'bg-green-500/10 text-green-400 border-green-500/20',
     succeeded: 'bg-green-500/10 text-green-400 border-green-500/20',
     Sent: 'bg-green-500/10 text-green-400 border-green-500/20',
-    Pending: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-    pending: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-    Scheduled: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+    Pending: 'bg-warn-500/10 text-warn-400 border-warn-500/20',
+    pending: 'bg-warn-500/10 text-warn-400 border-warn-500/20',
+    Scheduled: 'bg-warn-500/10 text-warn-400 border-warn-500/20',
     Overdue: 'bg-red-500/10 text-red-400 border-red-500/20',
     Expired: 'bg-red-500/10 text-red-400 border-red-500/20',
     Failed: 'bg-red-500/10 text-red-400 border-red-500/20',
@@ -213,12 +313,12 @@ function StatusBadge({ status }: { status: string }) {
     Draft: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
   }
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-inter font-medium border ${styles[status] || 'bg-slate-500/10 text-slate-400 border-slate-500/20'}`}>
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-inter font-medium border capitalize ${styles[status] || 'bg-slate-500/10 text-slate-400 border-slate-500/20'}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${
         status === 'Paid' || status === 'Active' || status === 'Completed' || status === 'Succeeded' || status === 'succeeded' || status === 'Sent'
           ? 'bg-green-400'
           : status === 'Pending' || status === 'pending' || status === 'Scheduled'
-          ? 'bg-amber-400'
+          ? 'bg-warn-400'
           : status === 'Overdue' || status === 'Expired' || status === 'Failed' || status === 'failed'
           ? 'bg-red-400'
           : 'bg-slate-400'
@@ -251,30 +351,46 @@ function StatCard({
   icon: Icon,
   change,
   changeType,
+  accent = 'gold',
 }: {
   label: string
   value: string
   icon: LucideIcon
   change: string
   changeType: 'positive' | 'negative' | 'neutral'
+  accent?: 'gold' | 'blue' | 'green' | 'red'
 }) {
+  const accentClass = {
+    gold: 'mgr-stat-block--gold',
+    blue: 'mgr-stat-block--blue',
+    green: 'mgr-stat-block--green',
+    red: 'mgr-stat-block--red',
+  }[accent]
+  const iconTint = {
+    gold: 'from-lions-500/25 to-lions-500/5 text-lions-300 ring-lions-400/20',
+    blue: 'from-blue-500/25 to-blue-500/5 text-blue-300 ring-blue-400/20',
+    green: 'from-emerald-500/25 to-emerald-500/5 text-emerald-300 ring-emerald-400/20',
+    red: 'from-red-500/25 to-red-500/5 text-red-300 ring-red-400/20',
+  }[accent]
   return (
-    <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="font-inter text-sm text-slate-400">{label}</p>
-          <p className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white mt-1">{value}</p>
+    <div className={`mgr-stat-block group ${accentClass}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-inter text-[10px] uppercase tracking-[0.2em] text-slate-500">{label}</p>
+          <p className="font-oswald font-bold text-[clamp(1.85rem,3.2vw,2.65rem)] text-white mt-2 leading-none tracking-tight">{value}</p>
         </div>
-        <Icon size={24} className="text-slate-500" />
+        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ring-1 ${iconTint} transition-transform duration-200 group-hover:scale-105`}>
+          <Icon size={20} />
+        </div>
       </div>
-      <div className="flex items-center gap-1 mt-3">
+      <div className="flex items-center gap-1.5 mt-4 pt-3 border-t border-white/[0.05]">
         {changeType === 'positive' ? (
-          <ArrowUpRight size={14} className="text-green-400" />
+          <ArrowUpRight size={13} className="text-emerald-400 shrink-0" />
         ) : changeType === 'negative' ? (
-          <ArrowDownRight size={14} className="text-red-400" />
+          <ArrowDownRight size={13} className="text-red-400 shrink-0" />
         ) : null}
-        <span className={`font-inter text-xs font-medium ${
-          changeType === 'positive' ? 'text-green-400' : changeType === 'negative' ? 'text-red-400' : 'text-slate-400'
+        <span className={`font-inter text-xs ${
+          changeType === 'positive' ? 'text-emerald-400/90' : changeType === 'negative' ? 'text-red-400/90' : 'text-slate-500'
         }`}>
           {change}
         </span>
@@ -306,8 +422,8 @@ function Modal({ open, onClose, title, children, maxWidth = 'max-w-lg' }: {
 }) {
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className={`bg-[#1E293B] border border-white/[0.06] rounded-xl w-full ${maxWidth} p-6 space-y-4 max-h-[90vh] overflow-y-auto`} onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className={`dash-card w-full ${maxWidth} p-6 space-y-4 max-h-[90vh] overflow-y-auto`} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h3 className="font-inter font-semibold text-xl text-white">{title}</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><XCircle size={22} /></button>
@@ -346,18 +462,19 @@ function SidebarUserCard({ onLogout }: { onLogout: () => void }) {
   const subtitle = user?.role === 'manager' ? 'Manager' : user?.role || 'Signed in'
 
   return (
-    <div className="mt-3 px-3 py-3 rounded-lg bg-white/5 flex items-center gap-3">
-      <InitialsAvatar name={name} size={32} />
+    <div className="mt-3 px-3 py-3 rounded-xl bg-white/[0.03] border border-white/[0.07] flex items-center gap-3">
+      <InitialsAvatar name={name} size={34} />
       <div className="flex-1 min-w-0">
         <p className="font-inter font-medium text-sm text-white truncate">{name}</p>
-        <p className="font-inter text-xs text-slate-500 truncate">{subtitle}</p>
+        <p className="font-inter text-[10px] uppercase tracking-[0.14em] text-lions-400/75 truncate">{subtitle}</p>
       </div>
       <button
         onClick={onLogout}
-        className="text-slate-400 hover:text-red-400 transition-colors duration-150"
+        className="text-slate-500 hover:text-red-400 transition-colors duration-150 p-1"
         title="Logout"
+        aria-label="Logout"
       >
-        <LogOut size={18} />
+        <LogOut size={17} />
       </button>
     </div>
   )
@@ -370,80 +487,127 @@ function Sidebar({
   onNavigate,
   mobileOpen,
   onCloseMobile,
+  collapsed,
+  onToggleCollapse,
 }: {
   active: string
   onNavigate: (key: string) => void
   mobileOpen: boolean
   onCloseMobile: () => void
+  collapsed: boolean
+  onToggleCollapse: () => void
 }) {
   const navigate = useNavigate()
   const logoUrl = useSiteImage('logo')
+  const { signOut } = useAuth()
 
-  const handleLogout = () => {
-    localStorage.removeItem('dlbc_user')
-    localStorage.removeItem('dlbc_remember_email')
+  const handleLogout = async () => {
+    await signOut()
     navigate('/')
+  }
+
+  // Collapsed rail only applies on desktop; the mobile drawer is always full width.
+  const isRail = collapsed
+
+  const navButton = (item: NavItem, isActive: boolean) => {
+    const Icon = item.icon
+    return (
+      <div key={item.key} className="dash-nav-item">
+        <button
+          onClick={() => { onNavigate(item.key); onCloseMobile() }}
+          className={`mgr-nav-pill ${isActive ? 'mgr-nav-pill--active' : ''} ${
+            isRail ? 'md:justify-center md:px-2.5' : ''
+          }`}
+        >
+          <Icon size={18} className="mgr-nav-icon" />
+          <span className={isRail ? 'md:hidden' : ''}>{item.label}</span>
+        </button>
+        {isRail && <span className="dash-nav-tip hidden md:block">{item.label}</span>}
+      </div>
+    )
   }
 
   return (
     <>
       {mobileOpen && (
-        <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={onCloseMobile} />
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden" onClick={onCloseMobile} />
       )}
       <aside
-        className={`fixed top-0 left-0 h-full w-64 bg-[#0A1628] border-r border-white/[0.06] z-40 flex flex-col py-6 px-4 transition-transform duration-300 ease-out ${
-          mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
-        }`}
+        className={`fixed top-0 left-0 h-full dash-sidebar z-40 flex flex-col py-5 transition-[transform,width] duration-300 ease-out ${
+          isRail ? 'w-64 md:w-[4.75rem] md:px-2.5 px-4' : 'w-64 px-3'
+        } ${mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
         style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}
       >
-        <Link to="/" className="flex items-center gap-3 mb-2 px-2 hover:opacity-80 transition-opacity" title="Back to Dublin Lions home">
-          <img src={logoUrl} alt="Dublin Lions" className="h-9 w-auto brightness-0 invert" />
-          <div>
-            <p className="font-inter font-semibold text-sm text-white">Dublin Lions</p>
-            <p className="font-inter text-xs text-slate-400">Manager Portal</p>
-          </div>
-        </Link>
+        <div className={`flex items-center mb-4 ${isRail ? 'md:justify-center justify-between' : 'justify-between'}`}>
+          <Link
+            to="/"
+            className={`mgr-sidebar-brand hover:opacity-95 transition-opacity group ${isRail ? 'md:p-2 md:justify-center' : 'flex-1 min-w-0'}`}
+            title="Back to Dublin Lions home"
+          >
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-lions-500/15 ring-1 ring-lions-400/25 shrink-0">
+              <img src={logoUrl} alt="Dublin Lions" className="h-5 w-auto brightness-0 invert" />
+            </div>
+            <div className={`min-w-0 ${isRail ? 'md:hidden' : ''}`}>
+              <p className="font-oswald font-bold text-base text-white tracking-wide leading-none">Dublin Lions</p>
+              <p className="font-inter text-[9px] uppercase tracking-[0.22em] text-lions-400/80 mt-1">Club Command</p>
+            </div>
+          </Link>
+          <button
+            onClick={onToggleCollapse}
+            className={`dash-rail-toggle hidden md:flex ml-2 shrink-0 ${isRail ? 'md:hidden' : ''}`}
+            title="Collapse sidebar"
+            aria-label="Collapse sidebar"
+          >
+            <PanelLeftClose size={16} />
+          </button>
+        </div>
+
+        {isRail && (
+          <button
+            onClick={onToggleCollapse}
+            className="dash-rail-toggle hidden md:flex mx-auto mb-4"
+            title="Expand sidebar"
+            aria-label="Expand sidebar"
+          >
+            <PanelLeftOpen size={16} />
+          </button>
+        )}
+
         <Link
           to="/"
-          className="flex items-center gap-2 mb-6 mx-2 px-3 py-2 rounded-lg bg-white/[0.03] hover:bg-white/[0.07] text-slate-300 hover:text-white font-inter text-xs transition-all"
+          className={`flex items-center gap-2 mb-4 rounded-lg border border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.05] text-slate-400 hover:text-white font-inter text-xs transition-all ${
+            isRail ? 'md:justify-center md:px-0 md:py-2.5 px-3 py-2' : 'px-3 py-2'
+          }`}
         >
-          <Home size={14} />
-          Back to Site
+          <Home size={14} className="shrink-0" />
+          <span className={isRail ? 'md:hidden' : ''}>Public site</span>
         </Link>
-        <nav className="flex-1 space-y-1">
-          {navItems.map((item) => {
-            const Icon = item.icon
-            const isActive = active === item.key
-            return (
-              <button
-                key={item.key}
-                onClick={() => { onNavigate(item.key); onCloseMobile() }}
-                className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg font-inter font-medium text-sm transition-all duration-150 ${
-                  isActive
-                    ? 'text-white bg-blue-500/10 border-l-[3px] border-blue-500'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5 border-l-[3px] border-transparent'
-                }`}
-              >
-                <Icon size={20} />
-                {item.label}
-              </button>
-            )
-          })}
+
+        <nav className="flex-1 space-y-4 overflow-y-auto scroll-slim -mr-1 pr-1">
+          {navSections.map((group) => (
+            <div key={group.section} className="space-y-0.5">
+              <p className={`nav-section-label px-3 mb-2 ${isRail ? 'md:hidden' : ''}`}>{group.section}</p>
+              {group.items.map((item) => navButton(item, active === item.key))}
+            </div>
+          ))}
         </nav>
+
         <div className="mt-auto">
           <div className="border-t border-white/[0.06] my-4" />
-          <button
-            onClick={() => { onNavigate('settings'); onCloseMobile() }}
-            className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg font-inter font-medium text-sm transition-all duration-150 ${
-              active === 'settings'
-                ? 'text-white bg-blue-500/10 border-l-[3px] border-blue-500'
-                : 'text-slate-400 hover:text-white hover:bg-white/5 border-l-[3px] border-transparent'
-            }`}
-          >
-            <Settings size={20} />
-            Settings
-          </button>
-          <SidebarUserCard onLogout={handleLogout} />
+          {navButton({ key: 'settings', label: 'Settings', icon: Settings }, active === 'settings')}
+          <div className={isRail ? 'md:hidden mt-1' : 'mt-1'}>
+            <SidebarUserCard onLogout={handleLogout} />
+          </div>
+          {isRail && (
+            <button
+              onClick={handleLogout}
+              className="dash-rail-toggle hidden md:flex mx-auto mt-3"
+              title="Logout"
+              aria-label="Logout"
+            >
+              <LogOut size={16} />
+            </button>
+          )}
         </div>
       </aside>
     </>
@@ -458,69 +622,47 @@ function TopBar({
   notifications,
   onDismissNotification,
   onClearNotifications,
-  search,
-  onSearch,
-  onJumpToMembers,
   onQuickAction,
-  showSearch,
+  sidebarCollapsed,
 }: {
   title: string
   onMenuToggle: () => void
   notifications: { id: string; text: string; detail: string; type: string }[]
   onDismissNotification: (id: string) => void
   onClearNotifications: () => void
-  search: string
-  onSearch: (s: string) => void
-  onJumpToMembers: () => void
   onQuickAction: (action: 'add-member' | 'add-payment' | 'send-message' | 'add-fixture') => void
-  showSearch: boolean
+  sidebarCollapsed: boolean
 }) {
   const [showQuickActions, setShowQuickActions] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
 
   return (
-    <header className="fixed top-0 left-0 md:left-64 right-0 h-16 bg-[rgba(15,23,42,0.95)] backdrop-blur-md border-b border-white/[0.06] z-30 flex items-center justify-between px-4 md:px-8">
-      <div className="flex items-center gap-4">
+    <header className={`fixed top-0 left-0 ${sidebarCollapsed ? 'md:left-[4.75rem]' : 'md:left-64'} right-0 dash-topbar z-30 flex items-center justify-between gap-4 px-4 md:px-6 transition-[left] duration-300`} style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}>
+      <div className="flex items-center gap-3 min-w-0">
         <button
           onClick={onMenuToggle}
-          className="md:hidden text-slate-400 hover:text-white p-1 transition-colors duration-150"
+          className="md:hidden text-slate-400 hover:text-white p-1.5 transition-colors duration-150"
+          aria-label="Open menu"
         >
-          <LayoutDashboard size={22} />
+          <LayoutDashboard size={20} />
         </button>
-        <div>
-          <h2 className="font-oswald font-bold text-xl md:text-2xl text-white">{title}</h2>
-        </div>
+        <h2 className="font-oswald font-bold text-lg md:text-xl text-white tracking-tight leading-tight truncate">{title}</h2>
       </div>
 
-      <div className="hidden md:flex items-center">
-        {showSearch && (
-          <div className="relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => onSearch(e.target.value)}
-              onFocus={onJumpToMembers}
-              placeholder="Search members..."
-              className="w-64 lg:w-96 bg-white/5 border border-[#334155] rounded-lg pl-10 pr-4 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 transition-all duration-200"
-            />
-          </div>
-        )}
-      </div>
-
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 shrink-0">
         <div className="relative">
           <button
             onClick={() => setShowNotifications(!showNotifications)}
-            className="relative text-slate-400 hover:text-white p-2 transition-colors duration-150"
+            className="mgr-topbar-btn"
+            aria-label="Notifications"
           >
-            <Bell size={20} />
+            <Bell size={18} />
             {notifications.length > 0 && (
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full" />
+              <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-red-500 rounded-full" />
             )}
           </button>
           {showNotifications && (
-            <div className="absolute right-0 top-full mt-2 w-80 bg-[#1E293B] border border-white/[0.06] rounded-xl shadow-xl z-50 p-4">
+            <div className="absolute right-0 top-full mt-2 w-80 dash-card shadow-xl z-50 p-4">
               <div className="flex items-center justify-between mb-3">
                 <p className="font-inter font-semibold text-sm text-white">Notifications</p>
                 {notifications.length > 0 && (
@@ -556,14 +698,13 @@ function TopBar({
         <div className="relative">
           <button
             onClick={() => setShowQuickActions(!showQuickActions)}
-            className="flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-4 py-2 rounded transition-all duration-150"
+            className="mgr-topbar-btn mgr-topbar-btn--primary"
+            aria-label="Quick actions"
           >
-            <Plus size={16} />
-            Quick Action
-            <ChevronDown size={14} />
+            <Plus size={18} />
           </button>
           {showQuickActions && (
-            <div className="absolute right-0 top-full mt-2 w-56 bg-[#1E293B] border border-white/[0.06] rounded-xl shadow-xl z-50 py-2">
+            <div className="absolute right-0 top-full mt-2 w-56 dash-card shadow-xl z-50 py-2">
               {([
                 { label: 'Add Member', icon: UserPlus, action: 'add-member' as const },
                 { label: 'Record Payment', icon: Banknote, action: 'add-payment' as const },
@@ -589,9 +730,122 @@ function TopBar({
 
 /* ─────────────────────── View: Dashboard ─────────────────────── */
 
+/* ─── Manager home: real-time ops console (ui-ux-pro-max pattern) ─── */
+function ClubOpsConsole({
+  managerFirstName,
+  today,
+  seasonLabel,
+  overdueCount,
+  unpaidCount,
+  activeMembers,
+  totalTeams,
+  nextSession,
+  onNavigate,
+}: {
+  managerFirstName: string
+  today: string
+  seasonLabel: string
+  overdueCount: number
+  unpaidCount: number
+  activeMembers: number
+  totalTeams: number
+  nextSession?: { title: string; date: string; time: string; location: string }
+  onNavigate: (view: string) => void
+}) {
+  const priorities = [
+    {
+      id: 'overdue',
+      label: 'Overdue payments',
+      value: String(overdueCount),
+      hint: overdueCount === 0 ? 'All settled' : 'Needs follow-up today',
+      urgent: overdueCount > 0,
+      onClick: () => onNavigate('payments'),
+    },
+    {
+      id: 'unpaid',
+      label: 'Unpaid this month',
+      value: String(unpaidCount),
+      hint: unpaidCount === 0 ? 'Everyone paid' : 'Record cash or chase fees',
+      urgent: unpaidCount > 0,
+      onClick: () => onNavigate('members'),
+    },
+    {
+      id: 'next',
+      label: 'Next on court',
+      value: nextSession ? nextSession.title : 'Nothing scheduled',
+      hint: nextSession ? `${nextSession.date} · ${nextSession.time}` : 'Add a session in Schedule',
+      urgent: false,
+      onClick: () => onNavigate('schedule'),
+    },
+  ]
+
+  return (
+    <div className="mgr-ops-hero p-6 md:p-8">
+      <div className="relative flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
+        <div>
+          <p className="font-inter text-[10px] font-semibold uppercase tracking-[0.24em] text-lions-400/90">Live operations</p>
+          <h1 className="font-oswald font-bold text-[clamp(2rem,3.5vw,2.85rem)] text-white mt-2 leading-[0.95] tracking-tight">
+            Welcome back{managerFirstName ? `, ${managerFirstName}` : ''}
+          </h1>
+          <p className="font-inter text-sm text-slate-400 mt-3 max-w-xl leading-relaxed">
+            {activeMembers} active members · {totalTeams} teams · fees, roster, and fixtures in one place.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 border border-emerald-500/25 px-3 py-1.5 font-inter text-xs text-emerald-300">
+            <span className="live-dot" aria-hidden="true" />
+            Season {seasonLabel}
+          </span>
+          <span className="rounded-full bg-white/[0.04] border border-white/10 px-3 py-1.5 font-inter text-xs text-slate-300">
+            {today}
+          </span>
+        </div>
+      </div>
+
+      <div className="relative grid grid-cols-1 md:grid-cols-3 gap-3 mt-8">
+        {priorities.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={item.onClick}
+            className={`ops-priority-tile ${item.urgent ? 'ops-priority-tile-urgent' : ''}`}
+          >
+            <p className="font-inter text-[10px] uppercase tracking-[0.18em] text-slate-500">{item.label}</p>
+            <p className={`font-oswald font-bold mt-2 leading-tight ${item.id === 'next' ? 'text-base md:text-lg font-inter font-semibold text-white' : 'text-3xl text-white'}`}>
+              {item.value}
+            </p>
+            <p className="font-inter text-xs text-slate-500 mt-2 flex items-center justify-between gap-2">
+              <span>{item.hint}</span>
+              <ChevronRight size={14} className="shrink-0 text-slate-600 group-hover:text-lions-400" />
+            </p>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function DashboardView({ data, onNavigate }: { data: ReturnType<typeof useLiveData>; onNavigate: (view: string) => void }) {
-  const { sessions, announcements, payments } = data
+  const { sessions, announcements, payments, players, teams, ageGroups } = data
   const stats = computeClubStats()
+  const unpaidCount = players.filter((p) => !hasPaidThisMonth(p.id)).length
+
+  // ── Live-derived stat captions (no hardcoded figures) ──
+  const now = new Date()
+  const thisMonthKey = `${now.getFullYear()}-${now.getMonth()}`
+  const activeMembers = players.filter((p) => (p.status || '').toLowerCase() === 'paid').length
+  const paymentsThisMonth = payments.filter((p) => {
+    const d = new Date(p.date)
+    return !isNaN(d.getTime()) && `${d.getFullYear()}-${d.getMonth()}` === thisMonthKey && p.status === 'succeeded'
+  }).length
+  const teamsCaption = ageGroups.length > 0
+    ? `${ageGroups.length} age group${ageGroups.length !== 1 ? 's' : ''}`
+    : `${teams.length} registered`
+  const membersCaption = `${activeMembers} active now`
+  const revenueCaption = paymentsThisMonth > 0
+    ? `${paymentsThisMonth} payment${paymentsThisMonth !== 1 ? 's' : ''} this month`
+    : 'No payments yet this month'
+  const overdueCaption = stats.overduePlayers === 0 ? 'All settled up' : 'Needs follow-up'
 
   const today = new Date().toLocaleDateString('en-IE', {
     weekday: 'long',
@@ -643,51 +897,62 @@ function DashboardView({ data, onNavigate }: { data: ReturnType<typeof useLiveDa
     return [...sessions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).slice(0, 3)
   }, [sessions])
 
+  const managerFirstName = (() => {
+    try {
+      const u = JSON.parse(localStorage.getItem('dlbc_user') || 'null')
+      return u?.name ? u.name.split(' ')[0] : ''
+    } catch {
+      return ''
+    }
+  })()
+
+  const nextSession = upcomingSessions[0]
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-        <div>
-          <h1 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">
-            Welcome back{(() => { try { const u = JSON.parse(localStorage.getItem('dlbc_user') || 'null'); return u?.name ? `, ${u.name.split(' ')[0]}` : '' } catch { return '' } })()}
-          </h1>
-          <p className="font-inter text-base text-slate-400 mt-1">
-            Here&apos;s what&apos;s happening with the club today.
-          </p>
-        </div>
-        <p className="font-inter text-sm text-slate-500">{today}</p>
+      <ClubOpsConsole
+        managerFirstName={managerFirstName}
+        today={today}
+        seasonLabel={data.season?.label || '2025/26'}
+        overdueCount={stats.overduePlayers}
+        unpaidCount={unpaidCount}
+        activeMembers={activeMembers}
+        totalTeams={stats.totalTeams}
+        nextSession={nextSession ? { title: nextSession.title, date: nextSession.date, time: nextSession.time, location: nextSession.location } : undefined}
+        onNavigate={onNavigate}
+      />
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 dash-stagger">
+        <StatCard label="Total Members" value={String(stats.totalPlayers)} icon={Users} change={membersCaption} changeType="positive" accent="blue" />
+        <StatCard label="Active Teams" value={String(stats.totalTeams)} icon={Trophy} change={teamsCaption} changeType="neutral" accent="gold" />
+        <StatCard label="Revenue (Monthly)" value={`€${stats.monthlyRevenue.toLocaleString()}`} icon={Euro} change={revenueCaption} changeType={paymentsThisMonth > 0 ? 'positive' : 'neutral'} accent="green" />
+        <StatCard label="Overdue Payments" value={String(stats.overduePlayers)} icon={AlertCircle} change={overdueCaption} changeType={stats.overduePlayers === 0 ? 'positive' : 'negative'} accent={stats.overduePlayers === 0 ? 'green' : 'red'} />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Total Members" value={String(stats.totalPlayers)} icon={Users} change="+5% from last month" changeType="positive" />
-        <StatCard label="Active Teams" value={String(stats.totalTeams)} icon={Trophy} change="All teams registered" changeType="positive" />
-        <StatCard label="Revenue (Monthly)" value={`€${stats.monthlyRevenue.toLocaleString()}`} icon={Euro} change="+8% from last month" changeType="positive" />
-        <StatCard label="Overdue Payments" value={String(stats.overduePlayers)} icon={AlertCircle} change="-2 improving" changeType="positive" />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-        <div className="lg:col-span-3 bg-[#1E293B] border border-white/[0.06] rounded-xl">
-          <div className="p-6 pb-4">
-            <h3 className="font-inter font-semibold text-lg text-white">Recent Activity</h3>
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <div className="lg:col-span-3 mgr-panel">
+          <div className="mgr-panel-header">
+            <h3 className="mgr-panel-title">Recent activity</h3>
           </div>
-          <div className="divide-y divide-white/[0.06]">
+          <div className="mgr-activity-timeline">
             {recentActivity.length === 0 ? (
-              <div className="px-6 py-8 text-center">
-                <StickyNote size={32} className="text-slate-500 mx-auto mb-3" />
-                <p className="font-inter text-sm text-slate-400">No recent activity</p>
+              <div className="px-6 py-10 text-center">
+                <StickyNote size={28} className="text-slate-600 mx-auto mb-3" />
+                <p className="font-inter text-sm text-slate-500">No recent activity yet</p>
               </div>
             ) : (
               recentActivity.map((activity) => {
                 const { icon: ActIcon, color } = activityIcons[activity.type] || activityIcons.message
                 return (
-                  <div key={activity.id} className="flex items-center gap-4 px-6 py-4 hover:bg-white/[0.03] transition-colors duration-150">
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${color}`}>
-                      <ActIcon size={16} />
+                  <div key={activity.id} className="mgr-activity-row">
+                    <div className={`relative z-[1] w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${color}`}>
+                      <ActIcon size={15} />
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0 pt-0.5">
                       <p className="font-inter font-medium text-sm text-white">{activity.text}</p>
-                      <p className="font-inter text-xs text-slate-400">{activity.detail}</p>
+                      <p className="font-inter text-xs text-slate-500 mt-0.5">{activity.detail}</p>
                     </div>
-                    <span className="font-inter text-xs text-slate-500 shrink-0">{activity.time}</span>
+                    <span className="font-inter text-[11px] text-slate-600 shrink-0 pt-1">{activity.time}</span>
                   </div>
                 )
               })
@@ -695,52 +960,37 @@ function DashboardView({ data, onNavigate }: { data: ReturnType<typeof useLiveDa
           </div>
         </div>
 
-        <div className="lg:col-span-2 space-y-4">
-          <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6">
-            <h3 className="font-inter font-semibold text-lg text-white mb-4">Quick Actions</h3>
-            <div className="space-y-3">
-              <button
-                onClick={() => { onNavigate('members'); setTimeout(() => window.dispatchEvent(new Event('dlbc-open-add-member')), 0) }}
-                className="w-full flex items-center justify-center gap-2 bg-transparent border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white font-inter font-semibold text-sm px-4 py-3 rounded transition-all duration-200"
-              >
-                <UserPlus size={16} />
-                Add New Member
-              </button>
-              <button
-                onClick={() => onNavigate('payments')}
-                className="w-full flex items-center justify-center gap-2 bg-transparent border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white font-inter font-semibold text-sm px-4 py-3 rounded transition-all duration-200"
-              >
-                <Banknote size={16} />
-                Record Cash Payment
-              </button>
-              <button
-                onClick={() => onNavigate('chat')}
-                className="w-full flex items-center justify-center gap-2 bg-transparent border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white font-inter font-semibold text-sm px-4 py-3 rounded transition-all duration-200"
-              >
-                <Send size={16} />
-                Send Announcement
-              </button>
-              <button
-                onClick={() => onNavigate('reports')}
-                className="w-full flex items-center justify-center gap-2 bg-transparent border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white font-inter font-semibold text-sm px-4 py-3 rounded transition-all duration-200"
-              >
-                <FileText size={16} />
-                Generate Report
-              </button>
+        <div className="lg:col-span-2 space-y-5">
+          <div className="mgr-panel p-5">
+            <h3 className="mgr-panel-title mb-4">Quick actions</h3>
+            <div className="mgr-quick-grid">
+              {[
+                { label: 'Add member', icon: UserPlus, onClick: () => { onNavigate('members'); setTimeout(() => window.dispatchEvent(new Event('dlbc-open-add-member')), 0) } },
+                { label: 'Record payment', icon: Banknote, onClick: () => onNavigate('payments') },
+                { label: 'Announcement', icon: Send, onClick: () => onNavigate('chat') },
+                { label: 'Report', icon: FileText, onClick: () => onNavigate('reports') },
+              ].map((action) => (
+                <button key={action.label} type="button" onClick={action.onClick} className="mgr-quick-tile">
+                  <span className="mgr-quick-tile-icon"><action.icon size={18} /></span>
+                  <span className="font-inter font-medium text-sm text-slate-200">{action.label}</span>
+                </button>
+              ))}
             </div>
           </div>
 
-          <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6">
-            <h3 className="font-inter font-semibold text-lg text-white mb-4">Upcoming Sessions</h3>
-            <div className="space-y-4">
+          <div className="mgr-panel">
+            <div className="mgr-panel-header">
+              <h3 className="mgr-panel-title">Upcoming sessions</h3>
+            </div>
+            <div className="p-5 space-y-4">
               {upcomingSessions.length === 0 ? (
-                <p className="font-inter text-sm text-slate-400 text-center py-4">No upcoming sessions</p>
+                <p className="font-inter text-sm text-slate-500 text-center py-4">Nothing on the schedule</p>
               ) : (
                 upcomingSessions.map((s, i) => (
                   <div key={s.id} className={`${i > 0 ? 'border-t border-white/[0.06] pt-4' : ''}`}>
-                    <p className="font-oswald font-bold text-base text-blue-400">{s.date}</p>
-                    <p className="font-inter font-medium text-sm text-white mt-1">{s.title}</p>
-                    <p className="font-inter text-xs text-slate-400 mt-0.5">{s.location} — {s.time}</p>
+                    <p className="font-inter text-[10px] uppercase tracking-[0.16em] text-lions-400/80">{s.date}</p>
+                    <p className="font-oswald font-bold text-base text-white mt-1">{s.title}</p>
+                    <p className="font-inter text-xs text-slate-500 mt-1">{s.location} · {s.time}</p>
                   </div>
                 ))
               )}
@@ -750,6 +1000,391 @@ function DashboardView({ data, onNavigate }: { data: ReturnType<typeof useLiveDa
       </div>
 
       <UnpaidThisMonthPanel data={data} onNavigate={onNavigate} />
+    </div>
+  )
+}
+
+/* ─── Dashboard widget: season lifecycle + ticket pricing control center ─── */
+function SeasonControlCenter({ data }: { data: ReturnType<typeof useLiveData> }) {
+  const {
+    season, seasonHistory, defaultTicketPrice, pendingSeniorPlayerIds, pendingTeamAssignments, players, teams,
+    runStartNewSeason, runEndSeason, runApplyDefaultTicketPrice, dismissPendingSenior,
+    dismissPendingTeamAssignment, runRestoreSeason,
+    savePlayers, saveTeams,
+  } = data
+
+  const [startOpen, setStartOpen] = useState(false)
+  const [endOpen, setEndOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [newLabel, setNewLabel] = useState('')
+  const [endConfirmText, setEndConfirmText] = useState('')
+  const [result, setResult] = useState<StartSeasonResult | null>(null)
+  const [adultPrice, setAdultPrice] = useState(String(defaultTicketPrice.adultPrice))
+  const [kidPrice, setKidPrice] = useState(String(defaultTicketPrice.kidPrice))
+  const [priceSaved, setPriceSaved] = useState(false)
+  const [restoredNotice, setRestoredNotice] = useState<string | null>(null)
+
+  useEffect(() => {
+    setAdultPrice(String(defaultTicketPrice.adultPrice))
+    setKidPrice(String(defaultTicketPrice.kidPrice))
+  }, [defaultTicketPrice.adultPrice, defaultTicketPrice.kidPrice])
+
+  const pendingSeniorPlayers = useMemo(
+    () => pendingSeniorPlayerIds.map((id) => players.find((p) => p.id === id)).filter(Boolean) as Player[],
+    [pendingSeniorPlayerIds, players]
+  )
+
+  const pendingTeamPlayers = useMemo(
+    () => pendingTeamAssignments.map((pt) => ({ pt, player: players.find((p) => p.id === pt.playerId) })).filter((x) => x.player) as { pt: PendingTeamAssignment; player: Player }[],
+    [pendingTeamAssignments, players]
+  )
+
+  const seniorTeams = useMemo(() => teams.filter((t) => t.ageGroupId === 'senior'), [teams])
+
+  const handleStart = () => {
+    const label = newLabel.trim()
+    if (!label) return
+    const r = runStartNewSeason(label)
+    setResult(r)
+    setNewLabel('')
+    setStartOpen(false)
+  }
+
+  const handleEnd = () => {
+    if (endConfirmText.trim().toLowerCase() !== season.label.trim().toLowerCase()) return
+    runEndSeason()
+    setEndOpen(false)
+    setEndConfirmText('')
+  }
+
+  const handleApplyPrice = () => {
+    const a = parseFloat(adultPrice)
+    const k = parseFloat(kidPrice)
+    if (isNaN(a) || isNaN(k)) return
+    runApplyDefaultTicketPrice(a, k)
+    setPriceSaved(true)
+    setTimeout(() => setPriceSaved(false), 2500)
+  }
+
+  const assignToSenior = (playerId: string, teamId: string) => {
+    const updatedPlayers = players.map((p) => (p.id === playerId ? { ...p, teamIds: [...p.teamIds, teamId] } : p))
+    const updatedTeams = teams.map((t) => (t.id === teamId ? { ...t, players: [...t.players, playerId] } : t))
+    savePlayers(updatedPlayers)
+    saveTeams(updatedTeams)
+    dismissPendingSenior(playerId)
+  }
+
+  const removeFromClub = (playerId: string, dismiss: (id: string) => void) => {
+    if (!window.confirm('Remove this player from the club? This cannot be undone.')) return
+    removePlayerFromClub(playerId)
+    dismiss(playerId)
+  }
+
+  const assignToNewTeam = (playerId: string, teamId: string) => {
+    const player = players.find((p) => p.id === playerId)
+    if (!player) return
+    // Detach from any current non-Senior team (that's the bracket being promoted out of).
+    const oldIds = player.teamIds.filter((tid) => teams.find((t) => t.id === tid)?.ageGroupId !== 'senior')
+    const updatedPlayers = players.map((p) =>
+      p.id === playerId ? { ...p, teamIds: [...p.teamIds.filter((tid) => !oldIds.includes(tid)), teamId] } : p
+    )
+    const updatedTeams = teams.map((t) => {
+      if (t.id === teamId) return { ...t, players: [...t.players, playerId] }
+      if (oldIds.includes(t.id)) return { ...t, players: t.players.filter((pid) => pid !== playerId) }
+      return t
+    })
+    savePlayers(updatedPlayers)
+    saveTeams(updatedTeams)
+    dismissPendingTeamAssignment(playerId)
+  }
+
+  const handleRestore = (index: number, label: string) => {
+    if (!window.confirm(`Restore season "${label}"? Your current in-progress season will be archived to history so nothing is lost.`)) return
+    runRestoreSeason(index)
+    setHistoryOpen(false)
+    setRestoredNotice(label)
+    setTimeout(() => setRestoredNotice(null), 4000)
+  }
+
+  return (
+    <div className="dash-card p-6 space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400/20 to-amber-500/5 ring-1 ring-amber-400/20 text-amber-400">
+            <Flag size={20} />
+          </span>
+          <div>
+            <p className="font-inter text-[11px] uppercase tracking-[0.18em] text-slate-400">Season</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <h3 className="font-oswald font-bold text-xl text-white">{season.label}</h3>
+              <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-inter font-medium border ${season.status === 'active' ? 'bg-green-500/10 text-green-400 border-green-500/20' : 'bg-slate-500/10 text-slate-400 border-slate-500/20'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${season.status === 'active' ? 'bg-green-400' : 'bg-slate-400'}`} />
+                {season.status === 'active' ? 'Active' : 'Ended'}
+              </span>
+            </div>
+            <p className="font-inter text-xs text-slate-400 mt-0.5">
+              Started {new Date(season.startedAt).toLocaleDateString('en-IE', { day: 'numeric', month: 'short', year: 'numeric' })}
+              {season.endedAt ? ` · Ended ${new Date(season.endedAt).toLocaleDateString('en-IE', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {seasonHistory.length > 0 && (
+            <button onClick={() => setHistoryOpen(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-inter font-medium bg-white/[0.04] hover:bg-white/[0.08] ring-1 ring-white/[0.08] text-slate-200 transition-colors">
+              <History size={15} /> History
+            </button>
+          )}
+          {season.status === 'active' && (
+            <button onClick={() => setEndOpen(true)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-inter font-medium bg-red-500/10 hover:bg-red-500/20 ring-1 ring-red-500/20 text-red-400 transition-colors">
+              <StopCircle size={15} /> End Season
+            </button>
+          )}
+          <button onClick={() => setStartOpen(true)} className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg hover:scale-[1.03] transition-all duration-150">
+            <PlayCircle size={15} /> Start New Season
+          </button>
+        </div>
+      </div>
+
+      {result && (
+        <div className="rounded-xl bg-green-500/10 ring-1 ring-green-500/20 px-4 py-3 flex items-start gap-3">
+          <CheckCircle size={18} className="text-green-400 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <p className="font-inter text-sm text-green-300 font-medium">Season &quot;{result.label}&quot; started</p>
+            <p className="font-inter text-xs text-slate-300 mt-0.5">
+              {result.promotedCount} player{result.promotedCount !== 1 ? 's' : ''} promoted
+              {result.needsTeamAssignment.length > 0 ? ` · ${result.needsTeamAssignment.length} player${result.needsTeamAssignment.length !== 1 ? 's' : ''} waiting on a new team` : ''}
+              {result.needsSeniorAssignment.length > 0 ? ` · ${result.needsSeniorAssignment.length} player${result.needsSeniorAssignment.length !== 1 ? 's' : ''} need senior assignment` : ''}
+            </p>
+          </div>
+          <button onClick={() => setResult(null)} className="text-slate-400 hover:text-white shrink-0"><X size={16} /></button>
+        </div>
+      )}
+
+      {pendingSeniorPlayers.length > 0 && (
+        <div className="rounded-xl bg-amber-500/[0.06] ring-1 ring-amber-500/20 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <ShieldAlert size={16} className="text-amber-400" />
+            <h4 className="font-inter font-semibold text-sm text-white">Needs Senior Assignment</h4>
+            <span className="text-xs text-slate-400 font-inter">({pendingSeniorPlayers.length})</span>
+          </div>
+          <div className="space-y-2">
+            {pendingSeniorPlayers.map((p) => (
+              <div key={p.id} className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 bg-white/[0.03] rounded-lg px-3 py-2.5">
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <InitialsAvatar name={p.name} size={28} />
+                  <span className="font-inter text-sm text-white truncate">{p.name}</span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                  {seniorTeams.length > 0 && (
+                    <select
+                      onChange={(e) => { if (e.target.value) assignToSenior(p.id, e.target.value) }}
+                      defaultValue=""
+                      className="bg-white/[0.05] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs font-inter text-slate-200 focus:outline-none"
+                    >
+                      <option value="" disabled>Assign to team…</option>
+                      {seniorTeams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  )}
+                  <button
+                    onClick={() => dismissPendingSenior(p.id)}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-inter font-medium bg-white/[0.04] hover:bg-white/[0.08] ring-1 ring-white/[0.08] text-slate-300 transition-colors"
+                  >
+                    <UserCheck size={13} /> Keep as-is
+                  </button>
+                  <button
+                    onClick={() => removeFromClub(p.id, dismissPendingSenior)}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-inter font-medium bg-red-500/10 hover:bg-red-500/20 ring-1 ring-red-500/20 text-red-400 transition-colors"
+                  >
+                    <UserMinus size={13} /> Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {pendingTeamPlayers.length > 0 && (
+        <div className="rounded-xl bg-blue-500/[0.06] ring-1 ring-blue-500/20 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <ShieldAlert size={16} className="text-blue-400" />
+            <h4 className="font-inter font-semibold text-sm text-white">Waiting on a New Team</h4>
+            <span className="text-xs text-slate-400 font-inter">({pendingTeamPlayers.length})</span>
+          </div>
+          <p className="font-inter text-xs text-slate-400 mb-3">
+            These players were promoted into a bracket that has no team yet. Create the team from the Teams tab (using the {' '}
+            {Array.from(new Set(pendingTeamPlayers.map((x) => x.pt.ageGroupName))).join(', ')} age group), then assign them below.
+          </p>
+          <div className="space-y-2">
+            {pendingTeamPlayers.map(({ pt, player: p }) => {
+              const matchingTeams = teams.filter((t) => t.ageGroupId === pt.ageGroupId && t.gender === pt.gender)
+              return (
+                <div key={p.id} className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 bg-white/[0.03] rounded-lg px-3 py-2.5">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <InitialsAvatar name={p.name} size={28} />
+                    <div className="min-w-0">
+                      <span className="font-inter text-sm text-white truncate block">{p.name}</span>
+                      <span className="font-inter text-[11px] text-blue-300/80">→ {pt.ageGroupName} {pt.gender}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                    {matchingTeams.length > 0 ? (
+                      <select
+                        onChange={(e) => { if (e.target.value) assignToNewTeam(p.id, e.target.value) }}
+                        defaultValue=""
+                        className="bg-white/[0.05] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs font-inter text-slate-200 focus:outline-none"
+                      >
+                        <option value="" disabled>Assign to team…</option>
+                        {matchingTeams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                    ) : (
+                      <span className="font-inter text-[11px] text-slate-500 italic px-1">No team yet — create one on the Teams tab</span>
+                    )}
+                    <button
+                      onClick={() => dismissPendingTeamAssignment(p.id)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-inter font-medium bg-white/[0.04] hover:bg-white/[0.08] ring-1 ring-white/[0.08] text-slate-300 transition-colors"
+                    >
+                      <UserCheck size={13} /> Keep as-is
+                    </button>
+                    <button
+                      onClick={() => removeFromClub(p.id, dismissPendingTeamAssignment)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-inter font-medium bg-red-500/10 hover:bg-red-500/20 ring-1 ring-red-500/20 text-red-400 transition-colors"
+                    >
+                      <UserMinus size={13} /> Remove
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {restoredNotice && (
+        <div className="rounded-xl bg-blue-500/10 ring-1 ring-blue-500/20 px-4 py-3 flex items-center gap-3">
+          <History size={18} className="text-blue-400 shrink-0" />
+          <p className="font-inter text-sm text-blue-300 flex-1">Season &quot;{restoredNotice}&quot; restored and is now active.</p>
+          <button onClick={() => setRestoredNotice(null)} className="text-slate-400 hover:text-white shrink-0"><X size={16} /></button>
+        </div>
+      )}
+
+      <div className="border-t border-white/[0.06] pt-5">
+        <div className="flex items-center gap-2 mb-3">
+          <Ticket size={16} className="text-amber-400" />
+          <h4 className="font-inter font-semibold text-sm text-white">Default Ticket Pricing</h4>
+        </div>
+        <p className="font-inter text-xs text-slate-400 mb-3">
+          Set one flat price and apply it to every fixture at once. You can still override the price on individual fixtures afterwards from the Schedule tab.
+        </p>
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+          {formField('Adult Price (€)', (
+            <input
+              type="number" min="0" step="0.5" value={adultPrice} onChange={(e) => setAdultPrice(e.target.value)}
+              className="w-full sm:w-32 bg-white/[0.05] border border-white/10 rounded-lg px-3 py-2 text-sm font-inter text-white focus:outline-none focus:ring-1 focus:ring-amber-400/50"
+            />
+          ))}
+          {formField('Kid Price (€)', (
+            <input
+              type="number" min="0" step="0.5" value={kidPrice} onChange={(e) => setKidPrice(e.target.value)}
+              className="w-full sm:w-32 bg-white/[0.05] border border-white/10 rounded-lg px-3 py-2 text-sm font-inter text-white focus:outline-none focus:ring-1 focus:ring-amber-400/50"
+            />
+          ))}
+          <button onClick={handleApplyPrice} className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg hover:scale-[1.03] transition-all duration-150">
+            Apply to All Fixtures
+          </button>
+          {priceSaved && <span className="font-inter text-xs text-green-400 flex items-center gap-1"><Check size={14} /> Applied</span>}
+        </div>
+      </div>
+
+      <Modal open={startOpen} onClose={() => setStartOpen(false)} title="Start New Season">
+        <div className="space-y-4">
+          <p className="font-inter text-sm text-slate-300">
+            This resets every team&apos;s win/loss record and promotes players into their real age bracket. New age groups are created automatically, but you&apos;ll need to create the team for any brand-new bracket yourself — those players are queued below until you do. Anyone aging out of U20 is also left for you to place manually.
+          </p>
+          {formField('New Season Label', (
+            <input
+              type="text" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="e.g. 2026/27"
+              className="w-full bg-white/[0.05] border border-white/10 rounded-lg px-3 py-2 text-sm font-inter text-white focus:outline-none focus:ring-1 focus:ring-amber-400/50"
+            />
+          ))}
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setStartOpen(false)} className="px-4 py-2 rounded-lg text-sm font-inter font-medium bg-white/[0.05] hover:bg-white/[0.08] text-slate-300">Cancel</button>
+            <button onClick={handleStart} disabled={!newLabel.trim()} className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg disabled:opacity-40 disabled:pointer-events-none">
+              <PlayCircle size={15} /> Start Season
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={endOpen} onClose={() => { setEndOpen(false); setEndConfirmText('') }} title="End Current Season">
+        <div className="space-y-4">
+          <div className="rounded-lg bg-red-500/10 ring-1 ring-red-500/20 px-3 py-2.5 flex items-start gap-2.5">
+            <AlertCircle size={16} className="text-red-400 mt-0.5 shrink-0" />
+            <p className="font-inter text-sm text-red-200">
+              This archives the current standings and fixtures to Season History and clears the fixture list. It can be reversed later from Season History, but proceed carefully.
+            </p>
+          </div>
+          {formField(`Type "${season.label}" to confirm`, (
+            <input
+              type="text" value={endConfirmText} onChange={(e) => setEndConfirmText(e.target.value)} placeholder={season.label}
+              className="w-full bg-white/[0.05] border border-white/10 rounded-lg px-3 py-2 text-sm font-inter text-white focus:outline-none focus:ring-1 focus:ring-red-400/50"
+            />
+          ))}
+          <div className="flex justify-end gap-2">
+            <button onClick={() => { setEndOpen(false); setEndConfirmText('') }} className="px-4 py-2 rounded-lg text-sm font-inter font-medium bg-white/[0.05] hover:bg-white/[0.08] text-slate-300">Cancel</button>
+            <button
+              onClick={handleEnd}
+              disabled={endConfirmText.trim().toLowerCase() !== season.label.trim().toLowerCase()}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-inter font-medium bg-red-500/10 hover:bg-red-500/20 ring-1 ring-red-500/20 text-red-400 disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <StopCircle size={15} /> End Season
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={historyOpen} onClose={() => setHistoryOpen(false)} title="Season History" maxWidth="max-w-2xl">
+        <div className="space-y-4 max-h-[65vh] overflow-y-auto scroll-slim pr-1">
+          {seasonHistory.length === 0 ? (
+            <p className="font-inter text-sm text-slate-400 text-center py-6">No past seasons yet.</p>
+          ) : (
+            seasonHistory.map((entry, i) => {
+              const sortedStandings = [...entry.standings].sort((a, b) => b.wins - b.losses - (a.wins - a.losses))
+              return (
+                <div key={`${entry.label}-${i}`} className="rounded-xl bg-white/[0.03] ring-1 ring-white/[0.06] p-4">
+                  <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                    <div>
+                      <h4 className="font-oswald font-bold text-base text-white">{entry.label}</h4>
+                      <span className="font-inter text-xs text-slate-400">
+                        {new Date(entry.startedAt).toLocaleDateString('en-IE')} – {new Date(entry.endedAt).toLocaleDateString('en-IE')}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => handleRestore(i, entry.label)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-inter font-medium bg-amber-400/10 hover:bg-amber-400/20 ring-1 ring-amber-400/25 text-amber-400 transition-colors"
+                    >
+                      <RefreshCw size={13} /> Restore
+                    </button>
+                  </div>
+                  <p className="font-inter text-xs text-slate-400 mb-2">{entry.standings.length} teams · {entry.fixtures.length} fixtures archived</p>
+                  <div className="space-y-1 max-h-48 overflow-y-auto scroll-slim pr-1">
+                    {sortedStandings.length === 0 ? (
+                      <p className="text-xs text-slate-500 font-inter italic">No team records for this season.</p>
+                    ) : (
+                      sortedStandings.map((s) => (
+                        <div key={s.teamId} className="flex items-center justify-between text-xs font-inter text-slate-300 py-0.5">
+                          <span className="truncate pr-2">{s.name}</span>
+                          <span className="text-slate-400 shrink-0">{s.wins}W – {s.losses}L · {s.pointsFor}-{s.pointsAgainst}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
+      </Modal>
     </div>
   )
 }
@@ -776,7 +1411,7 @@ function UnpaidThisMonthPanel({
 
   if (unpaid.length === 0) {
     return (
-      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6 flex items-center gap-3">
+      <div className="dash-card p-6 flex items-center gap-3">
         <CheckCircle size={20} className="text-green-400" />
         <p className="font-inter text-sm text-slate-300">Every member has paid this month. Nice work.</p>
       </div>
@@ -786,7 +1421,7 @@ function UnpaidThisMonthPanel({
   const monthLabel = new Date().toLocaleDateString('en-IE', { month: 'long', year: 'numeric' })
 
   return (
-    <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl">
+    <div className="dash-card">
       <div className="flex items-center justify-between p-6 pb-4">
         <div>
           <h3 className="font-inter font-semibold text-lg text-white">Unpaid this month</h3>
@@ -884,6 +1519,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
         ...editingPlayer,
         ...(form as Player),
       }
+      if (updated.email?.trim()) clearMemberRevocation(updated.email)
       const next = players.map((p) => (p.id === updated.id ? updated : p))
       savePlayers(next)
       // Update team rosters
@@ -897,6 +1533,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
       saveTeams(nextTeams)
       setEditingPlayer(null)
     } else {
+      if (form.email?.trim()) clearMemberRevocation(form.email)
       const newPlayer: Player = {
         id: `p${Date.now()}`,
         name: form.name!,
@@ -928,10 +1565,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
   }
 
   const handleDelete = (id: string) => {
-    const next = players.filter((p) => p.id !== id)
-    savePlayers(next)
-    const nextTeams = teams.map((t) => ({ ...t, players: t.players.filter((pid) => pid !== id) }))
-    saveTeams(nextTeams)
+    removePlayerFromClub(id)
     setConfirmDelete(null)
   }
 
@@ -947,20 +1581,44 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
     setShowAddModal(true)
   }
 
+  const handleExportCsv = () => {
+    const teamName = (id: string) => teams.find((t) => t.id === id)?.name || id
+    const headers = ['Name', 'Email', 'Phone', 'Teams', 'Status', 'Plan', 'Position', 'Jersey', 'Amount', 'BI Registered', 'Registration Date']
+    const escape = (v: string) => `"${String(v).replace(/"/g, '""')}"`
+    const rows = filtered.map((p) => [
+      p.name, p.email, p.phone || '', p.teamIds.map(teamName).join('; '),
+      p.status, p.paymentPlan, p.position, String(p.jerseyNumber),
+      String(p.amount), p.registeredWithBI ? 'Yes' : 'No', p.registrationDate || '',
+    ].map(escape).join(','))
+    const csv = [headers.map(escape).join(','), ...rows].join('\r\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `dublin-lions-members-${new Date().toISOString().split('T')[0]}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Members</h2>
+        <div>
+          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Members</h2>
+          <p className="font-inter text-sm text-slate-400 mt-1.5">Player profiles, teams &amp; membership status</p>
+        </div>
         <button
           onClick={openAdd}
-          className="flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-4 py-2 rounded hover:scale-[1.03] hover:shadow-lg transition-all duration-150"
+          className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg hover:scale-[1.03] transition-all duration-150"
         >
           <Plus size={16} />
           Add Member
         </button>
       </div>
 
-      <div className="bg-[#1E293B] rounded-lg p-3 flex flex-wrap items-center gap-3">
+      <div className="dash-card p-3 flex flex-wrap items-center gap-3">
         <div className="relative md:hidden">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
@@ -968,13 +1626,13 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
             placeholder="Search members..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-48 bg-white/5 border border-[#334155] rounded-lg pl-9 pr-3 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 transition-all duration-200"
+            className="w-48 bg-white/5 border border-[#334155] rounded-lg pl-9 pr-3 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 transition-all duration-200"
           />
         </div>
         <select
           value={teamFilter}
           onChange={(e) => setTeamFilter(e.target.value)}
-          className="bg-white/5 border border-[#334155] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-amber-400"
+          className="bg-white/5 border border-[#334155] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
         >
           <option value="All">All Teams</option>
           {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -982,7 +1640,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
         <select
           value={ageGroupFilter}
           onChange={(e) => setAgeGroupFilter(e.target.value)}
-          className="bg-white/5 border border-[#334155] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-amber-400"
+          className="bg-white/5 border border-[#334155] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
         >
           <option value="All">All Age Groups</option>
           {ageGroups.map((ag) => <option key={ag.id} value={ag.id}>{ag.name}</option>)}
@@ -990,20 +1648,20 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="bg-white/5 border border-[#334155] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-amber-400"
+          className="bg-white/5 border border-[#334155] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
         >
           <option value="All">All Status</option>
           <option value="Paid">Paid</option>
           <option value="Pending">Pending</option>
           <option value="Overdue">Overdue</option>
         </select>
-        <button className="ml-auto flex items-center gap-2 bg-transparent border border-white/30 text-white font-inter font-medium text-sm px-3 py-2 rounded hover:bg-white/5 transition-colors duration-150">
+        <button onClick={handleExportCsv} className="ml-auto flex items-center gap-2 bg-transparent border border-white/30 text-white font-inter font-medium text-sm px-3 py-2 rounded hover:bg-white/5 transition-colors duration-150">
           <Download size={14} />
           Export CSV
         </button>
       </div>
 
-      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl overflow-hidden">
+      <div className="dash-card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -1094,39 +1752,39 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
 
       <Modal open={showAddModal} onClose={() => { setShowAddModal(false); setEditingPlayer(null) }} title={editingPlayer ? 'Edit Member' : 'Add New Member'} maxWidth="max-w-2xl">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {formField('Full Name', <input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" placeholder="John Doe" />)}
-          {formField('Email', <input type="email" value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" placeholder="john@email.ie" />)}
-          {formField('Phone', <input value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" placeholder="+353 87 123 4567" />)}
-          {formField('Date of Birth', <input type="date" value={form.dob || ''} onChange={(e) => setForm({ ...form, dob: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" />)}
+          {formField('Full Name', <input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="John Doe" />)}
+          {formField('Email', <input type="email" value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="john@email.ie" />)}
+          {formField('Phone', <input value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="+353 87 123 4567" />)}
+          {formField('Date of Birth', <input type="date" value={form.dob || ''} onChange={(e) => setForm({ ...form, dob: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" />)}
           {formField('Gender', (
-            <select value={form.gender || 'Male'} onChange={(e) => setForm({ ...form, gender: e.target.value as 'Male' | 'Female' })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400">
+            <select value={form.gender || 'Male'} onChange={(e) => setForm({ ...form, gender: e.target.value as 'Male' | 'Female' })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
               <option value="Male">Male</option>
               <option value="Female">Female</option>
             </select>
           ))}
           {formField('Position', (
-            <select value={form.position || 'Guard'} onChange={(e) => setForm({ ...form, position: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400">
+            <select value={form.position || 'Guard'} onChange={(e) => setForm({ ...form, position: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
               {POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           ))}
-          {formField('Jersey Number', <input type="number" value={form.jerseyNumber || 0} onChange={(e) => setForm({ ...form, jerseyNumber: parseInt(e.target.value) || 0 })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" />)}
+          {formField('Jersey Number', <input type="number" value={form.jerseyNumber || 0} onChange={(e) => setForm({ ...form, jerseyNumber: parseInt(e.target.value) || 0 })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" />)}
           {formField('Payment Status', (
-            <select value={form.status || 'Paid'} onChange={(e) => setForm({ ...form, status: e.target.value as 'Paid' | 'Pending' | 'Overdue' })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400">
+            <select value={form.status || 'Paid'} onChange={(e) => setForm({ ...form, status: e.target.value as 'Paid' | 'Pending' | 'Overdue' })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
               <option value="Paid">Paid</option>
               <option value="Pending">Pending</option>
               <option value="Overdue">Overdue</option>
             </select>
           ))}
           {formField('Payment Plan', (
-            <select value={form.paymentPlan || 'Monthly'} onChange={(e) => setForm({ ...form, paymentPlan: e.target.value as Player['paymentPlan'] })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400">
+            <select value={form.paymentPlan || 'Monthly'} onChange={(e) => setForm({ ...form, paymentPlan: e.target.value as Player['paymentPlan'] })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
               {PAYMENT_PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           ))}
-          {formField('Amount (€)', <input type="number" value={form.amount || 0} onChange={(e) => setForm({ ...form, amount: parseInt(e.target.value) || 0 })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" />)}
-          {formField('Last Payment Date', <input type="date" value={form.lastPaymentDate || ''} onChange={(e) => setForm({ ...form, lastPaymentDate: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" />)}
-          {formField('Registration Date', <input type="date" value={form.registrationDate || ''} onChange={(e) => setForm({ ...form, registrationDate: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" />)}
-          {formField('Guardian Name', <input value={form.guardianName || ''} onChange={(e) => setForm({ ...form, guardianName: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" placeholder="Parent / Guardian" />)}
-          {formField('Guardian Phone', <input value={form.guardianPhone || ''} onChange={(e) => setForm({ ...form, guardianPhone: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" placeholder="+353 87 000 0000" />)}
+          {formField('Amount (€)', <input type="number" value={form.amount || 0} onChange={(e) => setForm({ ...form, amount: parseInt(e.target.value) || 0 })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" />)}
+          {formField('Last Payment Date', <input type="date" value={form.lastPaymentDate || ''} onChange={(e) => setForm({ ...form, lastPaymentDate: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" />)}
+          {formField('Registration Date', <input type="date" value={form.registrationDate || ''} onChange={(e) => setForm({ ...form, registrationDate: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" />)}
+          {formField('Guardian Name', <input value={form.guardianName || ''} onChange={(e) => setForm({ ...form, guardianName: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="Parent / Guardian" />)}
+          {formField('Guardian Phone', <input value={form.guardianPhone || ''} onChange={(e) => setForm({ ...form, guardianPhone: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="+353 87 000 0000" />)}
           <div className="md:col-span-2">
             {formField('Teams', (
               <div className="flex flex-wrap gap-2">
@@ -1155,7 +1813,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
         </div>
         <div className="flex justify-end gap-3 pt-4 border-t border-white/[0.06]">
           <button onClick={() => { setShowAddModal(false); setEditingPlayer(null) }} className="px-4 py-2 font-inter text-sm text-slate-300 hover:text-white transition-colors">Cancel</button>
-          <button onClick={handleSave} className="bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">
+          <button onClick={handleSave} className="btn-gradient text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">
             {editingPlayer ? 'Save Changes' : 'Add Member'}
           </button>
         </div>
@@ -1182,8 +1840,10 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
   const [activeDivision, setActiveDivision] = useState<string | 'all'>('all')
   const [showAddTeam, setShowAddTeam] = useState(false)
   const [showAddDivision, setShowAddDivision] = useState(false)
+  const [showAddAgeGroup, setShowAddAgeGroup] = useState(false)
   const [teamForm, setTeamForm] = useState({ name: '', gender: 'Men' as Team['gender'], divisionId: '', coach: '' })
   const [divisionName, setDivisionName] = useState('')
+  const [ageGroupForm, setAgeGroupForm] = useState({ name: '', minAge: '', maxAge: '' })
 
   const currentAgeGroup = ageGroups.find((ag) => ag.id === activeAgeGroup)
   const divisions = currentAgeGroup?.divisions || []
@@ -1238,16 +1898,61 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
     saveTeams(next)
   }
 
+  const handleAddAgeGroup = () => {
+    const name = ageGroupForm.name.trim()
+    if (!name) return
+    const id = name.toLowerCase().replace(/\s+/g, '-')
+    if (ageGroups.some((ag) => ag.id === id)) {
+      alert('An age group with that name already exists.')
+      return
+    }
+    const minAge = parseInt(ageGroupForm.minAge, 10) || 0
+    const maxAge = parseInt(ageGroupForm.maxAge, 10) || minAge
+    const newAgeGroup: AgeGroup = {
+      id,
+      name,
+      minAge,
+      maxAge,
+      divisions: [{ id: `${id}-a`, name: 'A', level: 1 }],
+    }
+    saveAgeGroups([...ageGroups, newAgeGroup])
+    setActiveAgeGroup(id)
+    setActiveDivision('all')
+    setShowAddAgeGroup(false)
+    setAgeGroupForm({ name: '', minAge: '', maxAge: '' })
+  }
+
+  const handleDeleteDivision = (divisionId: string) => {
+    const teamsInDivision = teams.filter((t) => t.divisionId === divisionId)
+    if (teamsInDivision.length > 0) {
+      alert(`Can't delete this division — ${teamsInDivision.length} team(s) are still assigned to it. Move or delete those teams first.`)
+      return
+    }
+    if (!confirm('Delete this division?')) return
+    const nextAgeGroups = ageGroups.map((ag) =>
+      ag.id === activeAgeGroup ? { ...ag, divisions: ag.divisions.filter((d) => d.id !== divisionId) } : ag
+    )
+    saveAgeGroups(nextAgeGroups)
+    if (activeDivision === divisionId) setActiveDivision('all')
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Teams</h2>
+        <div>
+          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Teams</h2>
+          <p className="font-inter text-sm text-slate-400 mt-1.5">Divisions, rosters &amp; league standings</p>
+        </div>
         <div className="flex gap-2">
+          <button onClick={() => setShowAddAgeGroup(true)} className="flex items-center gap-2 bg-transparent border border-white/30 text-white font-inter font-medium text-sm px-3 py-2 rounded hover:bg-white/5 transition-colors">
+            <Plus size={14} />
+            Add Age Group
+          </button>
           <button onClick={() => setShowAddDivision(true)} className="flex items-center gap-2 bg-transparent border border-white/30 text-white font-inter font-medium text-sm px-3 py-2 rounded hover:bg-white/5 transition-colors">
             <Plus size={14} />
             Add Division
           </button>
-          <button onClick={() => setShowAddTeam(true)} className="flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-4 py-2 rounded hover:scale-[1.03] hover:shadow-lg transition-all duration-150">
+          <button onClick={() => setShowAddTeam(true)} className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg hover:scale-[1.03] transition-all duration-150">
             <Plus size={16} />
             Add Team
           </button>
@@ -1255,7 +1960,7 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
       </div>
 
       {/* Age Group Tabs */}
-      <div className="flex gap-1 bg-[#1E293B] rounded-lg p-1 w-fit overflow-x-auto">
+      <div className="flex gap-1 bg-white/[0.04] border border-white/[0.06] rounded-lg p-1 w-fit overflow-x-auto">
         {ageGroups.map((ag) => (
           <button
             key={ag.id}
@@ -1280,20 +1985,26 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
             All Divisions
           </button>
           {divisions.map((d) => (
-            <button
+            <span
               key={d.id}
-              onClick={() => setActiveDivision(d.id)}
-              className={`px-3 py-1 rounded-md font-inter text-xs font-medium transition-all ${activeDivision === d.id ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'text-slate-400 hover:text-white bg-white/5'}`}
+              className={`group flex items-center gap-1.5 pl-3 pr-1.5 py-1 rounded-md font-inter text-xs font-medium transition-all ${activeDivision === d.id ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'text-slate-400 hover:text-white bg-white/5'}`}
             >
-              {d.name}
-            </button>
+              <button onClick={() => setActiveDivision(d.id)}>{d.name}</button>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleDeleteDivision(d.id) }}
+                title="Delete division"
+                className="opacity-50 hover:opacity-100 hover:text-red-400 transition-opacity"
+              >
+                <X size={12} />
+              </button>
+            </span>
           ))}
         </div>
       )}
 
       {/* Team Cards */}
       {filteredTeams.length === 0 ? (
-        <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-8 text-center">
+        <div className="dash-card p-8 text-center">
           <Trophy size={40} className="text-slate-500 mx-auto mb-3" />
           <p className="font-inter text-lg text-slate-300">No teams in this age group yet.</p>
           <p className="font-inter text-sm text-slate-400 mt-1">Click "Add Team" to create one.</p>
@@ -1304,7 +2015,7 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
             const teamPlayers = getTeamPlayers(team.id)
             const winPct = team.wins + team.losses > 0 ? Math.round((team.wins / (team.wins + team.losses)) * 100) : 0
             return (
-              <div key={team.id} className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-5 space-y-4">
+              <div key={team.id} className="dash-card p-5 space-y-4">
                 <div className="flex items-start justify-between">
                   <div>
                     <h3 className="font-inter font-semibold text-base text-white">{team.name}</h3>
@@ -1374,10 +2085,10 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
 
       <Modal open={showAddTeam} onClose={() => setShowAddTeam(false)} title="Add New Team">
         <div className="space-y-4">
-          {formField('Team Name', <input value={teamForm.name} onChange={(e) => setTeamForm({ ...teamForm, name: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" placeholder="Dublin Lions U16 Boys A" />)}
+          {formField('Team Name', <input value={teamForm.name} onChange={(e) => setTeamForm({ ...teamForm, name: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="Dublin Lions U16 Boys A" />)}
           <div className="grid grid-cols-2 gap-4">
             {formField('Gender', (
-              <select value={teamForm.gender} onChange={(e) => setTeamForm({ ...teamForm, gender: e.target.value as Team['gender'] })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400">
+              <select value={teamForm.gender} onChange={(e) => setTeamForm({ ...teamForm, gender: e.target.value as Team['gender'] })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
                 <option value="Boys">Boys</option>
                 <option value="Girls">Girls</option>
                 <option value="Men">Men</option>
@@ -1385,28 +2096,43 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
               </select>
             ))}
             {formField('Division', (
-              <select value={teamForm.divisionId} onChange={(e) => setTeamForm({ ...teamForm, divisionId: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400">
+              <select value={teamForm.divisionId} onChange={(e) => setTeamForm({ ...teamForm, divisionId: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
                 <option value="">Select Division</option>
                 {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             ))}
           </div>
-          {formField('Coach', <input value={teamForm.coach} onChange={(e) => setTeamForm({ ...teamForm, coach: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" placeholder="Coach Name" />)}
+          {formField('Coach', <input value={teamForm.coach} onChange={(e) => setTeamForm({ ...teamForm, coach: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="Coach Name" />)}
         </div>
         <div className="flex justify-end gap-3 pt-2">
           <button onClick={() => setShowAddTeam(false)} className="px-4 py-2 font-inter text-sm text-slate-300 hover:text-white transition-colors">Cancel</button>
-          <button onClick={handleAddTeam} className="bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">Add Team</button>
+          <button onClick={handleAddTeam} className="btn-gradient text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">Add Team</button>
         </div>
       </Modal>
 
       <Modal open={showAddDivision} onClose={() => setShowAddDivision(false)} title="Add Division">
         <div className="space-y-4">
           <p className="font-inter text-sm text-slate-400">Adding division to <span className="text-white font-medium">{currentAgeGroup?.name}</span></p>
-          {formField('Division Name', <input value={divisionName} onChange={(e) => setDivisionName(e.target.value)} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" placeholder="e.g., E or Development" />)}
+          {formField('Division Name', <input value={divisionName} onChange={(e) => setDivisionName(e.target.value)} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="e.g., E or Development" />)}
         </div>
         <div className="flex justify-end gap-3 pt-2">
           <button onClick={() => setShowAddDivision(false)} className="px-4 py-2 font-inter text-sm text-slate-300 hover:text-white transition-colors">Cancel</button>
-          <button onClick={handleAddDivision} className="bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">Add Division</button>
+          <button onClick={handleAddDivision} className="btn-gradient text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">Add Division</button>
+        </div>
+      </Modal>
+
+      <Modal open={showAddAgeGroup} onClose={() => setShowAddAgeGroup(false)} title="Add Age Group">
+        <div className="space-y-4">
+          {formField('Age Group Name', <input value={ageGroupForm.name} onChange={(e) => setAgeGroupForm({ ...ageGroupForm, name: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="e.g., U8 or Academy" />)}
+          <div className="grid grid-cols-2 gap-4">
+            {formField('Min Age', <input type="number" value={ageGroupForm.minAge} onChange={(e) => setAgeGroupForm({ ...ageGroupForm, minAge: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500" placeholder="6" />)}
+            {formField('Max Age', <input type="number" value={ageGroupForm.maxAge} onChange={(e) => setAgeGroupForm({ ...ageGroupForm, maxAge: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500" placeholder="8" />)}
+          </div>
+          <p className="font-inter text-xs text-slate-500">A default "A" division is created automatically — add more from "Add Division" once it exists.</p>
+        </div>
+        <div className="flex justify-end gap-3 pt-2">
+          <button onClick={() => setShowAddAgeGroup(false)} className="px-4 py-2 font-inter text-sm text-slate-300 hover:text-white transition-colors">Cancel</button>
+          <button onClick={handleAddAgeGroup} className="btn-gradient text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">Add Age Group</button>
         </div>
       </Modal>
     </div>
@@ -1415,9 +2141,119 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
 
 /* ─────────────────────── View: Payments ─────────────────────── */
 
+function RecordPaymentModal({
+  players,
+  onClose,
+  onSave,
+}: {
+  players: Player[]
+  onClose: () => void
+  onSave: (playerId: string, amount: number, method: string, plan: string) => void
+}) {
+  const [playerId, setPlayerId] = useState(players[0]?.id ?? '')
+  const [feeType, setFeeType] = useState<'monthly' | 'oneTime'>('monthly')
+  const [amount, setAmount] = useState(() => (players[0] ? getMonthlyFeeForPlayer(players[0].id) : 50))
+  const [method, setMethod] = useState('Cash')
+
+  const onPlayerChange = (id: string) => {
+    setPlayerId(id)
+    setAmount(feeType === 'monthly' ? getMonthlyFeeForPlayer(id) : getOneTimeFeeForPlayer(id))
+  }
+
+  const onFeeTypeChange = (type: 'monthly' | 'oneTime') => {
+    setFeeType(type)
+    if (playerId) setAmount(type === 'monthly' ? getMonthlyFeeForPlayer(playerId) : getOneTimeFeeForPlayer(playerId))
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Record Payment">
+      <div className="space-y-4">
+        {formField('Member', (
+          <select
+            value={playerId}
+            onChange={(e) => onPlayerChange(e.target.value)}
+            className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+          >
+            {players.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        ))}
+        {formField('Fee type', (
+          <select
+            value={feeType}
+            onChange={(e) => onFeeTypeChange(e.target.value as 'monthly' | 'oneTime')}
+            className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+          >
+            <option value="monthly">Monthly</option>
+            <option value="oneTime">One-time registration</option>
+          </select>
+        ))}
+        <div className="grid grid-cols-2 gap-3">
+          {formField('Amount (€)', (
+            <input
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(parseFloat(e.target.value) || 0)}
+              className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+            />
+          ))}
+          {formField('Method', (
+            <select
+              value={method}
+              onChange={(e) => setMethod(e.target.value)}
+              className="w-full bg-[#0A1628] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+            >
+              <option>Cash</option>
+              <option>Stripe</option>
+              <option>Bank Transfer</option>
+            </select>
+          ))}
+        </div>
+        <div className="flex gap-3 pt-2">
+          <button onClick={onClose} className="flex-1 bg-white/5 border border-white/10 text-slate-300 font-inter font-medium text-sm rounded-lg px-4 py-2.5 hover:bg-white/10 transition-colors">Cancel</button>
+          <button
+            onClick={() => { if (playerId) { onSave(playerId, amount, method, feeType === 'monthly' ? 'Monthly' : 'One-time'); onClose() } }}
+            disabled={!playerId || amount <= 0}
+            className="flex-1 bg-blue-500 text-white font-inter font-semibold text-sm rounded-lg px-4 py-2.5 hover:bg-blue-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+          >
+            <Check size={16} /> Record Payment
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 function PaymentsView({ data }: { data: ReturnType<typeof useLiveData> }) {
-  const { payments, players } = data
+  const { payments, players, savePayments, savePlayers, ageGroups, teams } = data
   const [paymentTab, setPaymentTab] = useState('All')
+  const [showRecord, setShowRecord] = useState(false)
+  const [viewPayment, setViewPayment] = useState<Payment | null>(null)
+
+  // Record a new payment and flip the member to Paid.
+  const handleRecord = (playerId: string, amount: number, method: string, plan: string) => {
+    const player = players.find((p) => p.id === playerId)
+    if (!player) return
+    const payment: Payment = {
+      id: `pay-${Date.now().toString(36)}`,
+      playerId,
+      playerName: player.name,
+      amount,
+      status: 'succeeded',
+      date: new Date().toISOString().split('T')[0],
+      method,
+      plan,
+    }
+    savePayments([payment, ...payments])
+    savePlayers(players.map((p) => (p.id === playerId ? { ...p, status: 'Paid' as const, lastPaymentDate: payment.date, amount } : p)))
+  }
+
+  // Retry a failed payment → mark succeeded and flip the member to Paid.
+  const handleRetry = (payment: Payment) => {
+    savePayments(payments.map((p) => (p.id === payment.id ? { ...p, status: 'succeeded' as const, date: new Date().toISOString().split('T')[0] } : p)))
+    savePlayers(players.map((p) => (p.id === payment.playerId ? { ...p, status: 'Paid' as const, lastPaymentDate: new Date().toISOString().split('T')[0] } : p)))
+  }
 
   const filteredTransactions = useMemo(() => {
     if (paymentTab === 'All') return payments
@@ -1467,8 +2303,11 @@ function PaymentsView({ data }: { data: ReturnType<typeof useLiveData> }) {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Payments</h2>
-        <button className="flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-4 py-2 rounded hover:scale-[1.03] hover:shadow-lg transition-all duration-150">
+        <div>
+          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Payments</h2>
+          <p className="font-inter text-sm text-slate-400 mt-1.5">Record payments &amp; track revenue</p>
+        </div>
+        <button onClick={() => setShowRecord(true)} className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg hover:scale-[1.03] transition-all duration-150">
           <Plus size={16} />
           Record Payment
         </button>
@@ -1482,7 +2321,7 @@ function PaymentsView({ data }: { data: ReturnType<typeof useLiveData> }) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6">
+        <div className="dash-card p-6">
           <h3 className="font-inter font-semibold text-lg text-white mb-4">Monthly Revenue</h3>
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={revenueData}>
@@ -1495,7 +2334,7 @@ function PaymentsView({ data }: { data: ReturnType<typeof useLiveData> }) {
           </ResponsiveContainer>
         </div>
 
-        <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6">
+        <div className="dash-card p-6">
           <h3 className="font-inter font-semibold text-lg text-white mb-4">Payment Status Breakdown</h3>
           {paymentStatusData.length === 0 ? (
             <div className="h-[250px] flex items-center justify-center">
@@ -1524,57 +2363,7 @@ function PaymentsView({ data }: { data: ReturnType<typeof useLiveData> }) {
         </div>
       </div>
 
-      {/* Stripe Integration Panel */}
-      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6 space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-green-500/10 rounded-lg flex items-center justify-center">
-              <CheckCircle size={20} className="text-green-400" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-inter font-semibold text-lg text-white">Stripe Connected</h3>
-                <span className="px-2 py-0.5 bg-amber-500/10 text-amber-400 text-xs font-inter font-medium rounded border border-amber-500/20">TEST MODE</span>
-              </div>
-              <p className="font-inter text-sm text-slate-400">Account: Dublin Lions BC — Last sync: 2 min ago</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <button className="flex items-center gap-2 bg-transparent border border-white/30 text-white font-inter font-medium text-sm px-4 py-2 rounded hover:bg-white/5 transition-colors duration-150">
-              <RefreshCw size={14} />
-              Sync Now
-            </button>
-            <a href="https://dashboard.stripe.com/test" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 bg-transparent border border-white/30 text-white font-inter font-medium text-sm px-4 py-2 rounded hover:bg-white/5 transition-colors duration-150">
-              <ExternalLink size={14} />
-              View Stripe Dashboard
-            </a>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-          <div className="bg-[#0A1628] border border-white/[0.06] rounded-lg p-4">
-            <p className="font-inter text-xs text-slate-500 uppercase tracking-widest">Test API Key</p>
-            <div className="flex items-center gap-2 mt-2">
-              <code className="font-mono text-sm text-slate-300">pk_test_••••••••••••••••••••</code>
-              <button className="text-slate-400 hover:text-white transition-colors"><Eye size={14} /></button>
-            </div>
-          </div>
-          <div className="bg-[#0A1628] border border-white/[0.06] rounded-lg p-4">
-            <p className="font-inter text-xs text-slate-500 uppercase tracking-widest">Payment Plans</p>
-            <div className="flex gap-4 mt-2">
-              <div className="flex-1 bg-white/5 rounded-lg p-3 text-center">
-                <p className="font-oswald font-bold text-lg text-white">€50</p>
-                <p className="font-inter text-xs text-slate-400">Monthly</p>
-              </div>
-              <div className="flex-1 bg-white/5 rounded-lg p-3 text-center">
-                <p className="font-oswald font-bold text-lg text-white">€250</p>
-                <p className="font-inter text-xs text-slate-400">Full Session</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex gap-1 bg-[#1E293B] rounded-lg p-1 w-fit">
+      <div className="flex gap-1 bg-white/[0.04] border border-white/[0.06] rounded-lg p-1 w-fit">
         {['All', 'Completed', 'Pending', 'Failed', 'Overdue'].map((tab) => (
           <button
             key={tab}
@@ -1586,7 +2375,7 @@ function PaymentsView({ data }: { data: ReturnType<typeof useLiveData> }) {
         ))}
       </div>
 
-      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl overflow-hidden">
+      <div className="dash-card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -1614,9 +2403,9 @@ function PaymentsView({ data }: { data: ReturnType<typeof useLiveData> }) {
                     <td className="px-6 py-4"><StatusBadge status={t.status} /></td>
                     <td className="px-6 py-4">
                       {t.status === 'failed' ? (
-                        <button className="text-blue-400 hover:text-blue-300 font-inter text-sm font-medium transition-colors">Retry</button>
+                        <button onClick={() => handleRetry(t)} className="text-blue-400 hover:text-blue-300 font-inter text-sm font-medium transition-colors">Retry</button>
                       ) : (
-                        <button className="text-slate-400 hover:text-white font-inter text-sm transition-colors">View</button>
+                        <button onClick={() => setViewPayment(t)} className="text-slate-400 hover:text-white font-inter text-sm transition-colors">View</button>
                       )}
                     </td>
                   </tr>
@@ -1627,7 +2416,7 @@ function PaymentsView({ data }: { data: ReturnType<typeof useLiveData> }) {
         </div>
       </div>
 
-      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6">
+      <div className="dash-card p-6">
         <h3 className="font-inter font-semibold text-lg text-white mb-4">Failed Payment Recovery</h3>
         <div className="space-y-3">
           {payments.filter((t) => t.status === 'failed').length === 0 ? (
@@ -1644,7 +2433,7 @@ function PaymentsView({ data }: { data: ReturnType<typeof useLiveData> }) {
                     <p className="font-inter text-xs text-slate-400">{t.date} — €{t.amount} — {t.method}</p>
                   </div>
                 </div>
-                <button className="flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-4 py-2 rounded transition-all duration-150">
+                <button onClick={() => handleRetry(t)} className="flex items-center gap-2 btn-gradient text-white font-inter font-semibold text-sm px-4 py-2 rounded transition-all duration-150">
                   <RefreshCw size={14} />
                   Retry
                 </button>
@@ -1653,6 +2442,33 @@ function PaymentsView({ data }: { data: ReturnType<typeof useLiveData> }) {
           )}
         </div>
       </div>
+
+      <PurchaseHistoryPanel />
+
+      <MembershipFeesPanel ageGroups={ageGroups} teams={teams} />
+
+      {showRecord && (
+        <RecordPaymentModal players={players} onClose={() => setShowRecord(false)} onSave={handleRecord} />
+      )}
+      {viewPayment && (
+        <Modal open onClose={() => setViewPayment(null)} title="Payment Details">
+          <div className="space-y-3">
+            {[
+              ['Member', viewPayment.playerName],
+              ['Amount', `€${viewPayment.amount}`],
+              ['Date', viewPayment.date],
+              ['Method', viewPayment.method],
+              ['Plan', viewPayment.plan],
+              ['Status', viewPayment.status],
+            ].map(([label, value]) => (
+              <div key={label} className="flex items-center justify-between border-b border-white/[0.06] pb-2">
+                <span className="font-inter text-sm text-slate-400">{label}</span>
+                <span className="font-inter text-sm font-medium text-white capitalize">{value}</span>
+              </div>
+            ))}
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }
@@ -1689,19 +2505,22 @@ function PublicFixturesPanel() {
     <div className="space-y-3">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Public Fixtures & Results</h2>
+          <div>
+            <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Public Fixtures &amp; Results</h2>
+            <p className="font-inter text-sm text-slate-400 mt-1.5">Publish upcoming games &amp; post final scores</p>
+          </div>
           <p className="font-inter text-sm text-slate-400 mt-1">Add upcoming games and record final scores. Visible on the homepage and Fixtures page.</p>
         </div>
         <button
           onClick={() => { setEditing(null); setShowForm(true) }}
-          className="flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-4 py-2 rounded hover:scale-[1.03] hover:shadow-lg transition-all duration-150 shrink-0"
+          className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg hover:scale-[1.03] transition-all duration-150 shrink-0"
         >
           <Plus size={16} />
           Add Fixture
         </button>
       </div>
 
-      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl overflow-hidden">
+      <div className="dash-card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -1862,7 +2681,7 @@ function FixtureForm({ fixture, onClose, onSave }: { fixture: ClubFixture | null
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <button onClick={onClose} className="bg-white/5 border border-white/[0.06] text-slate-300 font-inter text-sm px-4 py-2 rounded-lg hover:bg-white/10">Cancel</button>
-          <button onClick={() => valid && onSave(form)} disabled={!valid} className="bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white font-inter font-semibold text-sm px-4 py-2 rounded-lg">Save</button>
+          <button onClick={() => valid && onSave(form)} disabled={!valid} className="btn-gradient disabled:opacity-40 text-white font-inter font-semibold text-sm px-4 py-2 rounded-lg">Save</button>
         </div>
       </div>
     </Modal>
@@ -1896,7 +2715,7 @@ function ResultForm({ fixture, onClose, onSave, onClear }: { fixture: ClubFixtur
         ) : <span />}
         <div className="flex gap-2">
           <button onClick={onClose} className="bg-white/5 border border-white/[0.06] text-slate-300 font-inter text-sm px-4 py-2 rounded-lg hover:bg-white/10">Cancel</button>
-          <button onClick={() => onSave({ lionsScore, opponentScore: oppScore, mvp: mvp.trim() || undefined })} className="bg-amber-500 hover:bg-amber-400 text-deep-navy font-inter font-semibold text-sm px-4 py-2 rounded-lg">Save Result</button>
+          <button onClick={() => onSave({ lionsScore, opponentScore: oppScore, mvp: mvp.trim() || undefined })} className="bg-lions-500 hover:bg-lions-400 text-white font-inter font-semibold text-sm px-4 py-2 rounded-lg">Save Result</button>
         </div>
       </div>
     </Modal>
@@ -1955,18 +2774,23 @@ function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
     <div className="space-y-6">
       <PublicFixturesPanel />
 
+      <SeasonControlCenter data={data} />
+
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Training Schedule</h2>
+        <div>
+          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Training Schedule</h2>
+          <p className="font-inter text-sm text-slate-400 mt-1.5">Plan sessions &amp; matches across all teams</p>
+        </div>
         <button
           onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-4 py-2 rounded hover:scale-[1.03] hover:shadow-lg transition-all duration-150"
+          className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg hover:scale-[1.03] transition-all duration-150"
         >
           <Plus size={16} />
           Create Session
         </button>
       </div>
 
-      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl overflow-hidden">
+      <div className="dash-card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
@@ -2026,20 +2850,20 @@ function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
 
       <Modal open={showCreateModal} onClose={() => setShowCreateModal(false)} title="Create New Session">
         <div className="space-y-4">
-          {formField('Session Title', <input value={sessionForm.title} onChange={(e) => setSessionForm({ ...sessionForm, title: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" placeholder="Training Session" />)}
+          {formField('Session Title', <input value={sessionForm.title} onChange={(e) => setSessionForm({ ...sessionForm, title: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="Training Session" />)}
           <div className="grid grid-cols-2 gap-4">
             {formField('Team', (
-              <select value={sessionForm.teamId} onChange={(e) => setSessionForm({ ...sessionForm, teamId: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400">
+              <select value={sessionForm.teamId} onChange={(e) => setSessionForm({ ...sessionForm, teamId: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
                 <option value="">Select Team</option>
                 {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             ))}
-            {formField('Date', <input type="date" value={sessionForm.date} onChange={(e) => setSessionForm({ ...sessionForm, date: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" />)}
+            {formField('Date', <input type="date" value={sessionForm.date} onChange={(e) => setSessionForm({ ...sessionForm, date: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" />)}
           </div>
           <div className="grid grid-cols-2 gap-4">
-            {formField('Time', <input type="time" value={sessionForm.time} onChange={(e) => setSessionForm({ ...sessionForm, time: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" />)}
+            {formField('Time', <input type="time" value={sessionForm.time} onChange={(e) => setSessionForm({ ...sessionForm, time: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" />)}
             {formField('Type', (
-              <select value={sessionForm.type} onChange={(e) => setSessionForm({ ...sessionForm, type: e.target.value as Session['type'] })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400">
+              <select value={sessionForm.type} onChange={(e) => setSessionForm({ ...sessionForm, type: e.target.value as Session['type'] })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
                 <option>Training</option>
                 <option>Match</option>
                 <option>Event</option>
@@ -2047,18 +2871,18 @@ function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
             ))}
           </div>
           {sessionForm.type === 'Match' && (
-            formField('Opponent', <input value={sessionForm.opponent} onChange={(e) => setSessionForm({ ...sessionForm, opponent: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" placeholder="Neptune BC" />)
+            formField('Opponent', <input value={sessionForm.opponent} onChange={(e) => setSessionForm({ ...sessionForm, opponent: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="Neptune BC" />)
           )}
           {formField('Location', (
             <div className="relative">
               <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-              <input value={sessionForm.location} onChange={(e) => setSessionForm({ ...sessionForm, location: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg pl-9 pr-4 py-2.5 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30" placeholder="Coláiste Bríde" />
+              <input value={sessionForm.location} onChange={(e) => setSessionForm({ ...sessionForm, location: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg pl-9 pr-4 py-2.5 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="Coláiste Bríde" />
             </div>
           ))}
         </div>
         <div className="flex justify-end gap-3 pt-2">
           <button onClick={() => setShowCreateModal(false)} className="px-4 py-2 font-inter text-sm text-slate-300 hover:text-white transition-colors">Cancel</button>
-          <button onClick={handleCreateSession} className="bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">Create Session</button>
+          <button onClick={handleCreateSession} className="btn-gradient text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">Create Session</button>
         </div>
       </Modal>
 
@@ -2121,9 +2945,23 @@ function ReportsView({ data }: { data: ReturnType<typeof useLiveData> }) {
     return months.map((m) => ({ month: m, revenue: byMonth.get(m) || 0 }))
   }, [payments])
 
+  // Real cumulative membership over the last 6 months, derived from each
+  // member's registrationDate. Members with no/invalid date count from the start.
   const membershipGrowthData = useMemo(() => {
-    const months = ['Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan']
-    return months.map((m, i) => ({ month: m, members: Math.max(12, players.length - (5 - i) * 2) }))
+    const labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    const now = new Date()
+    const buckets: { month: string; end: Date }[] = []
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i + 1, 0) // last day of that month
+      buckets.push({ month: labels[d.getMonth()], end: d })
+    }
+    return buckets.map(({ month, end }) => ({
+      month,
+      members: players.filter((p) => {
+        const reg = p.registrationDate ? new Date(p.registrationDate) : null
+        return !reg || isNaN(reg.getTime()) || reg.getTime() <= end.getTime()
+      }).length,
+    }))
   }, [players])
 
   const paymentStatusData = useMemo(() => [
@@ -2161,12 +2999,15 @@ function ReportsView({ data }: { data: ReturnType<typeof useLiveData> }) {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Reports</h2>
+        <div>
+          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Reports</h2>
+          <p className="font-inter text-sm text-slate-400 mt-1.5">Revenue, membership &amp; performance analytics</p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Monthly Revenue */}
-        <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6">
+        <div className="dash-card p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="font-inter font-semibold text-lg text-white">Monthly Revenue Report</h3>
@@ -2189,7 +3030,7 @@ function ReportsView({ data }: { data: ReturnType<typeof useLiveData> }) {
         </div>
 
         {/* Member Growth */}
-        <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6">
+        <div className="dash-card p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="font-inter font-semibold text-lg text-white">Member Growth</h3>
@@ -2218,7 +3059,7 @@ function ReportsView({ data }: { data: ReturnType<typeof useLiveData> }) {
         </div>
 
         {/* Payment Status */}
-        <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6">
+        <div className="dash-card p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="font-inter font-semibold text-lg text-white">Payment Status Breakdown</h3>
@@ -2244,7 +3085,7 @@ function ReportsView({ data }: { data: ReturnType<typeof useLiveData> }) {
         </div>
 
         {/* Age Group Breakdown */}
-        <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6">
+        <div className="dash-card p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="font-inter font-semibold text-lg text-white">Age Group Breakdown</h3>
@@ -2271,7 +3112,7 @@ function ReportsView({ data }: { data: ReturnType<typeof useLiveData> }) {
       </div>
 
       {/* Team Performance Table */}
-      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl overflow-hidden">
+      <div className="dash-card overflow-hidden">
         <div className="p-6 pb-4">
           <h3 className="font-inter font-semibold text-lg text-white">Team Performance</h3>
         </div>
@@ -2302,7 +3143,7 @@ function ReportsView({ data }: { data: ReturnType<typeof useLiveData> }) {
       </div>
 
       {/* BI Registration */}
-      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6">
+      <div className="dash-card p-6">
         <h3 className="font-inter font-semibold text-lg text-white mb-4">Basketball Ireland Registration</h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-[#0A1628] rounded-lg p-4 text-center">
@@ -2377,24 +3218,43 @@ function ReportsView({ data }: { data: ReturnType<typeof useLiveData> }) {
 
 /* ─────────────────────── View: Images ─────────────────────── */
 
-const imageMeta: Record<string, { title: string; usedOn: string; defaultPath: string }> = {
-  hero: { title: 'Homepage Hero Background', usedOn: 'Landing page hero section — full-screen banner', defaultPath: '/hero-team-celebration.jpg' },
-  about: { title: 'About the Club', usedOn: 'About section on homepage — team huddle photo', defaultPath: '/about-team-huddle.jpg' },
-  match1: { title: 'Gallery Photo 1', usedOn: 'Homepage gallery grid, position 1', defaultPath: '/match-action-1.jpg' },
-  match2: { title: 'Gallery Photo 2', usedOn: 'Homepage gallery grid, position 2', defaultPath: '/match-action-2.jpg' },
-  match3: { title: 'Gallery Photo 3', usedOn: 'Homepage gallery grid, position 3', defaultPath: '/match-action-3.jpg' },
-  match4: { title: 'Gallery Photo 4', usedOn: 'Homepage gallery grid, position 4', defaultPath: '/match-action-4.jpg' },
-  match5: { title: 'Gallery Photo 5', usedOn: 'Homepage gallery grid, position 5', defaultPath: '/match-action-5.jpg' },
-  match6: { title: 'Gallery Photo 6', usedOn: 'Homepage gallery grid, position 6', defaultPath: '/match-action-6.jpg' },
-  match7: { title: 'Gallery Photo 7', usedOn: 'Homepage gallery grid, position 7', defaultPath: '/match-action-7.jpg' },
-  match8: { title: 'Gallery Photo 8', usedOn: 'Homepage gallery grid, position 8', defaultPath: '/match-action-8.jpg' },
-  playerKevin: { title: "Men's Team: Kevin Anyanwu", usedOn: "Teams page / Homepage men's squad", defaultPath: '/player-kevin-anyanwu.jpg' },
-  playerTiago: { title: "Men's Team: Tiago Pereira", usedOn: "Teams page / Homepage men's squad", defaultPath: '/player-tiago-pereira.jpg' },
-  playerTara: { title: "Women's Team: Tara Nevin", usedOn: "Teams page / Homepage women's squad", defaultPath: '/player-tara-nevin.jpg' },
-  playerEmily: { title: "Women's Team: Emily Smyth", usedOn: "Teams page / Homepage women's squad", defaultPath: '/player-emily-smyth.jpg' },
-  coachRob: { title: "Head Coach: Rob White", usedOn: 'Teams page coach profile card', defaultPath: '/coach-rob-white.jpg' },
-  venue: { title: 'Venue: Coláiste Bríde', usedOn: 'Contact page venue section', defaultPath: '/venue-colaiste-bride.jpg' },
-  logo: { title: 'Club Logo', usedOn: 'Navbar, Footer, Login pages, Dashboard sidebar', defaultPath: '/logo-lions-emblem.png' },
+type ImageMetaEntry = { title: string; usedOn: string; defaultPath: string; section: string }
+
+// Section display order for the grouped Image Manager grid.
+const imageSections = ['Branding', 'Sponsors', 'Homepage', 'Gallery', 'Team & Coaches', 'Venue'] as const
+
+const imageMeta: Record<string, ImageMetaEntry> = {
+  logo: { title: 'Club Logo', usedOn: 'Navbar, Footer, Login pages, Dashboard sidebar', defaultPath: '/logo-lions-emblem.png', section: 'Branding' },
+  sponsorJoels: { title: "Sponsor: Joel's", usedOn: "Men's team header, Teams page, Footer sponsors bar", defaultPath: '/sponsor-joels.png', section: 'Sponsors' },
+  sponsorAbbey: { title: 'Sponsor: Abbey Seals', usedOn: "Women's team header, Teams page, Footer sponsors bar", defaultPath: '/sponsor-abbey-seals.png', section: 'Sponsors' },
+  hero: { title: 'Homepage Hero Background', usedOn: 'Landing page hero section — full-screen banner', defaultPath: '/hero-team-celebration.jpg', section: 'Homepage' },
+  about: { title: 'About the Club', usedOn: 'About section on homepage — team huddle photo', defaultPath: '/about-team-huddle.jpg', section: 'Homepage' },
+  match1: { title: 'Gallery Photo 1', usedOn: 'Homepage gallery grid, position 1', defaultPath: '/match-action-1.jpg', section: 'Gallery' },
+  match2: { title: 'Gallery Photo 2', usedOn: 'Homepage gallery grid, position 2', defaultPath: '/match-action-2.jpg', section: 'Gallery' },
+  match3: { title: 'Gallery Photo 3', usedOn: 'Homepage gallery grid, position 3', defaultPath: '/match-action-3.jpg', section: 'Gallery' },
+  match4: { title: 'Gallery Photo 4', usedOn: 'Homepage gallery grid, position 4', defaultPath: '/match-action-4.jpg', section: 'Gallery' },
+  match5: { title: 'Gallery Photo 5', usedOn: 'Homepage gallery grid, position 5', defaultPath: '/match-action-5.jpg', section: 'Gallery' },
+  match6: { title: 'Gallery Photo 6', usedOn: 'Homepage gallery grid, position 6', defaultPath: '/match-action-6.jpg', section: 'Gallery' },
+  match7: { title: 'Gallery Photo 7', usedOn: 'Homepage gallery grid, position 7', defaultPath: '/match-action-7.jpg', section: 'Gallery' },
+  match8: { title: 'Gallery Photo 8', usedOn: 'Homepage gallery grid, position 8', defaultPath: '/match-action-8.jpg', section: 'Gallery' },
+  playerKevin: { title: "Men's Team: Kevin Anyanwu", usedOn: "Teams page / Homepage men's squad", defaultPath: '/player-kevin-anyanwu.jpg', section: 'Team & Coaches' },
+  playerTiago: { title: "Men's Team: Tiago Pereira", usedOn: "Teams page / Homepage men's squad", defaultPath: '/player-tiago-pereira.jpg', section: 'Team & Coaches' },
+  playerTara: { title: "Women's Team: Tara Nevin", usedOn: "Teams page / Homepage women's squad", defaultPath: '/player-tara-nevin.jpg', section: 'Team & Coaches' },
+  playerEmily: { title: "Women's Team: Emily Smyth", usedOn: "Teams page / Homepage women's squad", defaultPath: '/player-emily-smyth.jpg', section: 'Team & Coaches' },
+  coachRob: { title: "Head Coach: Rob White", usedOn: 'Teams page coach profile card', defaultPath: '/coach-rob-white.jpg', section: 'Team & Coaches' },
+  venue: { title: 'Venue: Coláiste Bríde', usedOn: 'Contact page venue section', defaultPath: '/venue-colaiste-bride.jpg', section: 'Venue' },
+}
+
+// Resolve a stored value to a displayable URL. Uploaded/linked URLs (http, data,
+// blob) pass through unchanged; bundled public-folder paths get the deploy base
+// prefix (e.g. "/basketball-manager/") — without double-prefixing if already set.
+function resolveImageUrl(raw: string): string {
+  if (!raw) return ''
+  if (/^(data:|blob:|https?:)/i.test(raw)) return raw
+  const base = import.meta.env.BASE_URL || '/'
+  if (raw.startsWith(base)) return raw
+  const clean = raw.startsWith('/') ? raw.slice(1) : raw
+  return base.endsWith('/') ? base + clean : `${base}/${clean}`
 }
 
 function ImagesView() {
@@ -2403,40 +3263,95 @@ function ImagesView() {
     if (saved) return JSON.parse(saved)
     return Object.fromEntries(Object.entries(imageMeta).map(([k, v]) => [k, v.defaultPath]))
   })
-  const [inputs, setInputs] = useState<Record<string, string>>(images)
   const [showBanner, setShowBanner] = useState(false)
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [uploading, setUploading] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+  // Manager-editable display names (player/coach), synced to all visitors.
+  const [labels, setLabels] = useState<Record<string, string>>({})
+  const [editingName, setEditingName] = useState<string | null>(null)
+  const [nameDraft, setNameDraft] = useState('')
 
-  const saveImages = useCallback((next: Record<string, string>) => {
-    setImages(next)
-    setInputs(next)
-    localStorage.setItem('dlbc_images', JSON.stringify(next))
-    setShowBanner(true)
-    setTimeout(() => setShowBanner(false), 3000)
-    window.dispatchEvent(new Event('dlbc-images-updated'))
+  // Reflect the shared map (Supabase + cache) into local state.
+  useEffect(() => {
+    const sync = () => {
+      try {
+        const saved = localStorage.getItem('dlbc_images')
+        const map = saved ? JSON.parse(saved) : {}
+        const merged = Object.fromEntries(
+          Object.keys(imageMeta).map((k) => [k, map[k] || imageMeta[k].defaultPath]),
+        )
+        setImages(merged)
+        // Pull any custom name labels (stored under a "label:" prefix).
+        const nextLabels: Record<string, string> = {}
+        for (const [k, v] of Object.entries(map)) {
+          if (k.startsWith(LABEL_PREFIX) && typeof v === 'string') {
+            nextLabels[k.slice(LABEL_PREFIX.length)] = v
+          }
+        }
+        setLabels(nextLabels)
+      } catch { /* ignore */ }
+    }
+    window.addEventListener('dlbc-images-updated', sync)
+    fetchSiteImages(true).then(sync).catch(sync)
+    return () => window.removeEventListener('dlbc-images-updated', sync)
   }, [])
 
-  const handleFileUpload = useCallback((key: string, file: File) => {
+  const flashSaved = useCallback(() => {
+    setShowBanner(true)
+    setTimeout(() => setShowBanner(false), 3000)
+  }, [])
+
+  // Local-only fallback (base64) used when Supabase Storage is not configured.
+  const saveLocal = useCallback((next: Record<string, string>) => {
+    setImages(next)
+    localStorage.setItem('dlbc_images', JSON.stringify(next))
+    flashSaved()
+    window.dispatchEvent(new Event('dlbc-images-updated'))
+  }, [flashSaved])
+
+  // Persist an edited display name. saveSiteImageUrl writes to the shared store
+  // (Supabase + local cache) and dispatches the update event, so the sync
+  // handler above refreshes `labels` and every visitor picks it up.
+  const commitName = useCallback((key: string) => {
+    const value = nameDraft.trim()
+    setEditingName(null)
+    void saveSiteImageUrl(`${LABEL_PREFIX}${key}`, value).then(() => flashSaved())
+  }, [nameDraft, flashSaved])
+
+  const handleFileUpload = useCallback(async (key: string, file: File) => {
     if (!file.type.startsWith('image/')) {
       setUploadError('Only image files are allowed (JPG, PNG, GIF, WEBP)')
       return
     }
-    if (file.size > 2 * 1024 * 1024) {
-      setUploadError('Image must be under 2MB')
+    const maxMb = isSupabaseConfigured ? 5 : 2
+    if (file.size > maxMb * 1024 * 1024) {
+      setUploadError(`Image must be under ${maxMb}MB`)
       return
     }
     setUploading(key)
     setUploadError(null)
+
+    if (isSupabaseConfigured) {
+      const { url, error } = await uploadSiteImage(key, file)
+      setUploading(null)
+      if (error || !url) {
+        setUploadError(error === 'not-configured'
+          ? 'Storage is not configured.'
+          : `Upload failed: ${error}. Check that the "site-images" bucket exists and you are signed in.`)
+        return
+      }
+      // cache/state update arrives via the dlbc-images-updated listener
+      flashSaved()
+      return
+    }
+
+    // Fallback: embed as base64 in localStorage (this browser only).
     const reader = new FileReader()
     reader.onload = (e) => {
       const base64 = e.target?.result as string
-      if (base64) {
-        const next = { ...images, [key]: base64 }
-        saveImages(next)
-      }
+      if (base64) saveLocal({ ...images, [key]: base64 })
       setUploading(null)
     }
     reader.onerror = () => {
@@ -2444,7 +3359,7 @@ function ImagesView() {
       setUploading(null)
     }
     reader.readAsDataURL(file)
-  }, [images, saveImages])
+  }, [images, saveLocal, flashSaved])
 
   const handleDrop = useCallback((e: React.DragEvent, key: string) => {
     e.preventDefault()
@@ -2465,17 +3380,12 @@ function ImagesView() {
     setDragOver(null)
   }, [])
 
-  const handleUrlUpdate = useCallback((key: string) => {
-    const url = inputs[key]?.trim()
-    if (!url) return
-    const next = { ...images, [key]: url }
-    saveImages(next)
-  }, [images, inputs, saveImages])
-
-  const handleReset = useCallback((key: string) => {
-    const next = { ...images, [key]: imageMeta[key].defaultPath }
-    saveImages(next)
-  }, [images, saveImages])
+  const handleReset = useCallback(async (key: string) => {
+    setUploadError(null)
+    const { error } = await resetSiteImage(key)
+    if (error) { setUploadError(`Could not reset: ${error}`); return }
+    flashSaved()
+  }, [flashSaved])
 
   const handleExport = useCallback(() => {
     const config = { club: 'Dublin Lions BC', exportedAt: new Date().toISOString(), images }
@@ -2497,7 +3407,15 @@ function ImagesView() {
           const merged = Object.fromEntries(
             Object.keys(imageMeta).map((k) => [k, config.images[k] || imageMeta[k].defaultPath])
           )
-          saveImages(merged)
+          // Update the local cache/UI immediately...
+          saveLocal(merged)
+          // ...and, when shared storage is configured, persist each override
+          // so the imported config is visible to every visitor.
+          if (isSupabaseConfigured) {
+            Object.entries(config.images as Record<string, string>).forEach(([k, url]) => {
+              if (typeof url === 'string' && url) void saveSiteImageUrl(k, url)
+            })
+          }
         } else {
           setUploadError('Invalid config file format')
         }
@@ -2506,16 +3424,32 @@ function ImagesView() {
       }
     }
     reader.readAsText(file)
-  }, [saveImages])
+  }, [saveLocal])
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Image Manager</h2>
-          <p className="font-inter text-sm text-slate-400 mt-1">
-            Upload images from your computer or paste a URL. Changes apply instantly across the entire site.
+          <div>
+            <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Image Manager</h2>
+            <p className="font-inter text-sm text-slate-400 mt-1.5">Update photos &amp; branding across the public site</p>
+          </div>
+          <p className="font-inter text-sm text-slate-400 mt-1 max-w-xl">
+            Upload images from your computer — drag &amp; drop or click a photo. Changes apply instantly across the entire site.
           </p>
+          <div className="mt-3">
+            {isSupabaseConfigured ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-green-500/10 border border-green-500/20 px-3 py-1 font-inter text-xs font-medium text-green-400">
+                <CheckCircle size={13} />
+                Shared storage — every visitor sees your uploads
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-warn-500/10 border border-warn-500/20 px-3 py-1 font-inter text-xs font-medium text-warn-400">
+                <AlertCircle size={13} />
+                Browser-only — uploads show on this device until storage is configured
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex gap-3">
           <label className="cursor-pointer flex items-center gap-2 bg-transparent border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white font-inter font-semibold text-sm px-4 py-2 rounded transition-all duration-200">
@@ -2523,7 +3457,7 @@ function ImagesView() {
             Import Config
             <input type="file" accept=".json" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) handleImport(file); e.target.value = '' }} />
           </label>
-          <button onClick={handleExport} className="flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-4 py-2 rounded transition-all duration-150">
+          <button onClick={handleExport} className="flex items-center gap-2 btn-gradient text-white font-inter font-semibold text-sm px-4 py-2 rounded transition-all duration-150">
             <Download size={16} />
             Export Config
           </button>
@@ -2534,7 +3468,9 @@ function ImagesView() {
         <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4 flex items-center gap-3">
           <CheckCircle size={20} className="text-green-400" />
           <p className="font-inter text-sm text-green-400">
-            Images updated and synced across the site. All pages will display the new images immediately.
+            {isSupabaseConfigured
+              ? 'Saved. The new image is live across the site for every visitor.'
+              : 'Saved to this browser. Configure shared storage to show it to all visitors.'}
           </p>
         </div>
       )}
@@ -2549,75 +3485,119 @@ function ImagesView() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
           { label: 'Total Images', value: Object.keys(imageMeta).length },
-          { label: 'Custom Uploads', value: Object.values(images).filter((v) => v.startsWith('data:')).length },
-          { label: 'URL Images', value: Object.values(images).filter((v) => v.startsWith('http')).length },
-          { label: 'Default Images', value: Object.values(images).filter((v) => v.startsWith('/')).length },
+          { label: 'Uploaded', value: Object.values(images).filter((v) => typeof v === 'string' && (v.startsWith('data:') || v.includes('/storage/v1/'))).length },
+          { label: 'Linked URLs', value: Object.values(images).filter((v) => typeof v === 'string' && v.startsWith('http') && !v.includes('/storage/v1/')).length },
+          { label: 'Using Default', value: Object.entries(images).filter(([k, v]) => !v || v === imageMeta[k]?.defaultPath).length },
         ].map((stat) => (
-          <div key={stat.label} className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-4 text-center">
+          <div key={stat.label} className="dash-card p-4 text-center">
             <p className="font-oswald font-bold text-2xl text-blue-400">{stat.value}</p>
             <p className="font-inter text-xs text-slate-400 uppercase tracking-wider mt-1">{stat.label}</p>
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-        {Object.entries(imageMeta).map(([key, meta]) => {
-          const currentUrl = images[key] || meta.defaultPath
-          const isDrag = dragOver === key
-          const isUploading = uploading === key
-          return (
-            <div key={key} className="bg-[#1E293B] border border-white/[0.06] rounded-xl overflow-hidden flex flex-col">
-              <div
-                className={`aspect-video bg-[#0A1628] flex items-center justify-center overflow-hidden relative cursor-pointer transition-all duration-200 ${isDrag ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-[#0A1628]' : ''}`}
-                onDragOver={(e) => handleDragOver(e, key)}
-                onDragLeave={handleDragLeave}
-                onDrop={(e) => handleDrop(e, key)}
-                onClick={() => fileInputRefs.current[key]?.click()}
-              >
-                <img src={currentUrl} alt={meta.title} className={`w-full h-full object-cover transition-opacity duration-200 ${isUploading ? 'opacity-40' : 'opacity-100'}`} onError={(e) => { (e.target as HTMLImageElement).src = '/logo-lions-emblem.png' }} />
-                <div className={`absolute inset-0 bg-black/50 flex flex-col items-center justify-center gap-2 transition-opacity duration-200 ${isDrag ? 'opacity-100' : 'opacity-0 hover:opacity-100'}`}>
-                  <Upload size={28} className="text-white" />
-                  <p className="font-inter text-sm text-white font-medium">Drop image here</p>
-                  <p className="font-inter text-xs text-slate-300">or click to browse</p>
-                </div>
-                {isUploading && (
-                  <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-                    <Loader2 size={32} className="text-blue-400 animate-spin" />
-                  </div>
-                )}
-                <input type="file" accept="image/*" className="hidden" ref={(el) => { fileInputRefs.current[key] = el }} onChange={(e) => { const file = e.target.files?.[0]; if (file) handleFileUpload(key, file); e.target.value = '' }} />
-              </div>
-              <div className="p-4 space-y-3 flex-1 flex flex-col">
-                <div>
-                  <p className="font-inter font-semibold text-sm text-white">{meta.title}</p>
-                  <p className="font-inter text-xs text-slate-500 mt-0.5">{meta.usedOn}</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="font-inter text-xs text-slate-400 uppercase tracking-wider">Image URL</label>
-                  <input
-                    value={inputs[key] || ''}
-                    onChange={(e) => setInputs((prev) => ({ ...prev, [key]: e.target.value }))}
-                    className="w-full bg-white/5 border border-[#334155] rounded-lg px-3 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30"
-                    placeholder="Paste image URL here..."
-                  />
-                  <div className="flex gap-2">
-                    <button onClick={() => handleUrlUpdate(key)} className="flex-1 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-xs px-3 py-2 rounded transition-all duration-150">Update URL</button>
-                    <button onClick={() => handleReset(key)} className="flex items-center justify-center gap-1 bg-transparent border border-white/30 text-slate-300 hover:text-white hover:bg-white/5 font-inter font-medium text-xs px-3 py-2 rounded transition-all duration-150" title="Reset to default">
-                      <RotateCcw size={14} />
-                    </button>
-                  </div>
-                </div>
-                {currentUrl.startsWith('data:') && (
-                  <div className="flex items-center gap-2 text-green-400 bg-green-500/10 rounded-lg px-3 py-2">
-                    <Image size={14} />
-                    <span className="font-inter text-xs">Custom upload (base64)</span>
-                  </div>
-                )}
-              </div>
+      {imageSections.map((section) => {
+        const entries = Object.entries(imageMeta).filter(([, m]) => m.section === section)
+        if (entries.length === 0) return null
+        return (
+          <div key={section} className="space-y-4">
+            <div className="flex items-center gap-3">
+              <h3 className="font-oswald font-bold text-lg text-white uppercase tracking-wide">{section}</h3>
+              <span className="font-inter text-xs text-slate-500">{entries.length} {entries.length === 1 ? 'image' : 'images'}</span>
+              <div className="flex-1 h-px bg-white/[0.06]" />
             </div>
-          )
-        })}
-      </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {entries.map(([key, meta]) => {
+                const currentUrl = resolveImageUrl(images[key] || meta.defaultPath)
+                const isDrag = dragOver === key
+                const isUploading = uploading === key
+                return (
+                  <div key={key} className="dash-card overflow-hidden flex flex-col">
+                    <div
+                      className={`aspect-video bg-[#0A1628] flex items-center justify-center overflow-hidden relative cursor-pointer transition-all duration-200 ${isDrag ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-[#0A1628]' : ''}`}
+                      onDragOver={(e) => handleDragOver(e, key)}
+                      onDragLeave={handleDragLeave}
+                      onDrop={(e) => handleDrop(e, key)}
+                      onClick={() => fileInputRefs.current[key]?.click()}
+                    >
+                      <img src={currentUrl} alt={meta.title} className={`w-full h-full object-cover transition-opacity duration-200 ${isUploading ? 'opacity-40' : 'opacity-100'}`} onError={(e) => { (e.target as HTMLImageElement).src = resolveImageUrl('/logo-lions-emblem.png') }} />
+                      <div className={`absolute inset-0 bg-black/50 flex flex-col items-center justify-center gap-2 transition-opacity duration-200 ${isDrag ? 'opacity-100' : 'opacity-0 hover:opacity-100'}`}>
+                        <Upload size={28} className="text-white" />
+                        <p className="font-inter text-sm text-white font-medium">Drop image here</p>
+                        <p className="font-inter text-xs text-slate-300">or click to browse</p>
+                      </div>
+                      {isUploading && (
+                        <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                          <Loader2 size={32} className="text-blue-400 animate-spin" />
+                        </div>
+                      )}
+                      <input type="file" accept="image/*" className="hidden" ref={(el) => { fileInputRefs.current[key] = el }} onChange={(e) => { const file = e.target.files?.[0]; if (file) handleFileUpload(key, file); e.target.value = '' }} />
+                    </div>
+                    <div className="p-4 space-y-3 flex-1 flex flex-col">
+                      <div>
+                        {meta.section === 'Team & Coaches' ? (
+                          editingName === key ? (
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                autoFocus
+                                value={nameDraft}
+                                onChange={(e) => setNameDraft(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') commitName(key); if (e.key === 'Escape') setEditingName(null) }}
+                                className="flex-1 min-w-0 bg-[#0A1628] border border-blue-500/50 rounded px-2 py-1 font-inter text-sm text-white focus:outline-none focus:border-blue-400"
+                                placeholder="Full name"
+                              />
+                              <button onClick={() => commitName(key)} className="shrink-0 w-7 h-7 flex items-center justify-center btn-gradient text-white rounded" title="Save name"><Check size={14} /></button>
+                              <button onClick={() => setEditingName(null)} className="shrink-0 w-7 h-7 flex items-center justify-center bg-transparent border border-white/20 text-slate-400 hover:text-white rounded" title="Cancel"><X size={14} /></button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 group/name">
+                              <p className="font-inter font-semibold text-sm text-white truncate">{labels[key] || meta.title}</p>
+                              <button
+                                onClick={() => { setNameDraft(labels[key] || meta.title); setEditingName(key) }}
+                                className="shrink-0 text-slate-500 hover:text-blue-400 opacity-0 group-hover/name:opacity-100 transition-opacity"
+                                title="Edit name"
+                              >
+                                <Pencil size={13} />
+                              </button>
+                            </div>
+                          )
+                        ) : (
+                          <p className="font-inter font-semibold text-sm text-white">{meta.title}</p>
+                        )}
+                        <p className="font-inter text-xs text-slate-500 mt-0.5">{meta.usedOn}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => fileInputRefs.current[key]?.click()}
+                          disabled={isUploading}
+                          className="flex-1 flex items-center justify-center gap-1.5 btn-gradient disabled:opacity-60 text-white font-inter font-semibold text-xs px-3 py-2 rounded transition-all duration-150"
+                        >
+                          <Upload size={14} />
+                          {isUploading ? 'Uploading…' : 'Upload Image'}
+                        </button>
+                        <button onClick={() => handleReset(key)} className="flex items-center justify-center gap-1 bg-transparent border border-white/30 text-slate-300 hover:text-white hover:bg-white/5 font-inter font-medium text-xs px-3 py-2 rounded transition-all duration-150" title="Reset to default">
+                          <RotateCcw size={14} />
+                        </button>
+                      </div>
+                      {currentUrl.includes('/storage/v1/') ? (
+                        <div className="flex items-center gap-2 text-green-400 bg-green-500/10 rounded-lg px-3 py-2">
+                          <CheckCircle size={14} />
+                          <span className="font-inter text-xs">Uploaded — live for all visitors</span>
+                        </div>
+                      ) : currentUrl.startsWith('data:') ? (
+                        <div className="flex items-center gap-2 text-amber-400 bg-amber-500/10 rounded-lg px-3 py-2">
+                          <Image size={14} />
+                          <span className="font-inter text-xs">Local upload (this device only)</span>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -2655,8 +3635,11 @@ function StoreManagerView() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Club Store</h2>
-        <button onClick={() => setShowAdd(true)} className="flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-4 py-2 rounded transition-all"><Plus size={16} /> Add Product</button>
+        <div>
+          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Club Store</h2>
+          <p className="font-inter text-sm text-slate-400 mt-1.5">Manage products, stock &amp; online orders</p>
+        </div>
+        <button onClick={() => setShowAdd(true)} className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg transition-all"><Plus size={16} /> Add Product</button>
       </div>
       <div className="flex gap-1 bg-white/5 rounded-lg p-1 w-fit">
         <button onClick={() => setTab('products')} className={`px-4 py-2 font-inter text-sm rounded-md transition-all ${tab === 'products' ? 'bg-blue-500 text-white' : 'text-slate-400 hover:text-white'}`}>Products ({products.length})</button>
@@ -2665,7 +3648,7 @@ function StoreManagerView() {
       {tab === 'products' && (
         <>
           <div className="relative max-w-sm"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" /><input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." className="w-full bg-white/5 border border-[#334155] rounded-lg pl-10 pr-4 py-2.5 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500" /></div>
-          <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl overflow-x-auto">
+          <div className="dash-card overflow-x-auto">
             <table className="w-full">
               <thead><tr className="border-b border-white/[0.06]">{['Product','Category','Price','Stock','Status','Actions'].map((h) => <th key={h} className="px-4 py-3 font-inter font-semibold text-xs uppercase tracking-widest text-slate-400 text-left">{h}</th>)}</tr></thead>
               <tbody className="divide-y divide-white/[0.06]">
@@ -2685,7 +3668,7 @@ function StoreManagerView() {
         </>
       )}
       {tab === 'orders' && (
-        <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl overflow-x-auto">
+        <div className="dash-card overflow-x-auto">
           <table className="w-full">
             <thead><tr className="border-b border-white/[0.06]">{['Date','Customer','Items','Total','Status'].map((h) => <th key={h} className="px-4 py-3 font-inter font-semibold text-xs uppercase tracking-widest text-slate-400 text-left">{h}</th>)}</tr></thead>
             <tbody className="divide-y divide-white/[0.06]">
@@ -2695,7 +3678,7 @@ function StoreManagerView() {
                   <td className="px-4 py-3"><p className="font-inter font-medium text-sm text-white">{o.customerName}</p><p className="font-inter text-xs text-slate-500">{o.customerEmail}</p></td>
                   <td className="px-4 py-3 font-inter text-sm text-slate-300">{o.items.map((i) => `${i.productName} x${i.quantity}`).join(', ')}</td>
                   <td className="px-4 py-3 font-inter font-semibold text-sm text-white">€{o.total.toFixed(2)}</td>
-                  <td className="px-4 py-3"><span className={`font-inter text-xs font-medium px-2 py-0.5 rounded ${o.status === 'pending' ? 'bg-amber-500/10 text-amber-400' : o.status === 'paid' ? 'bg-green-500/10 text-green-400' : o.status === 'shipped' ? 'bg-blue-500/10 text-blue-400' : 'bg-red-500/10 text-red-400'}`}>{o.status}</span></td>
+                  <td className="px-4 py-3"><span className={`font-inter text-xs font-medium px-2 py-0.5 rounded ${o.status === 'pending' ? 'bg-warn-500/10 text-warn-400' : o.status === 'paid' ? 'bg-green-500/10 text-green-400' : o.status === 'shipped' ? 'bg-blue-500/10 text-blue-400' : 'bg-red-500/10 text-red-400'}`}>{o.status}</span></td>
                 </tr>
               ))}
             </tbody>
@@ -2713,7 +3696,7 @@ function ProductForm({ product, onSave, onCancel }: { product?: Product | null; 
   const handlePhoto = (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onloadend = () => setForm({ ...form, imageKey: reader.result as string }); reader.readAsDataURL(file) }
   return (
     <div className="fixed inset-0 z-[110] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onCancel}>
-      <div className="bg-[#1E293B] rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="dash-card max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between p-5 border-b border-white/[0.06]"><h3 className="font-oswald font-bold text-xl text-white">{product ? 'Edit' : 'Add'} Product</h3><button onClick={onCancel} className="w-8 h-8 bg-white/5 rounded-full flex items-center justify-center text-slate-400 hover:text-white"><X size={18} /></button></div>
         <div className="p-5 space-y-4">
           <div><label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-1">Name</label><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500" /></div>
@@ -2728,7 +3711,7 @@ function ProductForm({ product, onSave, onCancel }: { product?: Product | null; 
           <div><label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-1">Description</label><textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-4 py-2.5 font-inter text-sm text-white resize-none" /></div>
           <div><label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-1">Photo</label><div className="flex items-center gap-4">{form.imageKey && <img src={form.imageKey} alt="" className="w-16 h-16 rounded-lg object-cover border border-white/[0.06]" />}<label className="cursor-pointer flex items-center gap-2 bg-white/5 border border-[#334155] rounded-lg px-4 py-2 font-inter text-sm text-slate-300 hover:bg-white/10"><Camera size={14} /> Upload<input type="file" accept="image/*" className="hidden" onChange={handlePhoto} /></label></div></div>
         </div>
-        <div className="p-5 border-t border-white/[0.06] flex gap-3"><button onClick={onCancel} className="flex-1 bg-white/5 border border-white/[0.06] text-slate-300 font-inter font-medium text-sm rounded-lg px-4 py-2.5 hover:bg-white/10">Cancel</button><button onClick={() => onSave(form)} disabled={!form.name.trim()} className="flex-1 bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white font-inter font-semibold text-sm rounded-lg px-4 py-2.5 transition-colors flex items-center justify-center gap-2"><Check size={16} /> Save</button></div>
+        <div className="p-5 border-t border-white/[0.06] flex gap-3"><button onClick={onCancel} className="flex-1 bg-white/5 border border-white/[0.06] text-slate-300 font-inter font-medium text-sm rounded-lg px-4 py-2.5 hover:bg-white/10">Cancel</button><button onClick={() => onSave(form)} disabled={!form.name.trim()} className="flex-1 btn-gradient disabled:opacity-40 text-white font-inter font-semibold text-sm rounded-lg px-4 py-2.5 transition-colors flex items-center justify-center gap-2"><Check size={16} /> Save</button></div>
       </div>
     </div>
   )
@@ -2786,101 +3769,99 @@ function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Team Chat</h2>
-      </div>
-
-      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl overflow-hidden flex flex-col md:flex-row h-[calc(100dvh-14rem)]">
-        {/* Team Sidebar */}
-        <div className="w-full md:w-64 border-b md:border-b-0 md:border-r border-white/[0.06] bg-[#0F172A] flex flex-col">
-          <div className="p-4 border-b border-white/[0.06]">
-            <p className="font-inter font-semibold text-sm text-white">Teams</p>
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {teams.map((team) => (
+    <div className="mgr-chat-shell">
+      {/* Team list */}
+      <aside className="mgr-chat-teams">
+        <div className="px-4 py-3 border-b border-white/[0.06]">
+          <p className="font-inter text-[10px] uppercase tracking-[0.18em] text-slate-500">Teams</p>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-0.5 scroll-slim">
+          {teams.length === 0 ? (
+            <p className="px-3 py-4 font-inter text-xs text-slate-500">No teams yet</p>
+          ) : (
+            teams.map((team) => (
               <button
                 key={team.id}
+                type="button"
                 onClick={() => setActiveTeamId(team.id)}
-                className={`w-full text-left px-3 py-2.5 rounded-lg font-inter text-sm transition-all ${
-                  activeTeamId === team.id
-                    ? 'bg-blue-500/10 text-white border border-blue-500/30'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
-                }`}
+                className={`mgr-chat-team-btn ${activeTeamId === team.id ? 'mgr-chat-team-btn--active' : ''}`}
               >
-                <p className="font-medium truncate">{team.name}</p>
-                <p className="text-[10px] text-slate-500 mt-0.5">{getTeamAgeDivisionLabel(team)}</p>
+                <p className="mgr-chat-team-name font-inter font-medium text-sm truncate">{team.name}</p>
+                <p className="font-inter text-[10px] text-slate-500 mt-0.5 truncate">{getTeamAgeDivisionLabel(team)}</p>
               </button>
-            ))}
+            ))
+          )}
+        </div>
+      </aside>
+
+      {/* Conversation */}
+      <div className="flex flex-1 flex-col min-w-0 min-h-0">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/[0.06]">
+          <div className="min-w-0">
+            <p className="font-oswald font-bold text-base text-white truncate">
+              {teams.find((t) => t.id === activeTeamId)?.name || 'Select a team'}
+            </p>
+            <p className="font-inter text-xs text-slate-500 mt-0.5">
+              {room.memberIds.length} member{room.memberIds.length !== 1 ? 's' : ''}
+            </p>
           </div>
+          {activeTeamId && (
+            <button
+              type="button"
+              onClick={() => setShowMembers(true)}
+              className="mgr-topbar-btn shrink-0"
+              aria-label="Manage chat members"
+            >
+              <Users size={17} />
+            </button>
+          )}
         </div>
 
-        {/* Chat Area */}
-        <div className="flex-1 flex flex-col min-w-0">
-          <div className="p-4 border-b border-white/[0.06] flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="font-inter font-semibold text-white truncate">
-                {teams.find((t) => t.id === activeTeamId)?.name || 'Select a team'}
-              </p>
-              <p className="font-inter text-xs text-slate-500">
-                {filtered.length} message{filtered.length !== 1 ? 's' : ''} · {room.memberIds.length} member{room.memberIds.length !== 1 ? 's' : ''}
-              </p>
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3 scroll-slim">
+          {filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full min-h-[12rem] text-center">
+              <MessageSquare size={32} className="text-slate-600 mb-3" />
+              <p className="font-inter text-sm text-slate-400">No messages yet</p>
+              <p className="font-inter text-xs text-slate-600 mt-1">Start the conversation below</p>
             </div>
-            {activeTeamId && (
-              <button
-                onClick={() => setShowMembers(true)}
-                className="shrink-0 inline-flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/[0.08] text-white font-inter font-medium text-sm px-3 py-2 rounded-lg transition-colors"
-              >
-                <Users size={16} />
-                Members
-              </button>
-            )}
-          </div>
-
-          <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
-            {filtered.length === 0 ? (
-              <div className="text-center py-12">
-                <MessageSquare size={40} className="text-slate-700 mx-auto mb-3" />
-                <p className="font-inter text-sm text-slate-400">No messages yet.</p>
-                <p className="font-inter text-xs text-slate-500 mt-1">Send the first message to this team.</p>
-              </div>
-            ) : (
-              filtered.map((msg) => (
-                <div key={msg.id} className={`flex flex-col ${msg.senderRole === 'manager' ? 'items-end' : 'items-start'}`}>
-                  <div className={`max-w-[80%] rounded-xl px-4 py-2.5 ${
-                    msg.senderRole === 'manager'
-                      ? 'bg-blue-500/20 border border-blue-500/30'
-                      : 'bg-white/5 border border-white/[0.06]'
-                  }`}>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-inter font-medium text-xs text-white">{msg.senderName}</span>
-                      <span className="font-inter text-[10px] text-slate-500">{formatTime(msg.timestamp)}</span>
-                    </div>
-                    <p className="font-inter text-sm text-slate-200 whitespace-pre-wrap">{msg.text}</p>
+          ) : (
+            filtered.map((msg) => {
+              const isManager = msg.senderRole === 'manager'
+              return (
+                <div key={msg.id} className={`flex flex-col ${isManager ? 'items-end' : 'items-start'}`}>
+                  <div className={`mgr-chat-bubble ${isManager ? 'mgr-chat-bubble--manager' : 'mgr-chat-bubble--player'}`}>
+                    {!isManager && (
+                      <p className="font-inter font-medium text-[11px] text-lions-300/90 mb-1">{msg.senderName}</p>
+                    )}
+                    <p className="font-inter text-sm text-slate-100 whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                    <p className={`font-inter text-[10px] mt-1.5 ${isManager ? 'text-lions-200/50 text-right' : 'text-slate-600'}`}>
+                      {formatTime(msg.timestamp)}
+                    </p>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
+              )
+            })
+          )}
+        </div>
 
-          <div className="p-4 border-t border-white/[0.06]">
-            <div className="flex gap-2">
-              <input
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }}
-                placeholder="Type a message..."
-                className="flex-1 bg-[#0A1628] border border-white/[0.06] rounded-lg px-4 py-2.5 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
-              />
-              <button
-                onClick={handleSend}
-                disabled={!text.trim() || !activeTeamId}
-                className="bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white font-inter font-semibold text-sm px-4 py-2.5 rounded-lg transition-colors flex items-center gap-2"
-              >
-                <Send size={16} /> Send
-              </button>
-            </div>
-          </div>
+        <div className="mgr-chat-composer">
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }}
+            placeholder={activeTeamId ? 'Write a message…' : 'Select a team first'}
+            disabled={!activeTeamId}
+            className="mgr-chat-input"
+          />
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={!text.trim() || !activeTeamId}
+            className="mgr-chat-send"
+            aria-label="Send message"
+          >
+            <Send size={17} />
+          </button>
         </div>
       </div>
 
@@ -2931,26 +3912,28 @@ function ChatMembersModal({
     .filter((p): p is Player => !!p)
 
   return (
-    <div className="fixed inset-0 z-[120] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[#1E293B] border border-white/[0.08] rounded-xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
+    <div className="fixed inset-0 z-[120] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="mgr-panel shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="mgr-panel-header">
           <div>
-            <h3 className="font-oswald font-bold text-xl text-white">{teamName}</h3>
-            <p className="font-inter text-xs text-slate-400">{memberDetails.length} chat member{memberDetails.length !== 1 ? 's' : ''}</p>
+            <h3 className="mgr-panel-title">{teamName}</h3>
+            <p className="font-inter text-xs text-slate-500 mt-0.5">{memberDetails.length} member{memberDetails.length !== 1 ? 's' : ''}</p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={22} /></button>
+          <button type="button" onClick={onClose} className="text-slate-500 hover:text-white p-1" aria-label="Close"><X size={20} /></button>
         </div>
 
-        <div className="p-5 border-b border-white/[0.06]">
+        <div className="p-4 border-b border-white/[0.06]">
           <button
+            type="button"
             onClick={onAddClick}
-            className="w-full inline-flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-4 py-2.5 rounded-lg transition-colors"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 font-inter text-sm font-medium text-white transition-colors"
+            style={{ background: 'linear-gradient(135deg, rgba(46,107,255,0.28), rgba(46,107,255,0.1))', border: '1px solid rgba(46,107,255,0.35)' }}
           >
-            <UserPlus size={16} /> Add Member
+            <UserPlus size={16} /> Add member
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-2">
+        <div className="flex-1 overflow-y-auto p-2 scroll-slim">
           {memberDetails.length === 0 ? (
             <p className="text-center font-inter text-sm text-slate-400 py-8">No members in this chat yet.</p>
           ) : (
@@ -2958,29 +3941,31 @@ function ChatMembersModal({
               const isAdmin = room.adminIds.includes(p.id)
               return (
                 <div key={p.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/[0.03]">
-                  <InitialsAvatar name={p.name} size={36} />
+                  <InitialsAvatar name={p.name} size={34} />
                   <div className="flex-1 min-w-0">
                     <p className="font-inter font-medium text-sm text-white truncate">{p.name}</p>
                     <p className="font-inter text-xs text-slate-500 truncate">{p.position} · #{p.jerseyNumber}</p>
                   </div>
                   {isAdmin && (
-                    <span className="inline-flex items-center gap-1 bg-amber-500/10 text-amber-300 border border-amber-500/20 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded">
+                    <span className="inline-flex items-center gap-1 bg-lions-500/10 text-lions-300 border border-lions-500/20 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded">
                       <ShieldCheck size={11} /> Admin
                     </span>
                   )}
                   <button
+                    type="button"
                     onClick={() => onToggleAdmin(p.id, !isAdmin)}
                     title={isAdmin ? 'Revoke admin' : 'Make admin'}
-                    className="text-slate-400 hover:text-amber-400 transition-colors p-1.5"
+                    className="mgr-topbar-btn !h-8 !w-8"
                   >
-                    <ShieldCheck size={16} />
+                    <ShieldCheck size={14} />
                   </button>
                   <button
+                    type="button"
                     onClick={() => onRemove(p.id)}
                     title="Remove from chat"
-                    className="text-slate-400 hover:text-red-400 transition-colors p-1.5"
+                    className="mgr-topbar-btn !h-8 !w-8 hover:!text-red-400 hover:!border-red-500/30"
                   >
-                    <Trash2 size={16} />
+                    <Trash2 size={14} />
                   </button>
                 </div>
               )
@@ -3010,11 +3995,11 @@ function AddChatMemberModal({
     .filter((p) => !q.trim() || p.name.toLowerCase().includes(q.toLowerCase()) || p.email.toLowerCase().includes(q.toLowerCase()))
 
   return (
-    <div className="fixed inset-0 z-[130] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[#1E293B] border border-white/[0.08] rounded-xl shadow-2xl w-full max-w-md max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
-          <h3 className="font-oswald font-bold text-lg text-white">Add Member to Chat</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={20} /></button>
+    <div className="fixed inset-0 z-[130] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="mgr-panel shadow-2xl w-full max-w-md max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="mgr-panel-header">
+          <h3 className="mgr-panel-title">Add member</h3>
+          <button type="button" onClick={onClose} className="text-slate-500 hover:text-white p-1" aria-label="Close"><X size={20} /></button>
         </div>
         <div className="p-4 border-b border-white/[0.06]">
           <div className="relative">
@@ -3024,27 +4009,28 @@ function AddChatMemberModal({
               type="text"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search players..."
-              className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg pl-9 pr-3 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+              placeholder="Search players…"
+              className="mgr-chat-input w-full pl-9"
             />
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-2">
+        <div className="flex-1 overflow-y-auto p-2 scroll-slim">
           {available.length === 0 ? (
-            <p className="text-center font-inter text-sm text-slate-400 py-8">No players to add.</p>
+            <p className="text-center font-inter text-sm text-slate-500 py-8">No players to add</p>
           ) : (
             available.map((p) => (
               <button
                 key={p.id}
+                type="button"
                 onClick={() => { onAdd(p.id); onClose() }}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/[0.05] text-left"
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-white/[0.04] text-left transition-colors"
               >
                 <InitialsAvatar name={p.name} size={32} />
                 <div className="flex-1 min-w-0">
                   <p className="font-inter font-medium text-sm text-white truncate">{p.name}</p>
                   <p className="font-inter text-xs text-slate-500 truncate">{p.email}</p>
                 </div>
-                <UserPlus size={16} className="text-blue-400" />
+                <UserPlus size={15} className="text-lions-400 shrink-0" />
               </button>
             ))
           )}
@@ -3073,7 +4059,7 @@ function SettingsView() {
     <div className="space-y-6 max-w-3xl">
       <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Settings</h2>
 
-      <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6 md:p-8">
+      <div className="dash-card p-6 md:p-8">
         <div className="flex items-start gap-3 mb-5">
           <CreditCard size={22} className="text-blue-400 mt-1 shrink-0" />
           <div>
@@ -3100,7 +4086,7 @@ function SettingsView() {
           <button
             onClick={handleSave}
             disabled={!isValid}
-            className="inline-flex items-center gap-2 bg-blue-500 hover:bg-blue-400 disabled:opacity-40 text-white font-inter font-semibold text-sm px-5 py-2.5 rounded-lg transition-colors"
+            className="inline-flex items-center gap-2 btn-gradient disabled:opacity-40 text-white font-inter font-semibold text-sm px-5 py-2.5 rounded-lg transition-colors"
           >
             {saved ? <><Check size={16} /> Saved</> : 'Save'}
           </button>
@@ -3118,80 +4104,278 @@ function SettingsView() {
 
         {isTestMode && (
           <div className="mt-4 bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 flex items-start gap-3">
-            <span className="bg-amber-400 text-deep-navy text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded">Test mode</span>
+            <span className="bg-warn-400 text-deep-navy text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded">Test mode</span>
             <p className="font-inter text-xs text-blue-200/90">
               This is a Stripe test Payment Link — real money won't be charged. Use Stripe's test card <span className="font-mono">4242 4242 4242 4242</span> with any future expiry and any CVC.
             </p>
           </div>
         )}
 
-        <div className="mt-4 bg-amber-500/5 border border-amber-500/20 rounded-lg p-4">
-          <p className="font-inter text-xs text-amber-200/90">
-            <strong className="text-amber-200">Note:</strong> Stripe Payment Links accept a fixed amount per link. For per-item pricing (e.g. different ticket prices), create one Payment Link per amount and switch the URL above before publishing that fixture, or upgrade to a backend Checkout Session in the future.
+        <div className="mt-4 bg-warn-500/5 border border-warn-500/20 rounded-lg p-4">
+          <p className="font-inter text-xs text-warn-400/90">
+            <strong className="text-warn-400">Note:</strong> Stripe Payment Links accept a fixed amount per link. For per-item pricing (e.g. different ticket prices), create one Payment Link per amount and switch the URL above before publishing that fixture, or upgrade to a backend Checkout Session in the future.
           </p>
         </div>
       </div>
-
-      <MembershipFeesPanel />
     </div>
   )
 }
 
 /* ─── Membership Fees (per age group) ─── */
-function MembershipFeesPanel() {
-  const [fees, setFeesState] = useState<MembershipFeeMap>(() => getMembershipFees())
+function PurchaseHistoryPanel() {
+  const [purchases, setPurchases] = useState<PurchaseRecord[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!isPurchasesDbConfigured()) {
+      setLoading(false)
+      return
+    }
+    fetchPurchases(50).then((rows) => {
+      setPurchases(rows)
+      setLoading(false)
+    })
+  }, [])
+
+  const typeLabel: Record<string, string> = {
+    store: 'Store',
+    ticket: 'Ticket',
+    membership: 'Membership',
+  }
+
+  return (
+    <div className="dash-card overflow-hidden">
+      <div className="px-6 py-4 border-b border-white/[0.06]">
+        <h3 className="font-inter font-semibold text-lg text-white">Stripe purchase history</h3>
+        <p className="font-inter text-sm text-slate-400 mt-1">
+          {isPurchasesDbConfigured()
+            ? 'All card payments confirmed via Stripe Checkout.'
+            : 'Connect Supabase and run purchases-setup.sql to enable purchase history.'}
+        </p>
+      </div>
+      {loading ? (
+        <p className="p-6 font-inter text-sm text-slate-500 text-center">Loading purchases…</p>
+      ) : purchases.length === 0 ? (
+        <p className="p-6 font-inter text-sm text-slate-500 text-center">No Stripe purchases yet</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-white/[0.06]">
+                {['Date', 'Customer', 'Type', 'Items', 'Amount', 'Status'].map((col) => (
+                  <th key={col} className="px-6 py-3 font-inter font-semibold text-xs uppercase tracking-widest text-slate-400 text-left">{col}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/[0.06]">
+              {purchases.map((p) => (
+                <tr key={p.id} className="hover:bg-white/5 transition-colors">
+                  <td className="px-6 py-3 font-inter text-sm text-slate-300">
+                    {new Date(p.paid_at || p.created_at).toLocaleDateString('en-IE')}
+                  </td>
+                  <td className="px-6 py-3">
+                    <p className="font-inter text-sm text-white">{p.customer_name}</p>
+                    <p className="font-inter text-xs text-slate-500">{p.customer_email}</p>
+                  </td>
+                  <td className="px-6 py-3 font-inter text-sm text-slate-300">{typeLabel[p.purchase_type] || p.purchase_type}</td>
+                  <td className="px-6 py-3 font-inter text-sm text-slate-400 max-w-[200px] truncate">
+                    {(p.items as { name: string; quantity: number }[]).map((i) => `${i.name} ×${i.quantity}`).join(', ')}
+                  </td>
+                  <td className="px-6 py-3 font-inter text-sm text-white">€{(p.amount_cents / 100).toFixed(2)}</td>
+                  <td className="px-6 py-3"><StatusBadge status={p.status === 'paid' ? 'succeeded' : p.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MembershipFeesPanel({ ageGroups, teams }: { ageGroups: AgeGroup[]; teams: Team[] }) {
+  const [fees, setFeesState] = useState<MembershipFeeConfigMap>(() => {
+    const cfg = getMembershipFeeConfig()
+    const merged = { ...cfg }
+    for (const g of ageGroups) {
+      if (!merged[g.id]) merged[g.id] = { monthly: 0, oneTime: 0 }
+    }
+    return merged
+  })
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(ageGroups.map((g) => g.id)))
+  const [bulkMonthly, setBulkMonthly] = useState('')
+  const [bulkOneTime, setBulkOneTime] = useState('')
   const [saved, setSaved] = useState(false)
 
-  const labels: Array<[string, string]> = [
-    ['u10', 'U10'], ['u12', 'U12'], ['u14', 'U14'], ['u16', 'U16'],
-    ['u18', 'U18'], ['u20', 'U20'], ['senior', 'Senior'],
-  ]
+  // Stay in sync when manager adds age groups under Teams.
+  useEffect(() => {
+    setFeesState((prev) => {
+      const next = { ...prev }
+      for (const g of ageGroups) {
+        if (!next[g.id]) next[g.id] = { monthly: 0, oneTime: 0 }
+      }
+      return next
+    })
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const g of ageGroups) {
+        if (!next.has(g.id)) next.add(g.id)
+      }
+      return next
+    })
+  }, [ageGroups])
 
-  const update = (key: string, value: number) => {
-    setFeesState((prev) => ({ ...prev, [key]: value }))
+  const teamCountFor = (ageGroupId: string) => teams.filter((t) => t.ageGroupId === ageGroupId).length
+
+  const toggleGroup = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleAll = () => {
+    setSelected((prev) => (prev.size === ageGroups.length ? new Set() : new Set(ageGroups.map((g) => g.id))))
+  }
+
+  const updateFee = (id: string, field: keyof AgeGroupFeeConfig, value: number) => {
+    setFeesState((prev) => ({
+      ...prev,
+      [id]: { ...prev[id], [field]: value },
+    }))
+  }
+
+  const applyBulk = () => {
+    const monthly = bulkMonthly !== '' ? Number(bulkMonthly) : undefined
+    const oneTime = bulkOneTime !== '' ? Number(bulkOneTime) : undefined
+    if (monthly === undefined && oneTime === undefined) return
+    const targets = selected.size > 0 ? [...selected] : ageGroups.map((g) => g.id)
+    setFeesState((prev) => {
+      const next = { ...prev }
+      for (const id of targets) {
+        const cur = next[id] ?? { monthly: 0, oneTime: 0 }
+        next[id] = {
+          monthly: monthly !== undefined ? monthly : cur.monthly,
+          oneTime: oneTime !== undefined ? oneTime : cur.oneTime,
+        }
+      }
+      return next
+    })
   }
 
   const save = () => {
-    setMembershipFees(fees)
+    setMembershipFeeConfig(fees)
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
   }
 
   return (
-    <div className="bg-[#1E293B] border border-white/[0.06] rounded-xl p-6 md:p-8">
-      <div className="flex items-start gap-3 mb-5">
-        <Euro size={22} className="text-blue-400 mt-1 shrink-0" />
+    <div className="mgr-panel p-6 md:p-8">
+      <div className="flex items-start gap-3 mb-6">
+        <Euro size={22} className="text-lions-400 mt-1 shrink-0" />
         <div>
-          <h3 className="font-inter font-semibold text-lg text-white">Monthly Membership Fees</h3>
-          <p className="font-inter text-sm text-slate-400 mt-1">
-            Set the monthly fee for each age group. Used when recording cash payments for members from the dashboard.
+          <h3 className="mgr-panel-title">Membership fees</h3>
+          <p className="font-inter text-sm text-slate-500 mt-1">
+            Linked to your age groups from Teams — add a group there and it appears here automatically. Player fees are based on their team&apos;s age group.
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {labels.map(([key, label]) => (
-          <div key={key}>
-            <label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-1">{label}</label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 font-inter text-sm">€</span>
-              <input
-                type="number"
-                min={0}
-                value={fees[key] ?? 0}
-                onChange={(e) => update(key, Number(e.target.value))}
-                className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg pl-7 pr-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
-              />
-            </div>
+      <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4 mb-6">
+        <p className="font-inter text-xs uppercase tracking-[0.16em] text-slate-500 mb-3">Apply to selected groups</p>
+        <div className="flex flex-wrap gap-2 mb-4">
+          <button type="button" onClick={toggleAll} className="mgr-topbar-btn !w-auto !h-auto px-3 py-1.5 font-inter text-xs">
+            {selected.size === ageGroups.length ? 'Deselect all' : 'Select all'}
+          </button>
+          {ageGroups.map((g) => (
+            <button
+              key={g.id}
+              type="button"
+              onClick={() => toggleGroup(g.id)}
+              className={`rounded-lg px-3 py-1.5 font-inter text-xs border transition-colors ${
+                selected.has(g.id)
+                  ? 'border-lions-400/40 bg-lions-500/15 text-lions-200'
+                  : 'border-white/[0.08] text-slate-500 hover:text-white'
+              }`}
+            >
+              {g.name}
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label className="block font-inter text-xs text-slate-500 mb-1">Monthly (€)</label>
+            <input type="number" min={0} value={bulkMonthly} onChange={(e) => setBulkMonthly(e.target.value)} placeholder="e.g. 45" className="mgr-chat-input w-full" />
           </div>
-        ))}
+          <div>
+            <label className="block font-inter text-xs text-slate-500 mb-1">One-time (€)</label>
+            <input type="number" min={0} value={bulkOneTime} onChange={(e) => setBulkOneTime(e.target.value)} placeholder="e.g. 40" className="mgr-chat-input w-full" />
+          </div>
+          <div className="flex items-end">
+            <button type="button" onClick={applyBulk} className="w-full rounded-lg px-4 py-2.5 font-inter text-sm font-medium text-white border border-lions-400/35 bg-lions-500/15 hover:bg-lions-500/25 transition-colors">
+              Apply to {selected.size || ageGroups.length} group{(selected.size || ageGroups.length) !== 1 ? 's' : ''}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[32rem]">
+          <thead>
+            <tr className="border-b border-white/[0.06]">
+              <th className="text-left py-2 font-inter text-[10px] uppercase tracking-[0.16em] text-slate-500">Age group</th>
+              <th className="text-left py-2 font-inter text-[10px] uppercase tracking-[0.16em] text-slate-500">Teams</th>
+              <th className="text-left py-2 font-inter text-[10px] uppercase tracking-[0.16em] text-slate-500">Monthly (€)</th>
+              <th className="text-left py-2 font-inter text-[10px] uppercase tracking-[0.16em] text-slate-500">One-time (€)</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/[0.05]">
+            {ageGroups.map((g) => (
+              <tr key={g.id} className={selected.has(g.id) ? 'bg-lions-500/[0.04]' : ''}>
+                <td className="py-3 pr-4">
+                  <button type="button" onClick={() => toggleGroup(g.id)} className="flex items-center gap-2 font-inter text-sm text-white">
+                    <span className={`h-4 w-4 rounded border flex items-center justify-center ${selected.has(g.id) ? 'border-lions-400 bg-lions-500/30' : 'border-white/20'}`}>
+                      {selected.has(g.id) && <Check size={10} className="text-white" />}
+                    </span>
+                    {g.name}
+                  </button>
+                </td>
+                <td className="py-3 pr-3 font-inter text-xs text-slate-500">
+                  {teamCountFor(g.id)} team{teamCountFor(g.id) !== 1 ? 's' : ''}
+                </td>
+                <td className="py-3 pr-3">
+                  <input
+                    type="number"
+                    min={0}
+                    value={fees[g.id]?.monthly ?? 0}
+                    onChange={(e) => updateFee(g.id, 'monthly', Number(e.target.value))}
+                    className="mgr-chat-input w-24"
+                  />
+                </td>
+                <td className="py-3">
+                  <input
+                    type="number"
+                    min={0}
+                    value={fees[g.id]?.oneTime ?? 0}
+                    onChange={(e) => updateFee(g.id, 'oneTime', Number(e.target.value))}
+                    className="mgr-chat-input w-24"
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       <button
+        type="button"
         onClick={save}
-        className="mt-5 inline-flex items-center gap-2 bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm px-5 py-2.5 rounded-lg transition-colors"
+        className="mt-6 inline-flex items-center gap-2 rounded-lg px-5 py-2.5 font-inter text-sm font-semibold text-white transition-colors"
+        style={{ background: 'linear-gradient(135deg, #2E6BFF, #1B52E6)' }}
       >
-        {saved ? <><Check size={16} /> Saved</> : 'Save Fees'}
+        {saved ? <><Check size={16} /> Saved</> : 'Save all fees'}
       </button>
     </div>
   )
@@ -3202,7 +4386,7 @@ function MembershipFeesPanel() {
 function AccessDenied() {
   const navigate = useNavigate()
   return (
-    <div className="min-h-[100dvh] bg-[#0A1628] flex items-center justify-center px-4">
+    <div className="dashboard-shell min-h-[100dvh] flex items-center justify-center px-4">
       <div className="max-w-md w-full text-center">
         <ShieldAlert size={64} className="text-red-400 mx-auto mb-6" />
         <h1 className="font-oswald font-bold text-3xl md:text-4xl text-white mb-4">
@@ -3216,7 +4400,7 @@ function AccessDenied() {
         </p>
         <button
           onClick={() => navigate('/manager/login')}
-          className="bg-blue-500 hover:bg-blue-400 text-white font-inter font-semibold text-sm uppercase tracking-widest px-8 py-4 rounded hover:scale-[1.03] hover:shadow-lg transition-all duration-150"
+          className="btn-gradient text-white font-inter font-semibold text-sm uppercase tracking-widest px-8 py-4 rounded hover:scale-[1.03] hover:shadow-lg transition-all duration-150"
         >
           Go to Manager Login
         </button>
@@ -3230,11 +4414,32 @@ function AccessDenied() {
 export default function ManagerDashboard() {
   const [activeView, setActiveView] = useState('dashboard')
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('dlbc_sidebar_collapsed') === '1')
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   const [isAuthorized, setIsAuthorized] = useState(false)
-  const [globalSearch, setGlobalSearch] = useState('')
 
   const data = useLiveData()
+
+  const toggleCollapse = useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev
+      localStorage.setItem('dlbc_sidebar_collapsed', next ? '1' : '0')
+      return next
+    })
+  }, [])
+
+  // Global ⌘K / Ctrl+K to open the command palette.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen((o) => !o)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   // Derive notifications from real payments + overdue players so the bell
   // reflects actual state instead of placeholder copy.
@@ -3276,8 +4481,8 @@ export default function ManagerDashboard() {
 
   if (!authChecked) {
     return (
-      <div className="min-h-[100dvh] bg-[#0A1628] flex items-center justify-center">
-        <Loader2 size={32} className="text-blue-500 animate-spin" />
+      <div className="dashboard-shell min-h-[100dvh] flex items-center justify-center">
+        <Loader2 size={32} className="text-amber-400 animate-spin" />
       </div>
     )
   }
@@ -3299,13 +4504,38 @@ export default function ManagerDashboard() {
     settings: 'Settings',
   }
 
+  const commands: CommandItem[] = [
+    ...navSections.flatMap((group) =>
+      group.items.map((item) => ({
+        id: `nav-${item.key}`,
+        label: item.label,
+        hint: 'Go to',
+        group: 'Navigate',
+        icon: item.icon,
+        keywords: group.section,
+        run: () => setActiveView(item.key),
+      })),
+    ),
+    { id: 'nav-settings', label: 'Settings', hint: 'Go to', group: 'Navigate', icon: Settings, run: () => setActiveView('settings') },
+    { id: 'act-add-member', label: 'Add New Member', group: 'Quick actions', icon: UserPlus, keywords: 'create player register', run: () => { setActiveView('members'); setTimeout(() => window.dispatchEvent(new Event('dlbc-open-add-member')), 0) } },
+    { id: 'act-add-payment', label: 'Record Cash Payment', group: 'Quick actions', icon: Banknote, keywords: 'money fee', run: () => setActiveView('payments') },
+    { id: 'act-send-message', label: 'Send Announcement', group: 'Quick actions', icon: Send, keywords: 'chat message team', run: () => setActiveView('chat') },
+    { id: 'act-add-fixture', label: 'Add Fixture', group: 'Quick actions', icon: Calendar, keywords: 'schedule match game', run: () => setActiveView('schedule') },
+    { id: 'act-report', label: 'Generate Report', group: 'Quick actions', icon: FileText, keywords: 'export pdf stats', run: () => setActiveView('reports') },
+  ]
+
+  const mainOffset = sidebarCollapsed ? 'md:ml-[4.75rem]' : 'md:ml-64'
+
   return (
-    <div className="min-h-[100dvh] bg-[#0F172A]">
+    <div className="dashboard-shell min-h-[100dvh]">
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
       <Sidebar
         active={activeView}
         onNavigate={setActiveView}
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={toggleCollapse}
       />
       <TopBar
         title={viewTitles[activeView] || 'Dashboard'}
@@ -3313,10 +4543,7 @@ export default function ManagerDashboard() {
         notifications={notifications}
         onDismissNotification={(id) => setDismissedIds((prev) => new Set(prev).add(id))}
         onClearNotifications={() => setDismissedIds(new Set(derivedNotifications.map((n) => n.id)))}
-        search={globalSearch}
-        onSearch={setGlobalSearch}
-        showSearch={activeView === 'members'}
-        onJumpToMembers={() => setActiveView('members')}
+        sidebarCollapsed={sidebarCollapsed}
         onQuickAction={(action) => {
           if (action === 'add-member') { setActiveView('members'); window.dispatchEvent(new Event('dlbc-open-add-member')) }
           else if (action === 'add-payment') setActiveView('payments')
@@ -3325,9 +4552,10 @@ export default function ManagerDashboard() {
         }}
       />
 
-      <main className="ml-0 md:ml-64 mt-16 min-h-[calc(100dvh-4rem)] p-6 md:p-8">
+      <main className={`ml-0 ${mainOffset} mt-14 min-h-[calc(100dvh-3.5rem)] p-5 md:p-7 scroll-slim transition-[margin] duration-300`} style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}>
+        <div key={activeView} className="dash-view-enter max-w-[1600px] mx-auto">
         {activeView === 'dashboard' && <DashboardView data={data} onNavigate={setActiveView} />}
-        {activeView === 'members' && <MembersView data={data} initialSearch={globalSearch} />}
+        {activeView === 'members' && <MembersView data={data} />}
         {activeView === 'payments' && <PaymentsView data={data} />}
         {activeView === 'teams' && <TeamsView data={data} />}
         {activeView === 'schedule' && <ScheduleView data={data} />}
@@ -3336,6 +4564,7 @@ export default function ManagerDashboard() {
         {activeView === 'images' && <ImagesView />}
         {activeView === 'store' && <StoreManagerView />}
         {activeView === 'settings' && <SettingsView />}
+        </div>
       </main>
     </div>
   )

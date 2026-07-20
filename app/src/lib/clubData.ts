@@ -1,7 +1,13 @@
 /* ───────────────────────────────────────────────────────────
    Dublin Lions Basketball Club — Data Layer
-   All data persists to localStorage. No hardcoded mock data.
+   All data persists to localStorage, and — when Supabase is
+   configured — is mirrored to a shared "app_state" table so every
+   device/browser sees the same live data (see initAppStateSync
+   below and supabase/app-data-setup.sql).
    ─────────────────────────────────────────────────────────── */
+
+import { supabase, isSupabaseConfigured } from './supabase'
+import { getLoggedInContact } from './authUser'
 
 export interface Division {
   id: string
@@ -57,7 +63,17 @@ export interface Player {
   height?: string
   age?: number
   since?: number
+  /** Set on first login — drives which fees the member sees. */
+  memberType?: 'player' | 'parent'
+  /** Parent flow — name of the child being registered. */
+  childName?: string
+  /** Parent flow — child's date of birth (YYYY-MM-DD). */
+  childDob?: string
+  /** Parent flow — parent also registers to play themselves. */
+  alsoPlays?: boolean
 }
+
+export type MemberPaymentFocus = 'monthly' | 'oneTime'
 
 export interface Session {
   id: string
@@ -94,6 +110,48 @@ export interface Payment {
 
 export interface ImageMap {
   [key: string]: string
+}
+
+/* ─────────────────── Season Lifecycle ─────────────────── */
+
+export interface SeasonState {
+  label: string
+  startedAt: string
+  status: 'active' | 'ended'
+  endedAt?: string
+}
+
+export interface SeasonStanding {
+  teamId: string
+  name: string
+  ageGroupId: string
+  wins: number
+  losses: number
+  pointsFor: number
+  pointsAgainst: number
+}
+
+export interface SeasonHistoryEntry {
+  label: string
+  startedAt: string
+  endedAt: string
+  standings: SeasonStanding[]
+  fixtures: ClubFixture[]
+}
+
+// A player who's promoted into an age bracket that has no team yet. Team
+// creation is manager-only — the manager creates the team from the Teams tab
+// (using the auto-created age group) and then resolves this queue entry.
+export interface PendingTeamAssignment {
+  playerId: string
+  ageGroupId: string
+  ageGroupName: string
+  gender: 'Boys' | 'Girls'
+}
+
+export interface DefaultTicketPrice {
+  adultPrice: number
+  kidPrice: number
 }
 
 export interface TicketPrice {
@@ -198,6 +256,8 @@ export const defaultPayments: Payment[] = [
   { id: 'pay3', playerId: 'p6', playerName: 'Mark Doyle', amount: 50, status: 'failed', date: '2024-12-01', method: 'Stripe', plan: 'Monthly' },
 ]
 
+export const defaultSeason: SeasonState = { label: '2025/26', startedAt: '2025-09-01', status: 'active' }
+
 /* ─────────────────── localStorage Keys ─────────────────── */
 
 const KEYS = {
@@ -215,31 +275,337 @@ const KEYS = {
   stripeLink: 'dlbc_stripe_payment_link',
   fixtures: 'dlbc_fixtures',
   membershipFees: 'dlbc_membership_fees',
+  season: 'dlbc_season',
+  seasonHistory: 'dlbc_season_history',
+  defaultTicketPrice: 'dlbc_default_ticket_price',
+  pendingSeniorPlayers: 'dlbc_pending_senior_players',
+  pendingTeamAssignments: 'dlbc_pending_team_assignments',
+  revokedMemberEmails: 'dlbc_revoked_member_emails',
 }
+
+// Every key EXCEPT `images` is mirrored to Supabase (`images` is superseded
+// by the dedicated site_images table/bucket in src/lib/siteImages.ts).
+const SYNCED_KEYS = new Set<string>(
+  Object.entries(KEYS)
+    .filter(([name]) => name !== 'images')
+    .map(([, value]) => value),
+)
 
 /* ─────────────────── Membership Fees (per age group) ─────────────────── */
-// The manager can configure a monthly membership fee per age group. Used by
-// the Members view when recording a cash payment.
-export type MembershipFeeMap = Record<string, number>
-
-const defaultMembershipFees: MembershipFeeMap = {
-  u10: 30, u12: 35, u14: 40, u16: 45, u18: 45, u20: 50, senior: 50,
+// Manager configures monthly and one-time (registration) fees per age group.
+export interface AgeGroupFeeConfig {
+  monthly: number
+  oneTime: number
 }
 
-export const getMembershipFees = () =>
-  getStore<MembershipFeeMap>(KEYS.membershipFees, defaultMembershipFees)
-export const setMembershipFees = (v: MembershipFeeMap) =>
-  setStore(KEYS.membershipFees, v)
+export type MembershipFeeConfigMap = Record<string, AgeGroupFeeConfig>
 
-// Returns the monthly fee for a given player based on the first team they
-// belong to. Falls back to their stored `amount` or 50.
-export function getMonthlyFeeForPlayer(playerId: string): number {
+/** @deprecated Use MembershipFeeConfigMap — kept for backward compatibility */
+export type MembershipFeeMap = Record<string, number>
+
+const defaultMembershipFeeConfig: MembershipFeeConfigMap = {
+  u10: { monthly: 30, oneTime: 25 },
+  u12: { monthly: 35, oneTime: 30 },
+  u14: { monthly: 40, oneTime: 35 },
+  u16: { monthly: 45, oneTime: 40 },
+  u18: { monthly: 45, oneTime: 40 },
+  u20: { monthly: 50, oneTime: 45 },
+  senior: { monthly: 50, oneTime: 45 },
+}
+
+function migrateLegacyFees(raw: unknown): MembershipFeeConfigMap {
+  if (!raw || typeof raw !== 'object') return { ...defaultMembershipFeeConfig }
+  const obj = raw as Record<string, unknown>
+  const firstVal = Object.values(obj)[0]
+  if (typeof firstVal === 'number') {
+    const legacy = obj as MembershipFeeMap
+    const out: MembershipFeeConfigMap = { ...defaultMembershipFeeConfig }
+    for (const [id, monthly] of Object.entries(legacy)) {
+      out[id] = { monthly: Number(monthly) || 0, oneTime: out[id]?.oneTime ?? 0 }
+    }
+    return out
+  }
+  const out: MembershipFeeConfigMap = { ...defaultMembershipFeeConfig }
+  for (const [id, val] of Object.entries(obj)) {
+    if (val && typeof val === 'object' && 'monthly' in val) {
+      const cfg = val as AgeGroupFeeConfig
+      out[id] = { monthly: Number(cfg.monthly) || 0, oneTime: Number(cfg.oneTime) || 0 }
+    }
+  }
+  return out
+}
+
+export function getMembershipFeeConfig(): MembershipFeeConfigMap {
+  return migrateLegacyFees(getStore(KEYS.membershipFees, defaultMembershipFeeConfig))
+}
+
+export function setMembershipFeeConfig(v: MembershipFeeConfigMap) {
+  setStore(KEYS.membershipFees, v)
+}
+
+/** Monthly fees only — legacy helper */
+export const getMembershipFees = (): MembershipFeeMap => {
+  const cfg = getMembershipFeeConfig()
+  return Object.fromEntries(Object.entries(cfg).map(([id, f]) => [id, f.monthly]))
+}
+
+export const setMembershipFees = (v: MembershipFeeMap) => {
+  const current = getMembershipFeeConfig()
+  const next: MembershipFeeConfigMap = { ...current }
+  for (const [id, monthly] of Object.entries(v)) {
+    next[id] = { monthly: Number(monthly) || 0, oneTime: next[id]?.oneTime ?? 0 }
+  }
+  setMembershipFeeConfig(next)
+}
+
+export function getAgeGroupIdForPlayer(playerId: string): string | null {
   const player = getPlayers().find((p) => p.id === playerId)
-  if (!player) return 50
+  if (!player || player.teamIds.length === 0) return null
   const team = getTeams().find((t) => player.teamIds.includes(t.id))
-  if (!team) return player.amount || 50
-  const fees = getMembershipFees()
-  return fees[team.ageGroupId] ?? player.amount ?? 50
+  return team?.ageGroupId ?? null
+}
+
+/** Age group used for membership fees — team assignment, else DOB from onboarding. */
+export function getFeeAgeGroupIdForPlayer(player: Player): string | null {
+  const teamAgeGroup = getAgeGroupIdForPlayer(player.id)
+  if (teamAgeGroup) return teamAgeGroup
+
+  const dobForFees = player.memberType === 'parent' ? player.childDob : player.dob
+  if (!dobForFees) return null
+
+  const age = calcAge(dobForFees)
+  if (age === null) return null
+  return computeTargetAgeGroup(age)?.id ?? null
+}
+
+export function getFeeConfigForAgeGroup(ageGroupId: string): AgeGroupFeeConfig {
+  const cfg = getMembershipFeeConfig()
+  return cfg[ageGroupId] ?? { monthly: 50, oneTime: 40 }
+}
+
+export function getFeeConfigForPlayer(playerId: string): AgeGroupFeeConfig {
+  const player = getPlayers().find((p) => p.id === playerId)
+  if (!player?.memberType) {
+    return { monthly: 0, oneTime: 0 }
+  }
+  const ageGroupId = getFeeAgeGroupIdForPlayer(player)
+  if (!ageGroupId) {
+    const cfg = getMembershipFeeConfig()
+    const senior = cfg.senior
+    if (senior) return senior
+    const first = Object.values(cfg)[0]
+    return first ?? { monthly: 0, oneTime: 0 }
+  }
+  return getFeeConfigForAgeGroup(ageGroupId)
+}
+
+/** One-time / self fees for a parent who also plays (uses their own DOB). */
+export function getSelfFeeConfigForPlayer(player: Player): AgeGroupFeeConfig {
+  if (!player.dob) return { monthly: 0, oneTime: 0 }
+  const age = calcAge(player.dob)
+  if (age === null) return { monthly: 0, oneTime: 0 }
+  const ageGroupId = computeTargetAgeGroup(age)?.id
+  if (!ageGroupId) {
+    const cfg = getMembershipFeeConfig()
+    const senior = cfg.senior
+    if (senior) return senior
+    const first = Object.values(cfg)[0]
+    return first ?? { monthly: 0, oneTime: 0 }
+  }
+  return getFeeConfigForAgeGroup(ageGroupId)
+}
+
+export function needsPlayerOnboarding(player: Player | undefined | null): boolean {
+  if (!player?.memberType) return true
+  if (player.memberType === 'player') return !player.dob?.trim()
+  if (!player.childName?.trim() || !player.childDob?.trim()) return true
+  if (player.alsoPlays && !player.dob?.trim()) return true
+  return false
+}
+
+export function getMemberPaymentFocus(player: Player | undefined | null): MemberPaymentFocus | null {
+  if (!player?.memberType) return null
+  return player.memberType === 'parent' ? 'monthly' : 'oneTime'
+}
+
+export function completePlayerOnboarding(
+  playerId: string,
+  input: {
+    memberType: 'player' | 'parent'
+    childName?: string
+    childDob?: string
+    dob?: string
+    alsoPlays?: boolean
+  },
+): Player | null {
+  const players = getPlayers()
+  const idx = players.findIndex((p) => p.id === playerId)
+  if (idx < 0) return null
+
+  const current = players[idx]
+  const isParent = input.memberType === 'parent'
+  const childDob = isParent ? input.childDob?.trim() || undefined : undefined
+  const dob =
+    input.memberType === 'player'
+      ? input.dob?.trim() || undefined
+      : input.alsoPlays
+        ? input.dob?.trim() || undefined
+        : current.dob
+  const playerAge = dob ? calcAge(dob) ?? undefined : undefined
+
+  const updated: Player = {
+    ...current,
+    memberType: input.memberType,
+    childName: isParent ? input.childName?.trim() || undefined : undefined,
+    childDob,
+    alsoPlays: isParent ? !!input.alsoPlays : undefined,
+    dob: dob || current.dob,
+    age: input.memberType === 'player' ? playerAge : input.alsoPlays ? playerAge : current.age,
+    guardianName: isParent ? current.guardianName || current.name : current.guardianName,
+    paymentPlan: isParent ? 'Monthly' : current.paymentPlan,
+  }
+  const next = [...players]
+  next[idx] = updated
+  setPlayers(next)
+  return updated
+}
+
+export function hasTeamAssignment(player: Player | undefined | null): boolean {
+  return !!player && player.teamIds.length > 0
+}
+
+/** Sessions for a member's assigned team(s) only — empty until a manager assigns teams. */
+export function getSessionsForPlayer(playerId: string): Session[] {
+  const player = getPlayers().find((p) => p.id === playerId)
+  if (!player || player.teamIds.length === 0) return []
+  const teamIds = new Set(player.teamIds)
+  return getSessions().filter((s) => teamIds.has(s.teamId))
+}
+
+// Apply monthly and/or one-time fees to all or selected age groups.
+export function applyFeesToAgeGroups(
+  ageGroupIds: string[] | 'all',
+  fees: { monthly?: number; oneTime?: number },
+) {
+  const groups = getAgeGroups()
+  const targets = ageGroupIds === 'all' ? groups.map((g) => g.id) : ageGroupIds
+  const current = getMembershipFeeConfig()
+  const next = { ...current }
+  for (const id of targets) {
+    const prev = next[id] ?? { monthly: 0, oneTime: 0 }
+    next[id] = {
+      monthly: fees.monthly !== undefined ? fees.monthly : prev.monthly,
+      oneTime: fees.oneTime !== undefined ? fees.oneTime : prev.oneTime,
+    }
+  }
+  setMembershipFeeConfig(next)
+}
+
+// Returns the monthly fee for a given player based on their team's age group.
+export function getMonthlyFeeForPlayer(playerId: string): number {
+  return getFeeConfigForPlayer(playerId).monthly
+}
+
+export function getOneTimeFeeForPlayer(playerId: string): number {
+  return getFeeConfigForPlayer(playerId).oneTime
+}
+
+export function hasPaidOneTimeFee(playerId: string): boolean {
+  return getPayments().some(
+    (p) =>
+      p.playerId === playerId &&
+      p.status === 'succeeded' &&
+      (p.plan === 'One-time' || p.plan === 'Registration' || p.plan.includes('One-time')),
+  )
+}
+
+export function findPlayerByEmail(email: string): Player | undefined {
+  const norm = email.trim().toLowerCase()
+  return getPlayers().find((p) => p.email.trim().toLowerCase() === norm)
+}
+
+export function normalizeMemberEmail(email: string): string {
+  return email.trim().toLowerCase()
+}
+
+export function getRevokedMemberEmails(): string[] {
+  return getStore<string[]>(KEYS.revokedMemberEmails, [])
+}
+
+export function isMemberAccessRevoked(email: string): boolean {
+  const norm = normalizeMemberEmail(email)
+  if (!norm) return false
+  return getRevokedMemberEmails().includes(norm)
+}
+
+export function revokeMemberAccess(email: string): void {
+  const norm = normalizeMemberEmail(email)
+  if (!norm) return
+  const current = getRevokedMemberEmails()
+  if (!current.includes(norm)) {
+    setStore(KEYS.revokedMemberEmails, [...current, norm])
+  }
+}
+
+export function clearMemberRevocation(email: string): void {
+  const norm = normalizeMemberEmail(email)
+  if (!norm) return
+  setStore(
+    KEYS.revokedMemberEmails,
+    getRevokedMemberEmails().filter((e) => e !== norm),
+  )
+}
+
+/** True when a player login should remain active (roster + not revoked). */
+export function isPlayerAccountActive(email: string | undefined | null): boolean {
+  if (!email?.trim()) return false
+  if (isMemberAccessRevoked(email)) return false
+  return !!findPlayerByEmail(email)
+}
+
+/** Remove a member from the club roster and revoke their portal access. */
+export function removePlayerFromClub(playerId: string): boolean {
+  const players = getPlayers()
+  const player = players.find((p) => p.id === playerId)
+  if (!player) return false
+
+  setPlayers(players.filter((p) => p.id !== playerId))
+  setTeams(
+    getTeams().map((t) => ({
+      ...t,
+      players: t.players.filter((pid) => pid !== playerId),
+    })),
+  )
+  clearPendingSeniorPlayer(playerId)
+  setPendingTeamAssignments(getPendingTeamAssignments().filter((p) => p.playerId !== playerId))
+
+  if (player.email?.trim()) {
+    revokeMemberAccess(player.email)
+  }
+  return true
+}
+
+/** Team/position/jersey from roster — empty until a manager assigns them. */
+export function getRosterDisplayForEmail(email: string) {
+  const player = findPlayerByEmail(email)
+  if (!player) {
+    return { player: undefined as Player | undefined, teamName: '', position: '', jersey: 0, hasTeam: false }
+  }
+  const team = getTeams().find((t) => player.teamIds.includes(t.id))
+  return {
+    player,
+    teamName: team?.name ?? '',
+    position: player.position || '',
+    jersey: player.jerseyNumber || 0,
+    hasTeam: Boolean(team),
+  }
+}
+
+/** True only when a succeeded payment exists for the current calendar month. */
+export function isMembershipPaidForCurrentMonth(email: string, now = new Date()): boolean {
+  const player = findPlayerByEmail(email)
+  if (!player) return false
+  return hasPaidThisMonth(player.id, now)
 }
 
 // Has the player paid for the current month? True if their last successful
@@ -252,31 +618,101 @@ export function hasPaidThisMonth(playerId: string, now = new Date()): boolean {
 }
 
 // Records a cash payment for the given player and flips their status to Paid.
-export function recordCashPayment(playerId: string, amount?: number): Payment | null {
+export function recordCashPayment(playerId: string, amount?: number, plan = 'Monthly'): Payment | null {
   const players = getPlayers()
   const player = players.find((p) => p.id === playerId)
   if (!player) return null
   const finalAmount = amount ?? getMonthlyFeeForPlayer(playerId)
-  const payment: Payment = {
-    id: `pay-${Date.now().toString(36)}`,
+  return recordPayment({
     playerId,
     playerName: player.name,
     amount: finalAmount,
-    status: 'succeeded',
-    date: new Date().toISOString().split('T')[0],
     method: 'Cash',
-    plan: player.paymentPlan === 'None' ? 'Monthly' : player.paymentPlan,
+    plan: plan || (player.paymentPlan === 'None' ? 'Monthly' : player.paymentPlan),
+    status: 'succeeded',
+  })
+}
+
+// Records a card payment after the user enters their payment method in checkout.
+export function recordCardPayment(params: {
+  playerId: string
+  amount: number
+  plan: string
+  cardLast4?: string
+  payerName?: string
+  method?: string
+}): Payment | null {
+  const player = getPlayers().find((p) => p.id === params.playerId)
+  if (!player) return null
+  const method = params.method ?? (params.cardLast4 ? `Card •••• ${params.cardLast4}` : 'Card')
+  return recordPayment({
+    playerId: params.playerId,
+    playerName: params.payerName || player.name,
+    amount: params.amount,
+    method,
+    plan: params.plan,
+    status: 'succeeded',
+  })
+}
+
+export function recordGuestCardPayment(params: {
+  payerName: string
+  payerEmail?: string
+  amount: number
+  plan: string
+  cardLast4?: string
+  referenceId?: string
+  method?: string
+}): Payment {
+  const method = params.method ?? (params.cardLast4 ? `Card •••• ${params.cardLast4}` : 'Card')
+  return recordPayment({
+    playerId: params.referenceId || `guest-${Date.now().toString(36)}`,
+    playerName: params.payerName,
+    amount: params.amount,
+    method,
+    plan: params.plan,
+    status: 'succeeded',
+  })!
+}
+
+function recordPayment(params: {
+  playerId: string
+  playerName: string
+  amount: number
+  method: string
+  plan: string
+  status: 'succeeded' | 'pending' | 'failed'
+}): Payment | null {
+  const payment: Payment = {
+    id: `pay-${Date.now().toString(36)}`,
+    playerId: params.playerId,
+    playerName: params.playerName,
+    amount: params.amount,
+    status: params.status,
+    date: new Date().toISOString().split('T')[0],
+    method: params.method,
+    plan: params.plan,
   }
   const payments = getPayments()
   payments.unshift(payment)
   setPayments(payments)
-  // Flip the player's status to Paid and update their last payment date.
-  const updated = players.map((p) =>
-    p.id === playerId
-      ? { ...p, status: 'Paid' as const, lastPaymentDate: payment.date, amount: finalAmount }
-      : p,
-  )
-  setPlayers(updated)
+
+  const players = getPlayers()
+  const player = players.find((p) => p.id === params.playerId)
+  if (player && params.status === 'succeeded') {
+    const updated = players.map((p) =>
+      p.id === params.playerId
+        ? {
+            ...p,
+            status: 'Paid' as const,
+            lastPaymentDate: payment.date,
+            amount: params.amount,
+            paymentPlan: params.plan === 'One-time' ? p.paymentPlan : 'Monthly',
+          }
+        : p,
+    )
+    setPlayers(updated)
+  }
   return payment
 }
 
@@ -384,11 +820,116 @@ export function getStore<T>(key: string, fallback: T): T {
 export function setStore<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value))
   window.dispatchEvent(new StorageEvent('storage', { key }))
+  syncKeyToRemote(key, value)
 }
 
 export function clearStore(key: string) {
   localStorage.removeItem(key)
   window.dispatchEvent(new StorageEvent('storage', { key }))
+  syncKeyToRemote(key, null)
+}
+
+/* ─────────────────── Shared / Multi-Device Sync ───────────────────
+   When Supabase is configured, every localStorage write above is also
+   mirrored to a public "app_state" table (key/value + updated_at). This
+   makes data like Team Chat, players, fixtures, etc. genuinely shared
+   across devices/browsers instead of being local to one machine:
+     - writes: fire-and-forget upsert (localStorage remains the source
+       of truth for instant, synchronous UI reads/writes everywhere else
+       in the app — no call site needs to change).
+     - bootstrap: on load, pull every row once and merge remote-over-local.
+     - realtime: subscribe to live changes and merge them in, dispatching
+       a `storage` event so every existing storage-event listener across
+       the app (Navbar, ManagerDashboard, Teams, Fixtures, Home, Store...)
+       picks up the update with zero extra code.
+   See supabase/app-data-setup.sql for the table + RLS + Realtime setup.
+   ─────────────────────────────────────────────────────────────────── */
+
+let appStateSyncStarted = false
+
+function syncKeyToRemote(key: string, value: unknown) {
+  if (!isSupabaseConfigured || !supabase) return
+  if (!SYNCED_KEYS.has(key)) return
+  if (value === null) {
+    supabase.from('app_state').delete().eq('key', key).then(({ error }) => {
+      if (error) console.warn('[app_state] delete failed for', key, error.message)
+    })
+    return
+  }
+  supabase
+    .from('app_state')
+    .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+    .then(({ error }) => {
+      if (error) console.warn('[app_state] sync failed for', key, error.message)
+    })
+}
+
+/** Await remote sync before server-side validation (e.g. Stripe checkout). */
+export async function ensureAppStateKeySynced(key: string): Promise<void> {
+  if (!isSupabaseConfigured || !supabase || !SYNCED_KEYS.has(key)) return
+  const raw = localStorage.getItem(key)
+  if (!raw) return
+  try {
+    const value = JSON.parse(raw) as unknown
+    const { error } = await supabase
+      .from('app_state')
+      .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+    if (error) console.warn('[app_state] ensure sync failed for', key, error.message)
+  } catch {
+    /* ignore malformed local data */
+  }
+}
+
+/**
+ * Call once on app startup. Pulls the shared app_state table into
+ * localStorage (remote wins on first load, since it reflects whatever the
+ * manager last saved from any device), then subscribes to live changes so
+ * every open tab/device stays in sync without a refresh. No-ops when
+ * Supabase isn't configured (the app keeps working purely from localStorage).
+ */
+export async function initAppStateSync(): Promise<void> {
+  if (appStateSyncStarted) return
+  if (!isSupabaseConfigured || !supabase) return
+  appStateSyncStarted = true
+
+  const applyRemoteRow = (key: string, value: unknown) => {
+    if (!SYNCED_KEYS.has(key)) return
+    localStorage.setItem(key, JSON.stringify(value))
+    window.dispatchEvent(new StorageEvent('storage', { key }))
+  }
+
+  // Awaited so callers (e.g. pruneDemoSeedData in main.tsx) can safely run
+  // AFTER remote state has been merged in — otherwise a fresh device could
+  // read only its local/default data, "prune" it, and push that over data
+  // another device already synced to Supabase.
+  try {
+    const { data, error } = await supabase!.from('app_state').select('key, value')
+    if (!error && data) {
+      for (const row of data as { key: string; value: unknown }[]) {
+        applyRemoteRow(row.key, row.value)
+      }
+    }
+  } catch {
+    /* offline or unreachable — keep working from localStorage */
+  }
+
+  supabase
+    .channel('app_state-changes')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'app_state' },
+      (payload) => {
+        const row = (payload.new ?? payload.old) as { key?: string; value?: unknown } | null
+        if (!row?.key) return
+        if (payload.eventType === 'DELETE') {
+          localStorage.removeItem(row.key)
+          window.dispatchEvent(new StorageEvent('storage', { key: row.key }))
+        } else {
+          applyRemoteRow(row.key, row.value)
+        }
+      },
+    )
+    .subscribe()
 }
 
 /* ─────────────────── Typed Getters / Setters ─────────────────── */
@@ -401,6 +942,46 @@ export const setTeams = (v: Team[]) => setStore(KEYS.teams, v)
 
 export const getPlayers = () => getStore(KEYS.players, defaultPlayers)
 export const setPlayers = (v: Player[]) => setStore(KEYS.players, v)
+
+// Called right after a player creates their own account (see AuthContext.signUp).
+// Links their login to a real roster Player record so features like Team Chat
+// work immediately — reuses an existing record if the email already matches
+// (e.g. the manager pre-added them), otherwise creates a new, unassigned one
+// (teamIds: []) that shows up in the manager's Players list to be assigned to
+// a team and reviewed.
+export function upsertPlayerFromAuth(input: {
+  email: string
+  name: string
+  team?: string
+  position?: string
+  jerseyNumber?: number
+}): Player | null {
+  if (isMemberAccessRevoked(input.email)) return null
+
+  const players = getPlayers()
+  const existing = players.find((p) => p.email.toLowerCase() === input.email.toLowerCase())
+  if (existing) return existing
+
+  const newPlayer: Player = {
+    id: `p-${Date.now().toString(36)}`,
+    name: input.name,
+    email: input.email,
+    phone: '',
+    dob: '',
+    gender: /women/i.test(input.team || '') ? 'Female' : 'Male',
+    teamIds: [],
+    position: input.position || '',
+    jerseyNumber: input.jerseyNumber || 0,
+    status: 'Pending',
+    paymentPlan: 'None',
+    amount: 0,
+    lastPaymentDate: '',
+    registrationDate: new Date().toISOString().split('T')[0],
+    registeredWithBI: false,
+  }
+  setPlayers([...players, newPlayer])
+  return newPlayer
+}
 
 export const getSessions = () => getStore(KEYS.sessions, defaultSessions)
 export const setSessions = (v: Session[]) => setStore(KEYS.sessions, v)
@@ -449,6 +1030,264 @@ export function addTicketPurchase(data: Omit<TicketPurchase, 'id' | 'purchasedAt
   }
   purchases.push(purchase)
   setTicketPurchases(purchases)
+}
+
+/* ─────────────────── Season Lifecycle ─────────────────── */
+
+export const getSeason = (): SeasonState => getStore<SeasonState>(KEYS.season, defaultSeason)
+export const setSeason = (v: SeasonState) => setStore(KEYS.season, v)
+
+export const getSeasonHistory = (): SeasonHistoryEntry[] => getStore<SeasonHistoryEntry[]>(KEYS.seasonHistory, [])
+export const setSeasonHistory = (v: SeasonHistoryEntry[]) => setStore(KEYS.seasonHistory, v)
+
+export const getDefaultTicketPrice = (): DefaultTicketPrice =>
+  getStore<DefaultTicketPrice>(KEYS.defaultTicketPrice, { adultPrice: 10, kidPrice: 5 })
+export const setDefaultTicketPrice = (v: DefaultTicketPrice) => setStore(KEYS.defaultTicketPrice, v)
+
+// Players flagged as having aged out of U20 — the manager decides whether to
+// promote them to a Senior team or remove them, so this is a manual queue
+// rather than an automatic move.
+export const getPendingSeniorPlayers = (): string[] => getStore<string[]>(KEYS.pendingSeniorPlayers, [])
+export const setPendingSeniorPlayers = (v: string[]) => setStore(KEYS.pendingSeniorPlayers, v)
+export function clearPendingSeniorPlayer(playerId: string) {
+  setPendingSeniorPlayers(getPendingSeniorPlayers().filter((id) => id !== playerId))
+}
+
+// Players promoted into a bracket with no team yet — manager must create the
+// team (Teams tab) and then manually assign them from this queue.
+export const getPendingTeamAssignments = (): PendingTeamAssignment[] =>
+  getStore<PendingTeamAssignment[]>(KEYS.pendingTeamAssignments, [])
+export const setPendingTeamAssignments = (v: PendingTeamAssignment[]) => setStore(KEYS.pendingTeamAssignments, v)
+export function clearPendingTeamAssignment(playerId: string) {
+  setPendingTeamAssignments(getPendingTeamAssignments().filter((p) => p.playerId !== playerId))
+}
+
+// Age (in full years) as of today, from a YYYY-MM-DD date of birth.
+export function calcAge(dob: string): number | null {
+  if (!dob) return null
+  const birth = new Date(dob)
+  if (isNaN(birth.getTime())) return null
+  const now = new Date()
+  let age = now.getFullYear() - birth.getFullYear()
+  const monthDiff = now.getMonth() - birth.getMonth()
+  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birth.getDate())) age--
+  return age
+}
+
+// Maps a player's real age to the age group they should play in this season.
+// The club runs single-year brackets (U11, U12, U13...) rather than the
+// 2-year "divisions" used for scheduling, plus an "Academy" tier for the
+// youngest kids. Once a player is 20+ they're Senior-eligible, which is a
+// manual manager decision (tryouts / ability), so this returns null for them.
+export function computeTargetAgeGroup(age: number): { id: string; name: string } | null {
+  if (age < 8) return { id: 'academy', name: 'Academy' }
+  if (age <= 19) return { id: `u${age + 1}`, name: `U${age + 1}` }
+  return null
+}
+
+// Ensures an AgeGroup entry exists (creating a single default "A" division
+// if it's brand new), returns the age group id.
+export function ensureAgeGroup(id: string, name: string): string {
+  const groups = getAgeGroups()
+  if (groups.some((g) => g.id === id)) return id
+  const ordinal = id === 'academy' ? 0 : parseInt(id.replace('u', ''), 10) || 0
+  const next: AgeGroup = {
+    id,
+    name,
+    minAge: Math.max(0, ordinal - 1),
+    maxAge: ordinal,
+    divisions: [{ id: `${id}-a`, name: 'A', level: 1 }],
+  }
+  setAgeGroups([...groups, next])
+  return id
+}
+
+// Kept for callers that want to explicitly spin up a team for an age group
+// (e.g. a manager-triggered "quick create" action) — but season promotion no
+// longer calls this automatically; team creation is manager-only.
+export function ensureTeamForAgeGroup(ageGroupId: string, ageGroupName: string, gender: Team['gender'], seasonLabel: string): string {
+  const teams = getTeams()
+  const existing = teams.find((t) => t.ageGroupId === ageGroupId && t.gender === gender)
+  if (existing) return existing.id
+  const divisionId = `${ageGroupId}-a`
+  const id = `${ageGroupId}-${gender.toLowerCase()}-${Date.now().toString(36)}`
+  const team: Team = {
+    id,
+    name: `Dublin Lions ${ageGroupName} ${gender}`,
+    gender,
+    ageGroupId,
+    divisionId,
+    coach: 'TBC',
+    players: [],
+    season: seasonLabel,
+    wins: 0,
+    losses: 0,
+    pointsFor: 0,
+    pointsAgainst: 0,
+  }
+  setTeams([...teams, team])
+  return id
+}
+
+export interface StartSeasonResult {
+  label: string
+  promotedCount: number
+  needsSeniorAssignment: Player[]
+  needsTeamAssignment: PendingTeamAssignment[]
+}
+
+// Starts a new season: resets every team's win/loss/points record, then
+// promotes every player whose real age now puts them in a different age
+// bracket. The age group itself is auto-created (so it shows up as a tab for
+// the manager to work with), but the *team* is not — team creation is
+// manager-only, so a player who lands in a bracket with no team yet is
+// queued for manual assignment instead of moved automatically. Players who've
+// aged into Senior territory (20+) are likewise left where they are and
+// queued for the manager to place by hand.
+export function startNewSeason(label: string): StartSeasonResult {
+  // Snapshot the roster before any age-group auto-creation happens, so
+  // "current team" lookups reflect last season's assignments rather than
+  // partially rebuilt state.
+  const teamsBefore = getTeams()
+  const players = getPlayers()
+  const needsSeniorAssignment: Player[] = []
+  const needsTeamAssignment: PendingTeamAssignment[] = []
+  let promotedCount = 0
+
+  const updatedPlayers = players.map((p) => {
+    const age = calcAge(p.dob)
+    if (age == null) return p
+    const target = computeTargetAgeGroup(age)
+    const currentTeams = p.teamIds.map((tid) => teamsBefore.find((t) => t.id === tid)).filter(Boolean) as Team[]
+    const onSenior = currentTeams.some((t) => t.ageGroupId === 'senior')
+
+    if (target == null) {
+      // Aged out of U20 — manual call, don't auto-move them.
+      if (!onSenior) needsSeniorAssignment.push(p)
+      return p
+    }
+
+    const alreadyInTarget = currentTeams.some((t) => t.ageGroupId === target.id)
+    if (alreadyInTarget || onSenior) return p
+
+    ensureAgeGroup(target.id, target.name)
+    const gender: Team['gender'] = p.gender === 'Male' ? 'Boys' : 'Girls'
+    const existingTeam = teamsBefore.find((t) => t.ageGroupId === target.id && t.gender === gender)
+
+    if (!existingTeam) {
+      // No team for this bracket yet — leave the player on their current team
+      // and queue them for the manager to move once they've created one.
+      needsTeamAssignment.push({ playerId: p.id, ageGroupId: target.id, ageGroupName: target.name, gender })
+      return p
+    }
+
+    // Move the player off their old (non-senior) youth teams and onto the new one.
+    const nonSeniorOldIds = currentTeams.filter((t) => t.ageGroupId !== 'senior').map((t) => t.id)
+    const keptTeamIds = p.teamIds.filter((tid) => !nonSeniorOldIds.includes(tid))
+    promotedCount++
+    return { ...p, teamIds: [...keptTeamIds, existingTeam.id] }
+  })
+
+  // Reset every team's record for the new season, then rebuild each team's
+  // players[] roster from the updated player records.
+  const finalTeams = getTeams().map((t) => ({
+    ...t,
+    season: label,
+    wins: 0,
+    losses: 0,
+    pointsFor: 0,
+    pointsAgainst: 0,
+    players: updatedPlayers.filter((p) => p.teamIds.includes(t.id)).map((p) => p.id),
+  }))
+
+  setPlayers(updatedPlayers)
+  setTeams(finalTeams)
+  setSeason({ label, startedAt: new Date().toISOString(), status: 'active' })
+  setPendingSeniorPlayers(Array.from(new Set([...getPendingSeniorPlayers(), ...needsSeniorAssignment.map((p) => p.id)])))
+  setPendingTeamAssignments([
+    ...getPendingTeamAssignments().filter((pt) => !needsTeamAssignment.some((n) => n.playerId === pt.playerId)),
+    ...needsTeamAssignment,
+  ])
+
+  return { label, promotedCount, needsSeniorAssignment, needsTeamAssignment }
+}
+
+// Ends the current season: snapshots standings + fixtures into history, then
+// clears the fixture list so the new season starts with a clean slate.
+export function endSeason(): SeasonHistoryEntry {
+  const season = getSeason()
+  const teams = getTeams()
+  const standings: SeasonStanding[] = teams.map((t) => ({
+    teamId: t.id,
+    name: t.name,
+    ageGroupId: t.ageGroupId,
+    wins: t.wins,
+    losses: t.losses,
+    pointsFor: t.pointsFor,
+    pointsAgainst: t.pointsAgainst,
+  }))
+  const entry: SeasonHistoryEntry = {
+    label: season.label,
+    startedAt: season.startedAt,
+    endedAt: new Date().toISOString(),
+    standings,
+    fixtures: getFixtures(),
+  }
+  setSeasonHistory([entry, ...getSeasonHistory()])
+  setFixtures([])
+  setSeason({ ...season, status: 'ended', endedAt: entry.endedAt })
+  return entry
+}
+
+// Restores a season from history: re-applies its archived standings + fixtures
+// as the active season. Whatever is currently active gets archived first (as
+// its own history entry) so nothing is lost by restoring an older one.
+export function restoreSeasonFromHistory(historyIndex: number): SeasonHistoryEntry | null {
+  const history = getSeasonHistory()
+  const entry = history[historyIndex]
+  if (!entry) return null
+
+  const current = getSeason()
+  const currentTeams = getTeams()
+  const currentEntry: SeasonHistoryEntry = {
+    label: current.label,
+    startedAt: current.startedAt,
+    endedAt: new Date().toISOString(),
+    standings: currentTeams.map((t) => ({
+      teamId: t.id,
+      name: t.name,
+      ageGroupId: t.ageGroupId,
+      wins: t.wins,
+      losses: t.losses,
+      pointsFor: t.pointsFor,
+      pointsAgainst: t.pointsAgainst,
+    })),
+    fixtures: getFixtures(),
+  }
+
+  // Re-apply the archived standings onto today's teams (rosters/coaches are
+  // left as they are now — only the record + season label is rolled back).
+  const restoredTeams = currentTeams.map((t) => {
+    const stand = entry.standings.find((s) => s.teamId === t.id)
+    return stand
+      ? { ...t, wins: stand.wins, losses: stand.losses, pointsFor: stand.pointsFor, pointsAgainst: stand.pointsAgainst, season: entry.label }
+      : t
+  })
+
+  setTeams(restoredTeams)
+  setFixtures(entry.fixtures)
+  setSeason({ label: entry.label, startedAt: entry.startedAt, status: 'active' })
+  setSeasonHistory([currentEntry, ...history.filter((_, i) => i !== historyIndex)])
+
+  return entry
+}
+
+// Applies one flat adult/kid price to every fixture. Individual fixtures can
+// still be overridden afterwards from the fixture edit form.
+export function applyDefaultTicketPriceToAllFixtures(adultPrice: number, kidPrice: number) {
+  setDefaultTicketPrice({ adultPrice, kidPrice })
+  const fixtures = getFixtures().map((f) => ({ ...f, ticketsEnabled: true, adultPrice, kidPrice }))
+  setFixtures(fixtures)
 }
 
 /* ─────────────────── Stats ─────────────────── */
@@ -515,6 +1354,48 @@ export function getChatMembersMap(): ChatMembersMap {
 
 export function setChatMembersMap(v: ChatMembersMap) {
   setStore(KEYS.chatMembers, v)
+}
+
+// One-time-per-write cleanup of the bundled demo/placeholder roster (Kevin
+// Anyanwu, Tiago Pereira, etc.) so it doesn't keep showing up in team
+// rosters, Chat Members lists, or payment history once real players exist.
+// Safe to call on every app load — it's idempotent (only writes if a demo
+// id is actually still present) and only ever removes the original seeded
+// ids, so it never touches real players/teams/payments added afterwards.
+const DEMO_PLAYER_IDS = new Set(defaultPlayers.map((p) => p.id))
+const DEMO_PAYMENT_IDS = new Set(defaultPayments.map((p) => p.id))
+
+export function pruneDemoSeedData() {
+  const players = getPlayers()
+  if (players.some((p) => DEMO_PLAYER_IDS.has(p.id))) {
+    setPlayers(players.filter((p) => !DEMO_PLAYER_IDS.has(p.id)))
+  }
+
+  const teams = getTeams()
+  if (teams.some((t) => t.players.some((pid) => DEMO_PLAYER_IDS.has(pid)))) {
+    setTeams(teams.map((t) => ({ ...t, players: t.players.filter((pid) => !DEMO_PLAYER_IDS.has(pid)) })))
+  }
+
+  const payments = getPayments()
+  if (payments.some((p) => DEMO_PAYMENT_IDS.has(p.id))) {
+    setPayments(payments.filter((p) => !DEMO_PAYMENT_IDS.has(p.id)))
+  }
+
+  const sessions = getSessions()
+  if (sessions.some((s) => s.attendance.some((pid) => DEMO_PLAYER_IDS.has(pid)))) {
+    setSessions(sessions.map((s) => ({ ...s, attendance: s.attendance.filter((pid) => !DEMO_PLAYER_IDS.has(pid)) })))
+  }
+
+  const chatMap = getChatMembersMap()
+  let chatChanged = false
+  const nextChatMap: ChatMembersMap = {}
+  for (const [teamId, room] of Object.entries(chatMap)) {
+    const memberIds = room.memberIds.filter((id) => !DEMO_PLAYER_IDS.has(id))
+    const adminIds = room.adminIds.filter((id) => !DEMO_PLAYER_IDS.has(id))
+    if (memberIds.length !== room.memberIds.length || adminIds.length !== room.adminIds.length) chatChanged = true
+    nextChatMap[teamId] = { memberIds, adminIds }
+  }
+  if (chatChanged) setChatMembersMap(nextChatMap)
 }
 
 export function getChatRoom(teamId: string): ChatRoomMembership {
@@ -592,6 +1473,81 @@ export interface ChatMessage {
 }
 export interface CartItem { productId: string; quantity: number }
 
+export const LOW_STOCK_THRESHOLD = 5
+
+export function getProductById(productId: string): Product | undefined {
+  return getProducts().find((p) => p.id === productId)
+}
+
+export function getCartQuantityForProduct(productId: string): number {
+  return getCart().find((c) => c.productId === productId)?.quantity ?? 0
+}
+
+export function getRemainingStock(productId: string): number {
+  const product = getProductById(productId)
+  if (!product) return 0
+  return Math.max(0, product.stock - getCartQuantityForProduct(productId))
+}
+
+export function canAddToCart(productId: string, qty = 1): { ok: boolean; reason?: string } {
+  const product = getProductById(productId)
+  if (!product || !product.active) return { ok: false, reason: 'This product is unavailable.' }
+  if (product.stock <= 0) return { ok: false, reason: `${product.name} is out of stock.` }
+  const remaining = getRemainingStock(productId)
+  if (qty > remaining) {
+    return {
+      ok: false,
+      reason: remaining === 0
+        ? `${product.name} is out of stock.`
+        : `Only ${remaining} left for ${product.name}.`,
+    }
+  }
+  return { ok: true }
+}
+
+export function validateCartStock(): { ok: boolean; errors: string[] } {
+  const products = getProducts()
+  const cart = getCart()
+  const errors: string[] = []
+  for (const item of cart) {
+    const product = products.find((p) => p.id === item.productId)
+    if (!product || !product.active) {
+      errors.push('An item in your cart is no longer available.')
+      continue
+    }
+    if (product.stock <= 0) errors.push(`${product.name} is out of stock.`)
+    else if (item.quantity > product.stock) errors.push(`Only ${product.stock} of ${product.name} left in stock.`)
+  }
+  return { ok: errors.length === 0, errors }
+}
+
+/** Adjust cart quantities when stock changes; returns user-facing warnings. */
+export function syncCartToStock(): string[] {
+  const products = getProducts()
+  const cart = getCart()
+  const warnings: string[] = []
+  const next: CartItem[] = []
+
+  for (const item of cart) {
+    const product = products.find((p) => p.id === item.productId)
+    if (!product || !product.active || product.stock <= 0) {
+      warnings.push(`${product?.name || 'An item'} is out of stock and was removed from your cart.`)
+      continue
+    }
+    if (item.quantity > product.stock) {
+      warnings.push(`${product.name}: quantity reduced to ${product.stock} (only ${product.stock} left).`)
+      next.push({ productId: item.productId, quantity: product.stock })
+    } else {
+      next.push(item)
+    }
+  }
+
+  if (next.length !== cart.length || next.some((c, i) => c.quantity !== cart[i]?.quantity)) {
+    setCart(next)
+  }
+  return warnings
+}
+
 const defaultProducts: Product[] = [
   { id: 'prod-1', name: 'Home Jersey', description: 'Official match jersey — breathable mesh, club crest. Adult S–XXL.', price: 55, category: 'Jerseys', imageKey: '', stock: 25, active: true, createdAt: '2025-01-01' },
   { id: 'prod-2', name: 'Away Jersey', description: 'White away kit with navy trim.', price: 55, category: 'Jerseys', imageKey: '', stock: 20, active: true, createdAt: '2025-01-01' },
@@ -610,19 +1566,118 @@ export const setProducts = (v: Product[]) => setStore('dlbc_products', v)
 export const getOrders = () => getStore<Order[]>('dlbc_orders', [])
 export const setOrders = (v: Order[]) => setStore('dlbc_orders', v)
 
-export const getCart = (): CartItem[] => { try { return JSON.parse(localStorage.getItem('dlbc_cart') || '[]') } catch { return [] } }
-export function setCart(v: CartItem[]) { localStorage.setItem('dlbc_cart', JSON.stringify(v)); window.dispatchEvent(new Event('dlbc-cart-change')) }
-export function addToCart(productId: string) { const cart = getCart(); const e = cart.find((c) => c.productId === productId); if (e) e.quantity += 1; else cart.push({ productId, quantity: 1 }); setCart(cart) }
+const CART_KEY_PREFIX = 'dlbc_cart'
+const LEGACY_CART_KEY = 'dlbc_cart'
+
+/** Stable cart owner — one cart per signed-in email, or a shared guest cart. */
+export function getCartOwnerKey(): string {
+  const email = getLoggedInContact()?.email?.trim().toLowerCase()
+  return email || 'guest'
+}
+
+function getCartStorageKey(): string {
+  return `${CART_KEY_PREFIX}:${getCartOwnerKey()}`
+}
+
+function readCartItems(key: string): CartItem[] {
+  try {
+    let raw = localStorage.getItem(key)
+    if (!raw && key === `${CART_KEY_PREFIX}:guest`) {
+      const legacy = localStorage.getItem(LEGACY_CART_KEY)
+      if (legacy) {
+        localStorage.setItem(key, legacy)
+        localStorage.removeItem(LEGACY_CART_KEY)
+        raw = legacy
+      }
+    }
+    return raw ? (JSON.parse(raw) as CartItem[]) : []
+  } catch {
+    return []
+  }
+}
+
+export const getCart = (): CartItem[] => readCartItems(getCartStorageKey())
+
+export function setCart(v: CartItem[]) {
+  localStorage.setItem(getCartStorageKey(), JSON.stringify(v))
+  window.dispatchEvent(new Event('dlbc-cart-change'))
+}
+export function addToCart(productId: string): { ok: boolean; reason?: string } {
+  const check = canAddToCart(productId, 1)
+  if (!check.ok) return check
+  const cart = getCart()
+  const existing = cart.find((c) => c.productId === productId)
+  if (existing) existing.quantity += 1
+  else cart.push({ productId, quantity: 1 })
+  setCart(cart)
+  return { ok: true }
+}
 export function removeFromCart(productId: string) { setCart(getCart().filter((c) => c.productId !== productId)) }
-export function updateCartQuantity(productId: string, quantity: number) { if (quantity <= 0) { removeFromCart(productId); return }; const cart = getCart(); const item = cart.find((c) => c.productId === productId); if (item) { item.quantity = quantity; setCart(cart) } }
+export function updateCartQuantity(productId: string, quantity: number): { ok: boolean; reason?: string } {
+  if (quantity <= 0) {
+    removeFromCart(productId)
+    return { ok: true }
+  }
+  const product = getProductById(productId)
+  if (!product) return { ok: false, reason: 'Product unavailable.' }
+  if (product.stock <= 0) return { ok: false, reason: `${product.name} is out of stock.` }
+  if (quantity > product.stock) {
+    return { ok: false, reason: `Only ${product.stock} of ${product.name} left in stock.` }
+  }
+  const cart = getCart()
+  const item = cart.find((c) => c.productId === productId)
+  if (item) {
+    item.quantity = quantity
+    setCart(cart)
+  }
+  return { ok: true }
+}
 export function clearCart() { setCart([]) }
 export function getCartCount(): number { return getCart().reduce((s, c) => s + c.quantity, 0) }
 export function getCartTotal(): number { const products = getProducts(); return getCart().reduce((s, c) => { const p = products.find((pr) => pr.id === c.productId); return s + (p ? p.price * c.quantity : 0) }, 0) }
-export function placeOrder(customerName: string, customerEmail: string) {
-  const products = getProducts(); const cart = getCart(); if (cart.length === 0) return null
+export function createPendingOrder(customerName: string, customerEmail: string): { order: Order | null; errors?: string[] } {
+  const validation = validateCartStock()
+  if (!validation.ok) return { order: null, errors: validation.errors }
+  const products = getProducts(); const cart = getCart(); if (cart.length === 0) return { order: null, errors: ['Your cart is empty.'] }
   const items = cart.map((c) => { const p = products.find((pr) => pr.id === c.productId); return { productId: c.productId, productName: p?.name || 'Unknown', price: p?.price || 0, quantity: c.quantity } })
   const total = items.reduce((s, i) => s + i.price * i.quantity, 0)
   const order: Order = { id: `ord-${Date.now()}`, customerName, customerEmail, items, total, status: 'pending', date: new Date().toISOString().split('T')[0] }
-  const updated = products.map((p) => { const ci = cart.find((c) => c.productId === p.id); return ci ? { ...p, stock: Math.max(0, p.stock - ci.quantity) } : p })
-  setProducts(updated); setOrders([order, ...getOrders()]); clearCart(); return order
+  setOrders([order, ...getOrders()])
+  return { order }
+}
+
+export function placeOrder(customerName: string, customerEmail: string): { order: Order | null; errors?: string[] } {
+  const result = createPendingOrder(customerName, customerEmail)
+  if (!result.order) return result
+  clearCart()
+  return result
+}
+
+export function markOrderPaid(orderId: string, cardLast4?: string) {
+  const orders = getOrders()
+  const idx = orders.findIndex((o) => o.id === orderId)
+  if (idx === -1) return null
+  const order = orders[idx]
+  if (order.status === 'paid') return order
+
+  const products = getProducts()
+  const updatedProducts = products.map((p) => {
+    const item = order.items.find((i) => i.productId === p.id)
+    return item ? { ...p, stock: Math.max(0, p.stock - item.quantity) } : p
+  })
+  setProducts(updatedProducts)
+
+  orders[idx] = { ...order, status: 'paid' }
+  setOrders(orders)
+  recordGuestCardPayment({
+    payerName: order.customerName,
+    payerEmail: order.customerEmail,
+    amount: order.total,
+    plan: `Store order ${order.id}`,
+    cardLast4,
+    referenceId: order.id,
+    method: 'Stripe',
+  })
+  clearCart()
+  return orders[idx]
 }

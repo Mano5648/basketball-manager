@@ -2,23 +2,16 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   X, Trophy, TrendingUp, Users, ChevronRight, Pencil, Trash2, Camera,
-  AlertTriangle, Check
+  AlertTriangle, Check, Plus
 } from 'lucide-react'
-import { useSiteImages, useSiteImage, asset } from '@/hooks/useSiteImages'
+import { useSiteImages, useSiteImage, useSiteText, LABEL_PREFIX, asset } from '@/hooks/useSiteImages'
+import { saveSiteImageUrl } from '@/lib/siteImages'
+import { useAuth } from '@/lib/AuthContext'
 import {
   getPlayers, setPlayers, getTeams, setTeams,
+  removePlayerFromClub,
   type Player
 } from '@/lib/clubData'
-
-// ─── Manager detection ───
-function checkIsManager(): boolean {
-  try {
-    const raw = localStorage.getItem('dlbc_user')
-    if (!raw) return false
-    const user = JSON.parse(raw)
-    return user.role === 'manager'
-  } catch { return false }
-}
 
 // ─── Scroll Reveal Hook ───
 function useScrollReveal() {
@@ -84,10 +77,12 @@ function EditPlayerModal({
   player,
   onSave,
   onClose,
+  isNew = false,
 }: {
   player: DisplayPlayer
   onSave: (id: string, updates: Partial<Player>, newPhoto?: string) => void
   onClose: () => void
+  isNew?: boolean
 }) {
   const [name, setName] = useState(player.name)
   const [position, setPosition] = useState(player.position)
@@ -136,7 +131,7 @@ function EditPlayerModal({
       >
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
-          <h2 className="font-oswald font-bold text-xl text-white">Edit Player</h2>
+          <h2 className="font-oswald font-bold text-xl text-white">{isNew ? 'Add Player' : 'Edit Player'}</h2>
           <button
             onClick={onClose}
             className="w-8 h-8 bg-white/5 rounded-full flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
@@ -270,9 +265,10 @@ function EditPlayerModal({
           </button>
           <button
             onClick={handleSave}
-            className="flex-1 bg-electric-blue text-white font-inter font-semibold text-sm rounded-lg px-4 py-2.5 hover:bg-blue-400 transition-colors flex items-center justify-center gap-2"
+            disabled={!name.trim()}
+            className="flex-1 bg-electric-blue text-white font-inter font-semibold text-sm rounded-lg px-4 py-2.5 hover:bg-blue-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
           >
-            <Check size={16} /> Save Changes
+            <Check size={16} /> {isNew ? 'Add Player' : 'Save Changes'}
           </button>
         </div>
       </div>
@@ -320,6 +316,91 @@ function DeleteConfirmModal({
             className="flex-1 bg-red-500 text-white font-inter font-semibold text-sm rounded-lg px-4 py-2.5 hover:bg-red-600 transition-colors"
           >
             Remove
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Coach Edit Modal ───
+function CoachEditModal({
+  name,
+  role,
+  bio,
+  onSave,
+  onClose,
+}: {
+  name: string
+  role: string
+  bio: string
+  onSave: (name: string, role: string, bio: string) => void
+  onClose: () => void
+}) {
+  const [n, setN] = useState(name)
+  const [r, setR] = useState(role)
+  const [b, setB] = useState(bio)
+
+  return (
+    <div
+      className="fixed inset-0 z-[110] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[#1E293B] rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
+          <h2 className="font-oswald font-bold text-xl text-white">Edit Coach</h2>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 bg-white/5 rounded-full flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div>
+            <label className="block text-xs text-slate-400 uppercase tracking-wider mb-1">Name</label>
+            <input
+              type="text"
+              value={n}
+              onChange={(e) => setN(e.target.value)}
+              className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-electric-blue"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 uppercase tracking-wider mb-1">Role / Title</label>
+            <input
+              type="text"
+              value={r}
+              onChange={(e) => setR(e.target.value)}
+              className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-electric-blue"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 uppercase tracking-wider mb-1">Description</label>
+            <textarea
+              value={b}
+              onChange={(e) => setB(e.target.value)}
+              rows={4}
+              className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-electric-blue resize-y"
+            />
+          </div>
+        </div>
+        <div className="p-5 border-t border-white/[0.06] flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 bg-white/5 border border-white/[0.06] text-slate-300 font-inter font-medium text-sm rounded-lg px-4 py-2.5 hover:bg-white/10 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => { onSave(n.trim(), r.trim(), b.trim()); onClose() }}
+            disabled={!n.trim()}
+            className="flex-1 bg-electric-blue text-white font-inter font-semibold text-sm rounded-lg px-4 py-2.5 hover:bg-blue-400 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+          >
+            <Check size={16} /> Save Changes
           </button>
         </div>
       </div>
@@ -481,7 +562,7 @@ function PlayerCard({
                 <div className="flex items-end justify-between">
                   <div>
                     <h2 className="font-oswald font-bold text-3xl text-white">{player.name}</h2>
-                    <p className="font-inter text-electric-blue mt-1">{player.position} \u00B7 #{player.number}</p>
+                    <p className="font-inter text-electric-blue mt-1">{player.position} · #{player.number}</p>
                   </div>
                   <div className="w-14 h-14 bg-electric-blue rounded-xl flex items-center justify-center">
                     <span className="font-oswald font-bold text-2xl text-white">{player.number}</span>
@@ -537,30 +618,40 @@ function PlayerCard({
 function TeamSection({
   teamId,
   teamName,
-  sponsorLogo,
   coachName,
   coachRole,
   coachBio,
+  coachKeys,
   genderLabel,
   isManager,
   onEdit,
   onRemove,
+  onAdd,
 }: {
   teamId: string
   teamName: string
-  sponsorLogo: string
   coachName: string
   coachRole: string
   coachBio: string
+  coachKeys: { name: string; role: string; bio: string }
   genderLabel: string
   isManager: boolean
   onEdit: (p: DisplayPlayer) => void
   onRemove: (p: DisplayPlayer) => void
+  onAdd: (teamId: string) => void
 }) {
   const headerReveal = useScrollReveal()
   const coachReveal = useScrollReveal()
   const statsReveal = useScrollReveal()
   const coachImg = useSiteImage('coachRob')
+  const [editingCoach, setEditingCoach] = useState(false)
+
+  // Persist coach fields to the shared label store (manager-only via RLS).
+  const saveCoach = (name: string, role: string, bio: string) => {
+    void saveSiteImageUrl(`${LABEL_PREFIX}${coachKeys.name}`, name)
+    void saveSiteImageUrl(`${LABEL_PREFIX}${coachKeys.role}`, role)
+    void saveSiteImageUrl(`${LABEL_PREFIX}${coachKeys.bio}`, bio)
+  }
 
   // Live player data
   const [players, setPlayersState] = useState<DisplayPlayer[]>([])
@@ -609,18 +700,11 @@ function TeamSection({
           className={`section-reveal ${headerReveal.visible ? 'visible' : ''} flex flex-col md:flex-row md:items-center md:justify-between gap-4`}
         >
           <div>
-            <div className="flex items-center gap-3 mb-2">
-              <img
-                src={sponsorLogo}
-                alt="Sponsor"
-                className="h-10 md:h-12 w-auto"
-              />
-            </div>
             <h2 className="font-oswald font-bold text-2xl md:text-3xl lg:text-4xl text-white tracking-tight">
               {teamName}
             </h2>
             <p className="font-inter text-base text-slate-400 mt-1">
-              {genderLabel === "Men's" ? "Men's" : "Women's"} Senior Team \u00B7 Domino's Division 1
+              {genderLabel === "Men's" ? "Men's" : "Women's"} Senior Team · Domino's Division 1
             </p>
           </div>
           <div className="flex items-center gap-2 bg-amber-400/10 px-4 py-2 rounded-lg self-start md:self-center">
@@ -632,9 +716,18 @@ function TeamSection({
         {/* Coach Card */}
         <div
           ref={coachReveal.ref}
-          className={`section-reveal ${coachReveal.visible ? 'visible' : ''} mt-8 bg-[#1E293B] rounded-xl p-6 flex flex-col sm:flex-row items-start gap-6`}
+          className={`section-reveal ${coachReveal.visible ? 'visible' : ''} relative mt-8 bg-[#1E293B] rounded-xl p-6 flex flex-col sm:flex-row items-start gap-6`}
           style={{ transitionDelay: '100ms' }}
         >
+          {isManager && (
+            <button
+              onClick={() => setEditingCoach(true)}
+              className="absolute top-4 right-4 w-9 h-9 bg-electric-blue/90 rounded-lg flex items-center justify-center text-white hover:bg-electric-blue transition-colors shadow-lg"
+              title="Edit coach"
+            >
+              <Pencil size={15} />
+            </button>
+          )}
           <img
             src={coachImg}
             alt={coachName}
@@ -649,6 +742,16 @@ function TeamSection({
           </div>
         </div>
 
+        {editingCoach && (
+          <CoachEditModal
+            name={coachName}
+            role={coachRole}
+            bio={coachBio}
+            onSave={saveCoach}
+            onClose={() => setEditingCoach(false)}
+          />
+        )}
+
         {/* Player Roster */}
         <div className="mt-12">
           <div className="flex items-center justify-between mb-8">
@@ -656,14 +759,32 @@ function TeamSection({
               <Users className="w-5 h-5 text-electric-blue" />
               Roster
             </h3>
-            <span className="font-inter text-sm text-slate-400">
-              {players.length} Players
-            </span>
+            <div className="flex items-center gap-4">
+              <span className="font-inter text-sm text-slate-400">
+                {players.length} Players
+              </span>
+              {isManager && (
+                <button
+                  onClick={() => onAdd(teamId)}
+                  className="flex items-center gap-1.5 bg-electric-blue text-white font-inter font-semibold text-sm rounded-lg px-4 py-2 hover:bg-blue-400 transition-colors"
+                >
+                  <Plus size={16} /> Add Player
+                </button>
+              )}
+            </div>
           </div>
           {players.length === 0 ? (
             <div className="text-center py-12 text-slate-500">
               <Users className="w-12 h-12 mx-auto mb-3 opacity-40" />
               <p className="font-inter text-sm">No players assigned to this team.</p>
+              {isManager && (
+                <button
+                  onClick={() => onAdd(teamId)}
+                  className="mt-4 inline-flex items-center gap-1.5 bg-electric-blue text-white font-inter font-semibold text-sm rounded-lg px-4 py-2 hover:bg-blue-400 transition-colors"
+                >
+                  <Plus size={16} /> Add Player
+                </button>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
@@ -711,18 +832,28 @@ function TeamSection({
 // ─── Main Page ───
 export default function Teams() {
   const [activeTab, setActiveTab] = useState<'mens' | 'womens'>('mens')
-  const [isManager, setIsManager] = useState(false)
+  // Manager status comes straight from the authenticated Supabase session role,
+  // so edit controls appear only for a real manager and hide instantly on logout.
+  const { role } = useAuth()
+  const isManager = role === 'manager'
+  // Coach text is shared across all visitors via the label store (see useSiteText).
+  const coachMenName = useSiteText('coachRob', 'Rob White')
+  const coachMenRole = useSiteText('coachMenRole', "Head Coach · Men's Team")
+  const coachMenBio = useSiteText(
+    'coachMenBio',
+    'Rob brings over 15 years of coaching experience to Dublin Lions, previously coaching at collegiate level in the US before returning to Ireland.'
+  )
+  const coachWomenName = useSiteText('coachWomenName', 'Haris Sikorskis')
+  const coachWomenRole = useSiteText('coachWomenRole', "Head Coach · Women's Team")
+  const coachWomenBio = useSiteText(
+    'coachWomenBio',
+    "Haris is a former Lithuanian professional player who has brought European tactical discipline to the Dublin Lions women's programme since 2021."
+  )
 
-  // Edit / delete state
+  // Edit / delete / add state
   const [editPlayer, setEditPlayer] = useState<DisplayPlayer | null>(null)
   const [deletePlayer, setDeletePlayer] = useState<DisplayPlayer | null>(null)
-
-  useEffect(() => {
-    setIsManager(checkIsManager())
-    const onStorage = () => setIsManager(checkIsManager())
-    window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
-  }, [])
+  const [addTeamId, setAddTeamId] = useState<string | null>(null)
 
   const scrollToSection = useCallback((tab: 'mens' | 'womens') => {
     setActiveTab(tab)
@@ -749,19 +880,57 @@ export default function Teams() {
     setPlayers(updated)
   }
 
+  // Add handler — creates a new player and assigns them to the given team.
+  const handleAddPlayer = (_id: string, updates: Partial<Player>, newPhoto?: string) => {
+    if (!addTeamId) return
+    const newId = `p-${Date.now()}`
+    const newPlayer: Player = {
+      id: newId,
+      name: updates.name || 'New Player',
+      email: '',
+      phone: '',
+      dob: '',
+      gender: addTeamId === 'women-senior-d1' ? 'Female' : 'Male',
+      teamIds: [addTeamId],
+      position: updates.position || 'Guard',
+      jerseyNumber: updates.jerseyNumber ?? 0,
+      status: 'Pending',
+      paymentPlan: 'None',
+      amount: 0,
+      lastPaymentDate: '',
+      registrationDate: new Date().toISOString().split('T')[0],
+      registeredWithBI: false,
+      photoUrl: newPhoto,
+      ppg: updates.ppg ?? 0,
+      rpg: updates.rpg ?? 0,
+      apg: updates.apg ?? 0,
+      height: updates.height,
+      age: updates.age,
+      since: new Date().getFullYear(),
+    }
+    setPlayers([...getPlayers(), newPlayer])
+
+    // Add the new player to the team's roster list too.
+    const allTeams = getTeams()
+    setTeams(allTeams.map((t) => (t.id === addTeamId ? { ...t, players: [...t.players, newId] } : t)))
+  }
+
+  // A blank template used to open the modal in "add" mode.
+  const blankPlayer: DisplayPlayer = {
+    id: '', name: '', number: 0, position: 'Guard', height: "6'0\"", age: 21,
+    since: new Date().getFullYear(), nationality: 'IRL', image: '',
+    ppg: 0, rpg: 0, apg: 0,
+    clubPlayer: {
+      id: '', name: '', email: '', phone: '', dob: '', gender: 'Male',
+      teamIds: [], position: 'Guard', jerseyNumber: 0, status: 'Pending',
+      paymentPlan: 'None', amount: 0, lastPaymentDate: '', registrationDate: '',
+      registeredWithBI: false,
+    },
+  }
+
   // Remove handler
   const handleRemovePlayer = (id: string) => {
-    // Remove from players
-    const allPlayers = getPlayers()
-    setPlayers(allPlayers.filter((p) => p.id !== id))
-
-    // Remove from team rosters
-    const allTeams = getTeams()
-    const updatedTeams = allTeams.map((t) => ({
-      ...t,
-      players: t.players.filter((pid) => pid !== id),
-    }))
-    setTeams(updatedTeams)
+    removePlayerFromClub(id)
   }
 
   return (
@@ -813,14 +982,15 @@ export default function Teams() {
         <TeamSection
           teamId="men-senior-d1"
           teamName="JOELS DUBLIN LIONS"
-          sponsorLogo="/sponsor-joels.png"
-          coachName="Rob White"
-          coachRole="Head Coach \u00B7 Men's Team"
-          coachBio="Rob brings over 15 years of coaching experience to Dublin Lions, previously coaching at collegiate level in the US before returning to Ireland."
+          coachName={coachMenName}
+          coachRole={coachMenRole}
+          coachBio={coachMenBio}
+          coachKeys={{ name: 'coachRob', role: 'coachMenRole', bio: 'coachMenBio' }}
           genderLabel="Men's"
           isManager={isManager}
           onEdit={setEditPlayer}
           onRemove={setDeletePlayer}
+          onAdd={setAddTeamId}
         />
       </div>
 
@@ -832,14 +1002,15 @@ export default function Teams() {
         <TeamSection
           teamId="women-senior-d1"
           teamName="ABBEY SEALS DUBLIN LIONS"
-          sponsorLogo="/sponsor-abbey-seals.png"
-          coachName="Haris Sikorskis"
-          coachRole="Head Coach \u00B7 Women's Team"
-          coachBio="Haris is a former Lithuanian professional player who has brought European tactical discipline to the Dublin Lions women's programme since 2021."
+          coachName={coachWomenName}
+          coachRole={coachWomenRole}
+          coachBio={coachWomenBio}
+          coachKeys={{ name: 'coachWomenName', role: 'coachWomenRole', bio: 'coachWomenBio' }}
           genderLabel="Women's"
           isManager={isManager}
           onEdit={setEditPlayer}
           onRemove={setDeletePlayer}
+          onAdd={setAddTeamId}
         />
       </div>
 
@@ -851,7 +1022,7 @@ export default function Teams() {
           </h2>
           <p className="font-inter text-lg text-slate-300 max-w-2xl mx-auto mt-6 leading-relaxed">
             We're always looking for passionate players to join the Pride. Whether you're an
-            experienced Division 1 player or an ambitious amateur ready to step up \u2014 get in
+            experienced Division 1 player or an ambitious amateur ready to step up — get in
             touch and come to a training session.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-10">
@@ -877,6 +1048,14 @@ export default function Teams() {
           player={editPlayer}
           onSave={handleSavePlayer}
           onClose={() => setEditPlayer(null)}
+        />
+      )}
+      {addTeamId && (
+        <EditPlayerModal
+          isNew
+          player={blankPlayer}
+          onSave={handleAddPlayer}
+          onClose={() => setAddTeamId(null)}
         />
       )}
       {deletePlayer && (

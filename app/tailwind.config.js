@@ -5,12 +5,47 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        "deep-navy": "#0A1628",
-        "electric-blue": "#3B82F6",
-        "accent-gold": "#FBBF24",
-        "soft-white": "#F8FAFC",
-        "muted-navy": "#1E293B",
-        "darker-navy": "#0F172A",
+        // Dublin Lions (Clondalkin) authentic club identity: electric blue + white
+        // on a cinematic near-black navy. The former gold accent is remapped to
+        // Lions blue below (see `amber`) so the whole app shares ONE accent hue.
+        "deep-navy": "#070C16",
+        "electric-blue": "#2E6BFF",
+        "accent-gold": "#2E6BFF",
+        "soft-white": "#F5F8FF",
+        "muted-navy": "#111C30",
+        "darker-navy": "#0B1424",
+        lions: {
+          50: "#EEF4FF",
+          100: "#D9E6FF",
+          200: "#B6CCFF",
+          300: "#8AACFF",
+          400: "#5B87FF",
+          500: "#2E6BFF",
+          600: "#1B52E6",
+          700: "#163FB4",
+          800: "#16368C",
+          900: "#16306E",
+        },
+        // Semantic warning stays a real amber (the `amber` scale itself is
+        // repurposed as the Lions-blue accent, so warnings use `warn-*`).
+        warn: {
+          400: "#FBBF24",
+          500: "#F59E0B",
+          600: "#D97706",
+        },
+        // Accent remap: every existing `amber-*` utility now renders Lions blue.
+        amber: {
+          50: "#EEF4FF",
+          100: "#D9E6FF",
+          200: "#B6CCFF",
+          300: "#8AACFF",
+          400: "#5B87FF",
+          500: "#2E6BFF",
+          600: "#1B52E6",
+          700: "#163FB4",
+          800: "#16368C",
+          900: "#16306E",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -56,8 +91,13 @@ module.exports = {
         },
       },
       fontFamily: {
-        oswald: ['Oswald', 'Impact', "Haettenschweiler", "'Arial Narrow Bold'", 'sans-serif'],
-        inter: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        // Type system remap for the from-scratch redesign. Class names
+        // (`font-oswald`, `font-inter`) are kept stable to avoid churn; the
+        // stacks now resolve to the new pairing.
+        oswald: ['Space Grotesk', 'system-ui', 'sans-serif'],
+        inter: ['Manrope', 'system-ui', '-apple-system', 'sans-serif'],
+        display: ['Space Grotesk', 'system-ui', 'sans-serif'],
+        body: ['Manrope', 'system-ui', 'sans-serif'],
       },
       borderRadius: {
         xl: "calc(var(--radius) + 4px)",

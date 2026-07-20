@@ -1,0 +1,11 @@
+.DS_Store
+.claude/
+.agents/
+.cursor/
+skills-lock.json
+app/.claude/
+app/dist/
+app/node_modules/
+
+# Broken local test artifact — use hero-basketball.mp4 instead
+app/public/hero-basketball-youth-test.mp4

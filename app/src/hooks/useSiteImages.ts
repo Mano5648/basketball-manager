@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { fetchSiteImages } from '@/lib/siteImages'
 
 // Resolve a public-folder asset to a URL that includes Vite's base path.
 // Works under both root (`/`) and subdir (`/basketball-manager/`) deployments.
@@ -7,6 +8,8 @@ export function asset(p: string): string {
   // pass through data URIs / absolute URLs / blob URLs unchanged
   if (/^(data:|blob:|https?:)/i.test(p)) return p
   const base = import.meta.env.BASE_URL || '/'
+  // Already base-prefixed — don't double up (e.g. "/basketball-manager/hero.jpg").
+  if (p.startsWith(base)) return p
   const clean = p.startsWith('/') ? p.slice(1) : p
   return base.endsWith('/') ? base + clean : base + '/' + clean
 }
@@ -30,6 +33,8 @@ export const defaultImageMap: Record<string, { path: string; title: string; used
   coachRob: { path: asset('coach-rob-white.jpg'), title: "Head Coach: Rob White", usedOn: 'Teams page coach profile' },
   venue: { path: asset('venue-colaiste-bride.jpg'), title: 'Venue: Coláiste Bríde', usedOn: 'Contact page venue section' },
   logo: { path: asset('logo-lions-emblem.png'), title: 'Club Logo', usedOn: 'Navbar, Footer, Login pages, Dashboard sidebar' },
+  sponsorJoels: { path: asset('sponsor-joels.png'), title: "Sponsor: Joel's", usedOn: "Men's team header, Teams page, Footer sponsors bar" },
+  sponsorAbbey: { path: asset('sponsor-abbey-seals.png'), title: 'Sponsor: Abbey Seals', usedOn: "Women's team header, Teams page, Footer sponsors bar" },
 }
 
 // Helper: get current image URL for a key
@@ -38,7 +43,7 @@ export function getImageUrl(key: string): string {
     const saved = localStorage.getItem('dlbc_images')
     if (saved) {
       const map = JSON.parse(saved)
-      if (map[key]) return map[key]
+      if (map[key]) return asset(map[key])
     }
   } catch { /* ignore */ }
   return defaultImageMap[key]?.path || ''
@@ -65,6 +70,10 @@ export function useSiteImages() {
     window.addEventListener('storage', handler)
     // Also listen for custom update event from same-tab changes
     window.addEventListener('dlbc-images-updated', handler)
+    // Hydrate the shared image map from Supabase (deduped across hook instances).
+    // fetchSiteImages writes to localStorage + dispatches the update event on success,
+    // so the handler above applies the result — no extra setState needed here.
+    fetchSiteImages().catch(() => { /* offline / not configured — cache stands */ })
     return () => {
       window.removeEventListener('storage', handler)
       window.removeEventListener('dlbc-images-updated', handler)
@@ -90,11 +99,23 @@ export function useSiteImages() {
     })
   }, [])
 
-  return { images, setImages, setImage, getUrl: (key: string) => images[key] || defaultImageMap[key]?.path || '' }
+  return { images, setImages, setImage, getUrl: (key: string) => asset(images[key] || defaultImageMap[key]?.path || '') }
 }
 
 // Hook: single image URL
 export function useSiteImage(key: string): string {
   const { getUrl } = useSiteImages()
   return getUrl(key)
+}
+
+// Editable text labels (e.g. player / coach names) are stored in the same
+// shared map under a "label:" prefix, so they sync to every visitor exactly
+// like images do. `key` here is the image key the label belongs to.
+export const LABEL_PREFIX = 'label:'
+
+// Hook: a manager-editable text label with a bundled fallback.
+export function useSiteText(key: string, fallback: string): string {
+  const { images } = useSiteImages()
+  const v = images[`${LABEL_PREFIX}${key}`]
+  return typeof v === 'string' && v.trim() ? v : fallback
 }

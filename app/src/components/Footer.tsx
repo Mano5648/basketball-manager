@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom'
 import { Instagram, Facebook, Twitter, MapPin, Mail, User } from 'lucide-react'
-import { useSiteImage, asset } from '@/hooks/useSiteImages'
+import { useSiteImage } from '@/hooks/useSiteImages'
 
 export default function Footer() {
   const logoUrl = useSiteImage('logo')
+  const sponsorJoels = useSiteImage('sponsorJoels')
+  const sponsorAbbey = useSiteImage('sponsorAbbey')
 
   return (
     <footer className="bg-darker-navy border-t border-white/5">
@@ -123,17 +125,13 @@ export default function Footer() {
           <p className="font-inter font-semibold text-xs uppercase tracking-widest text-slate-500 text-center mb-4">
             PROUDLY SPONSORED BY
           </p>
-          <div className="flex flex-wrap items-center justify-center gap-8">
-            <img
-              src={asset('sponsor-joels.png')}
-              alt="JOELS"
-              className="h-8 w-auto grayscale opacity-70 hover:opacity-100 transition-opacity duration-200"
-            />
-            <img
-              src={asset('sponsor-abbey-seals.png')}
-              alt="Abbey Seals"
-              className="h-8 w-auto grayscale opacity-70 hover:opacity-100 transition-opacity duration-200"
-            />
+          <div className="flex flex-wrap items-center justify-center gap-6">
+            <div className="bg-white rounded-md px-4 py-2.5 flex items-center opacity-90 hover:opacity-100 transition-opacity duration-200">
+              <img src={sponsorJoels} alt="JOELS" className="h-7 w-auto" />
+            </div>
+            <div className="bg-white rounded-md px-4 py-2.5 flex items-center opacity-90 hover:opacity-100 transition-opacity duration-200">
+              <img src={sponsorAbbey} alt="Abbey Seals" className="h-7 w-auto" />
+            </div>
           </div>
         </div>
 

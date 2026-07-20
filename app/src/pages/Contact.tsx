@@ -18,6 +18,9 @@ import {
   Loader2,
   ChevronDown,
 } from 'lucide-react'
+import { HoneypotField, PrivacyConsentField } from '@/components/security/PrivacyConsentField'
+import { TurnstileWidget } from '@/components/security/TurnstileWidget'
+import { validatePublicFormSecurity } from '@/lib/security'
 
 // ─── Validation Schema ───
 const contactSchema = z.object({
@@ -166,6 +169,11 @@ function FAQAccordion() {
 // ─── Main Page ───
 export default function Contact() {
   const [submitState, setSubmitState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [submitError, setSubmitError] = useState('')
+  const [formStartedAt] = useState(() => Date.now())
+  const [honeypot, setHoneypot] = useState('')
+  const [privacyAccepted, setPrivacyAccepted] = useState(false)
+  const [turnstileToken, setTurnstileToken] = useState('')
   const venueImg = useSiteImage('venue')
 
   const {
@@ -178,14 +186,31 @@ export default function Contact() {
   })
 
   const onSubmit = async (data: ContactFormData) => {
+    setSubmitError('')
+    const security = validatePublicFormSecurity({
+      honeypot,
+      formStartedAt,
+      rateLimitKey: `contact:${data.email.toLowerCase()}`,
+      privacyAccepted,
+      turnstileToken,
+      maxAttempts: 5,
+    })
+    if (!security.ok) {
+      setSubmitState('error')
+      setSubmitError(security.error)
+      return
+    }
+
     setSubmitState('loading')
     // Simulate API call
     await new Promise((resolve) => setTimeout(resolve, 1500))
     console.log('Form submitted:', data)
     setSubmitState('success')
+    setTurnstileToken('')
     setTimeout(() => {
       setSubmitState('idle')
       reset()
+      setPrivacyAccepted(false)
     }, 3000)
   }
 
@@ -256,7 +281,8 @@ export default function Contact() {
                     Fill out the form below and we\u2019ll get back to you within 24 hours.
                   </p>
 
-                  <form onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-5">
+                  <form onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-5 relative">
+                    <HoneypotField value={honeypot} onChange={setHoneypot} />
                     {/* Name */}
                     <div>
                       <label className="font-inter font-medium text-sm text-slate-700 block mb-2">
@@ -362,6 +388,16 @@ export default function Contact() {
                         </p>
                       )}
                     </div>
+
+                    <PrivacyConsentField checked={privacyAccepted} onChange={setPrivacyAccepted} tone="light" />
+                    <TurnstileWidget onVerify={setTurnstileToken} onExpire={() => setTurnstileToken('')} theme="light" />
+
+                    {submitError && (
+                      <p className="flex items-center gap-1 font-inter text-sm text-red-500">
+                        <AlertCircle className="w-4 h-4" />
+                        {submitError}
+                      </p>
+                    )}
 
                     {/* Submit */}
                     <button

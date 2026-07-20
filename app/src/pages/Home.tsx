@@ -1,173 +1,57 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { useSiteImage, asset } from '@/hooks/useSiteImages'
+import { motion, useReducedMotion } from 'motion/react'
+import { useSiteImage, useSiteText } from '@/hooks/useSiteImages'
+import { useScrollReveal } from '@/hooks/useScrollReveal'
+import HeroBackground from '@/components/HeroBackground'
+import HeroHeadline from '@/components/HeroHeadline'
 import {
-  Trophy, Users, TrendingUp, Instagram, MapPin, Mail,
+  Instagram, MapPin, Mail,
   User, Maximize2, ChevronLeft, ChevronRight, X, Check,
   Ticket, CreditCard, Banknote, CheckCircle,
 } from 'lucide-react'
 import {
   type TicketPrice,
   getPayments, setPayments, type Payment, addTicketPurchase,
-  buildStripeCheckoutUrl,
+  recordGuestCardPayment,
   getFixtures, type ClubFixture,
 } from '@/lib/clubData'
-
-/* ─────────────────────── Scroll Reveal Hook ─────────────────────── */
-function useScrollReveal(threshold = 0.15) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [visible, setVisible] = useState(false)
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setVisible(true)
-          observer.unobserve(el)
-        }
-      },
-      { threshold }
-    )
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [threshold])
-
-  return { ref, visible }
-}
-
+import { PaymentCheckout } from '@/components/PaymentCheckout'
+import { redirectToStripeCheckout } from '@/lib/stripeCheckout'
+import { getLoggedInContact } from '@/lib/authUser'
+import { sendPurchaseConfirmationEmail } from '@/lib/purchaseEmail'
+import { toAbsoluteImageUrl } from '@/lib/imageUrl'
+import { PrivacyConsentField } from '@/components/security/PrivacyConsentField'
+import { TurnstileWidget } from '@/components/security/TurnstileWidget'
+import { validatePublicFormSecurity } from '@/lib/security'
 /* ─────────────────────── Hero Section ─────────────────────── */
 function HeroSection() {
-  const [loaded, setLoaded] = useState(false)
-  const heroImg = useSiteImage('hero')
-
-  useEffect(() => {
-    const t = setTimeout(() => setLoaded(true), 100)
-    return () => clearTimeout(t)
-  }, [])
+  const reduceMotion = useReducedMotion()
 
   return (
-    <section className="relative min-h-[100dvh] flex items-end overflow-hidden">
-      {/* Background Image */}
-      <div
-        className={`absolute inset-0 transition-all duration-1200 ${
-          loaded ? 'opacity-100 scale-100' : 'opacity-0 scale-105'
-        }`}
+    <section className="relative min-h-[100dvh] flex items-center justify-center overflow-hidden">
+      <HeroBackground />
+
+      <div className="absolute inset-0 ldf-hero-overlay pointer-events-none" />
+
+      <div className="relative z-10 w-full max-w-4xl mx-auto px-6 md:px-10 py-24 text-center">
+        <HeroHeadline />
+      </div>
+
+      <motion.div
+        className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-2 text-white/40"
+        initial={reduceMotion ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 1.1, duration: 0.6 }}
+        aria-hidden
       >
-        <img
-          src={heroImg}
-          alt="Dublin Lions team celebration"
-          className="w-full h-full object-cover animate-ken-burns"
+        <span className="font-inter text-[10px] uppercase tracking-[0.25em]">Scroll</span>
+        <motion.span
+          className="block h-8 w-px bg-gradient-to-b from-white/50 to-transparent"
+          animate={reduceMotion ? {} : { scaleY: [1, 0.4, 1], opacity: [0.5, 1, 0.5] }}
+          transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
         />
-      </div>
-
-      {/* Gradient Overlay */}
-      <div
-        className={`absolute inset-0 hero-gradient-overlay transition-opacity duration-800 ${
-          loaded ? 'opacity-100' : 'opacity-0'
-        }`}
-      />
-
-      {/* Animated Gradient Wash */}
-      <div className="absolute inset-0 animated-gradient-wash" />
-
-      {/* Content */}
-      <div className="relative z-10 w-full px-4 md:px-8 lg:px-16 pb-48 sm:pb-40 md:pb-48 pt-32">
-        <div className="max-w-5xl mx-auto md:mx-0">
-          <h1
-            className={`font-oswald font-bold text-white leading-[0.9] tracking-[-0.03em] text-center md:text-left transition-all duration-800 ${
-              loaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[60px]'
-            }`}
-            style={{
-              fontSize: 'clamp(3rem, 8vw, 7rem)',
-              transitionDelay: '400ms',
-            }}
-          >
-            DUBLIN LIONS
-          </h1>
-          <h1
-            className={`font-oswald font-bold text-white leading-[0.9] tracking-[-0.03em] text-center md:text-left transition-all duration-800 ${
-              loaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[60px]'
-            }`}
-            style={{
-              fontSize: 'clamp(3rem, 8vw, 7rem)',
-              transitionDelay: '500ms',
-            }}
-          >
-            BASKETBALL CLUB
-          </h1>
-          <p
-            className={`font-inter text-lg text-slate-300 max-w-xl mt-6 text-center md:text-left transition-all duration-600 ${
-              loaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-[30px]'
-            }`}
-            style={{ transitionDelay: '700ms' }}
-          >
-            Pride of Dublin. Competing in Irish Domino&apos;s Division 1 since 2018.
-          </p>
-          <div
-            className={`flex flex-col sm:flex-row gap-4 mt-10 items-center md:items-start transition-all duration-500 ${
-              loaded ? 'opacity-100 scale-100' : 'opacity-0 scale-90'
-            }`}
-            style={{ transitionDelay: '900ms' }}
-          >
-            <Link
-              to="/player/login"
-              className="bg-electric-blue text-white font-inter font-semibold text-base uppercase tracking-widest px-8 py-4 rounded hover:bg-blue-400 hover:scale-[1.03] hover:shadow-lg transition-all duration-150 w-full sm:w-auto text-center"
-            >
-              Become a Member
-            </Link>
-            <Link
-              to="/fixtures"
-              className="border border-white/30 text-white font-inter font-semibold text-base uppercase tracking-widest px-8 py-4 rounded hover:bg-white/10 hover:border-white/40 transition-all duration-200 w-full sm:w-auto text-center"
-            >
-              View Fixtures
-            </Link>
-          </div>
-        </div>
-      </div>
-
-      {/* Hero Stats Row */}
-      <div
-        className={`absolute bottom-0 left-0 right-0 z-10 transition-all duration-600 ${
-          loaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-5'
-        }`}
-        style={{
-          transitionDelay: '1100ms',
-          background: 'linear-gradient(to top, rgba(10,22,40,1) 0%, transparent 100%)',
-        }}
-      >
-        <div className="border-t border-white/10 py-8 px-4 md:px-12 max-w-7xl mx-auto">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8">
-            {[
-              { value: '2018', label: 'Founded' },
-              { value: '2', label: 'Senior Teams' },
-              { value: 'Div 1', label: 'Current League' },
-              { value: 'Dublin', label: 'Home City' },
-            ].map((stat, i) => (
-              <div
-                key={stat.label}
-                className="flex flex-col items-center text-center transition-all duration-600"
-                style={{
-                  opacity: loaded ? 1 : 0,
-                  transform: loaded ? 'translateY(0)' : 'translateY(20px)',
-                  transitionDelay: `${1100 + i * 100}ms`,
-                }}
-              >
-                <span
-                  className="font-oswald font-bold text-accent-gold"
-                  style={{ fontSize: 'clamp(1.5rem, 3vw, 2.5rem)' }}
-                >
-                  {stat.value}
-                </span>
-                <span className="font-inter font-semibold text-xs uppercase tracking-widest text-slate-400 mt-1">
-                  {stat.label}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      </motion.div>
     </section>
   )
 }
@@ -176,105 +60,119 @@ function HeroSection() {
 function AboutSection() {
   const { ref, visible } = useScrollReveal()
   const { ref: imgRef, visible: imgVisible } = useScrollReveal()
-  const { ref: cardsRef, visible: cardsVisible } = useScrollReveal()
   const aboutImg = useSiteImage('about')
 
+  const workItems = [
+    "Senior men's and women's competition",
+    'Youth development pathways',
+    'Community outreach and local partnerships',
+    'Match-day experiences for families and fans',
+  ]
+
   return (
-    <section id="about" className="bg-soft-white py-24 md:py-32">
+    <section id="about" className="site-light py-24 md:py-36">
       <div ref={ref} className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-start">
-          {/* Left Column — Text */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-14 lg:gap-20 items-center">
           <div
-            className={`transition-all duration-600 ${
-              visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
-            }`}
+            className={`scroll-reveal-left ${visible ? 'scroll-reveal-left--in' : ''}`}
           >
-            <span className="font-inter font-semibold text-xs uppercase tracking-widest text-electric-blue">
-              ABOUT US
-            </span>
+            <h4 className="font-inter text-sm font-semibold text-lions-600 mb-4">About us</h4>
             <h2
-              className="font-oswald font-bold text-deep-navy mt-4"
-              style={{
-                fontSize: 'clamp(2.5rem, 5vw, 4rem)',
-                lineHeight: 0.95,
-                letterSpacing: '-0.02em',
-              }}
+              className="ldf-section-title text-slate-900"
+              style={{ fontSize: 'clamp(2rem, 4vw, 3.25rem)' }}
             >
-              Built on Pride,<br />Driven by Passion
+              Built on pride, driven by passion
             </h2>
-            <div className="mt-6 space-y-4 font-inter text-base text-slate-700 leading-relaxed">
+            <div className="mt-6 space-y-5 font-inter text-base text-slate-600 leading-relaxed max-w-xl">
               <p>
-                Founded in 2018, Dublin Lions Basketball Club has grown from a small group of passionate players into one of Dublin&apos;s most exciting basketball organisations. We proudly field two senior teams — JOELS Dublin Lions (men) and Abbey Seals Dublin Lions (women) — both competing at the highest level of Irish amateur basketball.
+                Founded in 2018, Dublin Lions Basketball Club has grown from a small group of passionate players into one of Dublin&apos;s most exciting basketball organisations. We field two senior teams competing at the highest level of Irish amateur basketball.
               </p>
               <p>
-                Our home is Coláiste Bríde in Clondalkin, Dublin 22, where we train, play, and build the next generation of Irish basketball talent. Under the guidance of Head Coach Rob White (men) and Haris Sikorskis (women), we combine professional coaching standards with a community-first ethos.
-              </p>
-              <p>
-                Whether you&apos;re an aspiring player, a dedicated supporter, or a local business looking to partner with grassroots sport — there&apos;s a place for you in the Pride.
+                Under Head Coach Rob White (men) and Haris Sikorskis (women), we combine professional coaching standards with a community-first ethos. Whether you want to play, support, or partner with grassroots sport, there is a place for you in the Pride.
               </p>
             </div>
-            <Link
-              to="/teams"
-              className="inline-block mt-8 border-2 border-electric-blue text-deep-navy font-inter font-semibold text-base uppercase tracking-widest px-8 py-4 rounded hover:bg-electric-blue hover:text-white transition-all duration-200"
-            >
-              Meet the Teams
+            <div className="mt-8">
+              <p className="font-inter text-sm font-semibold text-slate-900 mb-3">Our work includes:</p>
+              <ul className="space-y-2 font-inter text-base text-slate-600">
+                {workItems.map((item) => (
+                  <li key={item} className="flex items-start gap-2">
+                    <span className="mt-2 h-1.5 w-1.5 rounded-full bg-lions-500 shrink-0" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <Link to="/teams" className="ldf-btn-primary-dark mt-10">
+              Meet the teams
             </Link>
           </div>
 
-          {/* Right Column — Image + Values */}
-          <div className="space-y-6">
-            <div
-              ref={imgRef}
-              className={`transition-all duration-600 ${
-                imgVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
-              }`}
-              style={{ transitionDelay: '150ms' }}
-            >
-              <img
-                src={aboutImg}
-                alt="Dublin Lions team huddle"
-                className="w-full rounded-lg shadow-xl object-cover aspect-[4/3]"
-              />
-            </div>
-            <div
-              ref={cardsRef}
-              className="grid grid-cols-1 sm:grid-cols-3 gap-4"
-            >
-              {[
-                {
-                  icon: Trophy,
-                  title: 'EXCELLENCE',
-                  body: 'Professional coaching and elite competition standards',
-                },
-                {
-                  icon: Users,
-                  title: 'COMMUNITY',
-                  body: 'Grassroots focus with deep local roots in Dublin 22',
-                },
-                {
-                  icon: TrendingUp,
-                  title: 'GROWTH',
-                  body: 'Player development from amateur to Division 1',
-                },
-              ].map((card, i) => (
-                <div
-                  key={card.title}
-                  className={`bg-white p-4 rounded-lg shadow-md transition-all duration-600 ${
-                    cardsVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
-                  }`}
-                  style={{ transitionDelay: `${300 + i * 100}ms` }}
-                >
-                  <card.icon size={24} className="text-electric-blue mb-2" />
-                  <h4 className="font-inter font-semibold text-sm text-deep-navy">
-                    {card.title}
-                  </h4>
-                  <p className="font-inter text-sm text-slate-600 mt-1">
-                    {card.body}
-                  </p>
-                </div>
-              ))}
-            </div>
+          <div
+            ref={imgRef}
+            className={`scroll-reveal-right ${imgVisible ? 'scroll-reveal-right--in' : ''}`}
+            style={{ transitionDelay: '150ms' }}
+          >
+            <img
+              src={aboutImg}
+              alt="Dublin Lions team huddle"
+              className="w-full rounded-[2rem] object-cover aspect-[4/5] shadow-[0_24px_80px_-24px_rgba(11,18,32,0.35)]"
+            />
           </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/* ─────────────────────── Pathways (LDF-style) ─────────────────────── */
+function PathwaysSection() {
+  const { ref, visible } = useScrollReveal()
+
+  const paths = [
+    {
+      num: '01',
+      title: 'Become a member',
+      body: 'Join the squad, pay fees, check fixtures, and stay match-ready through the player portal.',
+      cta: 'Player login',
+      href: '/player/login',
+    },
+    {
+      num: '02',
+      title: 'Support on game night',
+      body: 'Follow the season, buy tickets for home fixtures, and cheer on the Pride from the stands.',
+      cta: 'View fixtures',
+      href: '/fixtures',
+    },
+  ]
+
+  return (
+    <section className="site-light border-t border-slate-200/80 py-24 md:py-32">
+      <div ref={ref} className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12">
+        <h2
+          className={`ldf-section-title text-slate-900 text-center mb-14 scroll-reveal-up ${visible ? 'scroll-reveal-up--in' : ''}`}
+          style={{ fontSize: 'clamp(1.75rem, 3.5vw, 2.75rem)' }}
+        >
+          Two ways to get involved
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
+          {paths.map((path, i) => (
+            <div
+              key={path.num}
+              className={`rounded-[2rem] bg-white border border-slate-200/80 p-8 md:p-10 flex flex-col scroll-reveal-up ${visible ? 'scroll-reveal-up--in' : ''}`}
+              style={{ transitionDelay: `${i * 120}ms` }}
+            >
+              <span className="font-inter text-sm font-medium text-lions-600">{path.num}</span>
+              <h3 className="ldf-section-title text-slate-900 mt-3 text-2xl">{path.title}</h3>
+              <p className="font-inter text-base text-slate-600 leading-relaxed mt-4 flex-1">{path.body}</p>
+              <Link
+                to={path.href}
+                className="mt-8 inline-flex items-center gap-2 font-inter text-sm font-semibold text-lions-600 hover:text-lions-700 transition-colors"
+              >
+                {path.cta}
+                <ChevronRight size={16} />
+              </Link>
+            </div>
+          ))}
         </div>
       </div>
     </section>
@@ -297,18 +195,24 @@ function TeamsSection() {
   const match5 = useSiteImage('match5')
   const match6 = useSiteImage('match6')
   const match7 = useSiteImage('match7')
+  const nameKevin = useSiteText('playerKevin', 'Kevin Anyanwu')
+  const nameTiago = useSiteText('playerTiago', 'Tiago Pereira')
+  const nameTara = useSiteText('playerTara', 'Tara Nevin')
+  const nameEmily = useSiteText('playerEmily', 'Emily Smyth')
+  const coachMenName = useSiteText('coachRob', 'Rob White')
+  const coachWomenName = useSiteText('coachWomenName', 'Haris Sikorskis')
 
   const menPlayers = [
-    { name: 'Kevin Anyanwu', img: playerKevin },
-    { name: 'Tiago Pereira', img: playerTiago },
+    { name: nameKevin, img: playerKevin },
+    { name: nameTiago, img: playerTiago },
     { name: 'Russ Marr', img: match1 },
     { name: 'Ignacio Folgueiras', img: match2 },
     { name: 'Tieran Howe', img: match3 },
   ]
 
   const womenPlayers = [
-    { name: 'Tara Nevin', img: playerTara },
-    { name: 'Emily Smyth', img: playerEmily },
+    { name: nameTara, img: playerTara },
+    { name: nameEmily, img: playerEmily },
     { name: 'Sinead Keane', img: match5 },
     { name: 'Makenzie Helms', img: match6 },
     { name: 'Rachel Brennan', img: match7 },
@@ -316,29 +220,19 @@ function TeamsSection() {
 
   return (
     <>
-      {/* Transition Strip */}
-      <div className="h-16 section-transition-light-to-dark" />
-      <section id="teams" className="bg-deep-navy py-24 md:py-32">
+      <div className="h-10 bg-[#F4F6FA]" />
+      <section id="teams" className="site-dark py-24 md:py-32">
         <div className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12">
-          {/* Section Header */}
           <div
             ref={headerReveal.ref}
-            className={`text-center mb-16 transition-all duration-600 ${
-              headerReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
-            }`}
+            className={`text-center mb-16 scroll-reveal-up ${headerReveal.visible ? 'scroll-reveal-up--in' : ''}`}
           >
-            <span className="font-inter font-semibold text-xs uppercase tracking-widest text-electric-blue">
-              OUR TEAMS
-            </span>
+            <h4 className="font-inter text-sm font-semibold text-lions-400">Our teams</h4>
             <h2
-              className="font-oswald font-bold text-white mt-4"
-              style={{
-                fontSize: 'clamp(2.5rem, 5vw, 4rem)',
-                lineHeight: 0.95,
-                letterSpacing: '-0.02em',
-              }}
+              className="ldf-section-title text-white mt-3"
+              style={{ fontSize: 'clamp(2rem, 4vw, 3.25rem)' }}
             >
-              Two Teams.<br />One Pride.
+              Two teams, one pride
             </h2>
             <p className="font-inter text-lg text-slate-300 max-w-xl mx-auto mt-4">
               Meet the players and coaches representing Dublin Lions in Irish Domino&apos;s Division 1.
@@ -348,11 +242,6 @@ function TeamsSection() {
           {/* Men's Team */}
           <div ref={mensReveal.ref} className="mb-16">
             <div className="flex items-center gap-4 mb-6">
-              <img
-                src={asset('sponsor-joels.png')}
-                alt="JOELS"
-                className="h-10 w-auto brightness-0 invert opacity-90"
-              />
               <div>
                 <h3 className="font-oswald font-bold text-2xl text-white">
                   JOELS DUBLIN LIONS
@@ -363,14 +252,14 @@ function TeamsSection() {
               </div>
             </div>
             <p className="font-inter text-sm text-slate-400 mb-6">
-              Head Coach: Rob White
+              Head Coach: {coachMenName}
             </p>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 md:gap-6">
               {menPlayers.map((player, i) => (
                 <div
                   key={player.name}
-                  className={`group bg-muted-navy rounded-lg overflow-hidden transition-all duration-300 hover:-translate-y-2 hover:shadow-2xl ${
-                    mensReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
+                  className={`group bg-white/[0.04] border border-white/10 rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-lions-400/30 scroll-reveal-up ${
+                    mensReveal.visible ? 'scroll-reveal-up--in' : ''
                   }`}
                   style={{ transitionDelay: `${i * 100}ms` }}
                 >
@@ -397,11 +286,6 @@ function TeamsSection() {
           {/* Women's Team */}
           <div ref={womensReveal.ref}>
             <div className="flex items-center gap-4 mb-6">
-              <img
-                src={asset('sponsor-abbey-seals.png')}
-                alt="Abbey Seals"
-                className="h-10 w-auto brightness-0 invert opacity-90"
-              />
               <div>
                 <h3 className="font-oswald font-bold text-2xl text-white">
                   ABBEY SEALS DUBLIN LIONS
@@ -412,14 +296,14 @@ function TeamsSection() {
               </div>
             </div>
             <p className="font-inter text-sm text-slate-400 mb-6">
-              Head Coach: Haris Sikorskis
+              Head Coach: {coachWomenName}
             </p>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 md:gap-6">
               {womenPlayers.map((player, i) => (
                 <div
                   key={player.name}
-                  className={`group bg-muted-navy rounded-lg overflow-hidden transition-all duration-300 hover:-translate-y-2 hover:shadow-2xl ${
-                    womensReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
+                  className={`group bg-white/[0.04] border border-white/10 rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-lions-400/30 scroll-reveal-up ${
+                    womensReveal.visible ? 'scroll-reveal-up--in' : ''
                   }`}
                   style={{ transitionDelay: `${i * 100}ms` }}
                 >
@@ -518,28 +402,22 @@ function ScheduleSection() {
 
   return (
     <>
-      <div className="h-16 section-transition-dark-to-light" />
-      <section id="schedule" className="bg-soft-white py-20 md:py-28">
+      <div className="h-10" />
+      <section id="schedule" className="site-light py-20 md:py-28">
         <div className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12">
           {/* Header */}
           <div
             ref={headerReveal.ref}
-            className={`mb-10 transition-all duration-600 ${
-              headerReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
-            }`}
+            className={`mb-10 scroll-reveal-up ${headerReveal.visible ? 'scroll-reveal-up--in' : ''}`}
           >
-            <span className="font-inter font-semibold text-xs uppercase tracking-widest text-electric-blue">
-              FIXTURES & RESULTS
+            <span className="font-inter text-sm font-semibold text-lions-600">
+              Fixtures & results
             </span>
             <h2
-              className="font-oswald font-bold text-deep-navy mt-4"
-              style={{
-                fontSize: 'clamp(2.5rem, 5vw, 4rem)',
-                lineHeight: 0.95,
-                letterSpacing: '-0.02em',
-              }}
+              className="ldf-section-title text-slate-900 mt-2"
+              style={{ fontSize: 'clamp(2rem, 4vw, 3.25rem)' }}
             >
-              This Season&apos;s Battles
+              This season&apos;s battles
             </h2>
             <div className="flex gap-6 mt-6 border-b border-slate-200">
               {(
@@ -553,13 +431,13 @@ function ScheduleSection() {
                   onClick={() => setActiveTab(tab.key)}
                   className={`relative font-inter font-semibold text-sm pb-3 transition-colors duration-200 ${
                     activeTab === tab.key
-                      ? 'text-deep-navy'
+                      ? 'text-slate-900'
                       : 'text-slate-400 hover:text-slate-600'
                   }`}
                 >
                   {tab.label}
                   {activeTab === tab.key && (
-                    <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-electric-blue rounded-full" />
+                    <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-lions-500 rounded-full" />
                   )}
                 </button>
               ))}
@@ -589,18 +467,18 @@ function ScheduleSection() {
                 return (
                   <div
                     key={`${r.date}-${r.month}`}
-                    className={`flex flex-col md:flex-row items-start md:items-center gap-4 bg-white rounded-lg p-4 md:p-6 border border-slate-100 hover:border-electric-blue/20 hover:bg-blue-50/50 transition-all duration-200 ${
-                      listReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
+                    className={`flex flex-col md:flex-row items-start md:items-center gap-4 bg-white rounded-[1.5rem] p-4 md:p-6 border border-slate-200 hover:border-lions-300 hover:shadow-[0_12px_40px_-20px_rgba(46,107,255,0.2)] transition-all duration-200 scroll-reveal-up ${
+                      listReveal.visible ? 'scroll-reveal-up--in' : ''
                     }`}
                     style={{ transitionDelay: `${i * 80}ms` }}
                   >
                     <div className="flex items-center md:flex-col md:items-center gap-2 md:gap-0 md:w-20 shrink-0">
-                      <span className="font-inter font-semibold text-xs uppercase text-electric-blue md:mb-1">
+                      <span className="font-inter font-semibold text-xs uppercase text-lions-600 md:mb-1">
                         {r.day}
                       </span>
                       <span
-                        className="font-oswald font-bold text-deep-navy"
-                        style={{ fontSize: '1.5rem' }}
+                className="font-oswald font-bold text-slate-900"
+                style={{ fontSize: '1.5rem' }}
                       >
                         {r.date}
                       </span>
@@ -609,12 +487,12 @@ function ScheduleSection() {
                       </span>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-inter font-semibold text-lg text-deep-navy">
-                        Dublin Lions vs {r.opponent}
-                      </p>
-                      <p className="font-inter text-sm text-slate-500 mt-0.5">
-                        {r.venue}
-                      </p>
+          <p className="font-inter font-semibold text-lg text-slate-900">
+            Dublin Lions vs {r.opponent}
+          </p>
+          <p className="font-inter text-sm text-slate-400 mt-0.5">
+            {r.venue}
+          </p>
                     </div>
                     <div className="shrink-0">
                       <span
@@ -683,19 +561,19 @@ function FixtureRow({
   return (
     <>
       <div
-        className={`flex flex-col md:flex-row items-start md:items-center gap-4 bg-white rounded-lg p-4 md:p-6 border border-slate-100 hover:border-electric-blue/20 hover:bg-blue-50/50 transition-all duration-200 group ${
-          listVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
+        className={`flex flex-col md:flex-row items-start md:items-center gap-4 bg-white rounded-[1.5rem] p-4 md:p-6 border border-slate-200 hover:border-lions-300 hover:shadow-[0_12px_40px_-20px_rgba(46,107,255,0.2)] transition-all duration-200 group scroll-reveal-up ${
+          listVisible ? 'scroll-reveal-up--in' : ''
         }`}
         style={{ transitionDelay: `${index * 80}ms` }}
       >
         {/* Date Badge */}
         <div className="flex items-center md:flex-col md:items-center gap-2 md:gap-0 md:w-20 shrink-0">
-          <span className="font-inter font-semibold text-xs uppercase text-electric-blue md:mb-1">
+          <span className="font-inter font-semibold text-xs uppercase text-lions-400 md:mb-1">
             {fixture.day}
           </span>
           <span
-            className="font-oswald font-bold text-deep-navy"
-            style={{ fontSize: '1.5rem' }}
+                className="font-oswald font-bold text-slate-900"
+                style={{ fontSize: '1.5rem' }}
           >
             {fixture.date}
           </span>
@@ -706,27 +584,27 @@ function FixtureRow({
 
         {/* Match Info */}
         <div className="flex-1 min-w-0">
-          <p className="font-inter font-semibold text-lg text-deep-navy">
+          <p className="font-inter font-semibold text-lg text-slate-900">
             Dublin Lions vs {fixture.opponent}
           </p>
-          <p className="font-inter text-sm text-slate-500 mt-0.5">
+          <p className="font-inter text-sm text-slate-400 mt-0.5">
             {fixture.venue} · Tip-off: {fixture.time}
           </p>
         </div>
 
         <div className="shrink-0">
           {isPast ? (
-            <span className="inline-block font-inter font-semibold text-xs uppercase tracking-widest text-slate-500 bg-slate-100 px-3 py-1 rounded">
+            <span className="inline-block font-inter font-semibold text-xs uppercase tracking-widest text-slate-500 bg-slate-100 border border-slate-200 px-3 py-1 rounded-full">
               Tickets Closed
             </span>
           ) : fixture.soldOut ? (
-            <span className="inline-block font-inter font-semibold text-xs uppercase tracking-widest text-red-500 bg-red-50 px-3 py-1 rounded">
+            <span className="inline-block font-inter font-semibold text-xs uppercase tracking-widest text-red-500 bg-red-50 border border-red-200 px-3 py-1 rounded-full">
               SOLD OUT
             </span>
           ) : showBuy ? (
             <button
               onClick={() => setTicketModalOpen(true)}
-              className="bg-electric-blue text-white font-inter font-semibold text-sm uppercase tracking-widest px-4 py-2 rounded hover:bg-blue-400 transition-all duration-150 inline-flex items-center gap-2"
+              className="ldf-btn-primary-dark text-sm px-5 py-2.5 inline-flex items-center gap-2"
             >
               <Ticket size={16} />
               {price.adultPrice > 0 && `Adult €${price.adultPrice}`}
@@ -734,7 +612,7 @@ function FixtureRow({
               {price.kidPrice > 0 && `Kid €${price.kidPrice}`}
             </button>
           ) : (
-            <span className="inline-block font-inter font-semibold text-xs uppercase tracking-widest text-slate-400 bg-slate-100 px-3 py-1 rounded">
+            <span className="inline-block font-inter font-semibold text-xs uppercase tracking-widest text-slate-500 bg-slate-100 border border-slate-200 px-3 py-1 rounded-full">
               Tickets not yet available
             </span>
           )}
@@ -776,8 +654,9 @@ function TicketModal({
 }) {
   const [adultQty, setAdultQty] = useState(0)
   const [kidQty, setKidQty] = useState(0)
-  const [buyerName, setBuyerName] = useState('')
-  const [buyerEmail, setBuyerEmail] = useState('')
+  const loggedInContact = getLoggedInContact()
+  const [buyerName, setBuyerName] = useState(loggedInContact?.name ?? '')
+  const [buyerEmail, setBuyerEmail] = useState(loggedInContact?.email ?? '')
   const [paymentMethod, setPaymentMethod] = useState<'card' | 'cash'>('card')
   const [receipt, setReceipt] = useState<{
     receiptId: string
@@ -790,43 +669,57 @@ function TicketModal({
   const adultTotal = adultQty * (price.adultPrice ?? 0)
   const kidTotal = kidQty * (price.kidPrice ?? 0)
   const total = adultTotal + kidTotal
+  const ticketImageUrl = toAbsoluteImageUrl(useSiteImage('logo'))
 
-  const getUser = (): { id: string; name: string; email?: string } | null => {
-    try {
-      const raw = localStorage.getItem('dlbc_user')
-      if (!raw) return null
-      const parsed = JSON.parse(raw)
-      if (parsed.id || parsed._id) {
-        return { id: parsed.id || parsed._id, name: parsed.name || parsed.email || 'User', email: parsed.email }
-      }
-      return null
-    } catch { return null }
+  const getUser = (): { id: string | number; name: string; email?: string } | null => {
+    const contact = getLoggedInContact()
+    if (!contact) return null
+    return { id: contact.id ?? contact.email, name: contact.name, email: contact.email }
   }
 
   const user = getUser()
   const isLoggedIn = !!user
 
   const [stripeError, setStripeError] = useState('')
+  const [showCardCheckout, setShowCardCheckout] = useState(false)
+  const [paying, setPaying] = useState(false)
+  const [ticketStartedAt] = useState(() => Date.now())
+  const [privacyAccepted, setPrivacyAccepted] = useState(false)
+  const [turnstileToken, setTurnstileToken] = useState('')
 
-  const persistPurchase = (receiptId: string, status: 'succeeded' | 'pending') => {
-    const paymentEntry: Payment = {
-      id: receiptId,
-      playerId: user?.id || 'guest',
-      playerName: buyerName,
-      amount: total,
-      status,
-      date: new Date().toISOString().split('T')[0],
-      method: paymentMethod === 'card' ? 'Stripe' : 'Cash',
-      plan: `Ticket - ${fixtureName}`,
+  const persistPurchase = (receiptId: string, status: 'succeeded' | 'pending', cardLast4?: string) => {
+    const method = paymentMethod === 'card'
+      ? (cardLast4 ? `Card •••• ${cardLast4}` : 'Card')
+      : 'Cash'
+
+    if (paymentMethod === 'card' && status === 'succeeded') {
+      recordGuestCardPayment({
+        payerName: buyerName,
+        payerEmail: buyerEmail,
+        amount: total,
+        plan: `Ticket - ${fixtureName}`,
+        cardLast4,
+        referenceId: receiptId,
+      })
+    } else {
+      const paymentEntry: Payment = {
+        id: receiptId,
+        playerId: user?.id != null ? String(user.id) : 'guest',
+        playerName: buyerName,
+        amount: total,
+        status,
+        date: new Date().toISOString().split('T')[0],
+        method,
+        plan: `Ticket - ${fixtureName}`,
+      }
+      const payments = getPayments()
+      payments.push(paymentEntry)
+      setPayments(payments)
     }
-
-    const payments = getPayments()
-    payments.push(paymentEntry)
-    setPayments(payments)
 
     if (user?.id) {
       addTicketPurchase({
-        userId: user.id,
+        userId: String(user.id),
         fixtureKey,
         fixtureName,
         fixtureDate,
@@ -843,27 +736,94 @@ function TicketModal({
     }
   }
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (total <= 0) return
     if (!buyerName.trim()) return
     if (!buyerEmail.trim()) return
+    setStripeError('')
 
-    const receiptId = `DLBC-${Date.now().toString(36).toUpperCase()}`
-
-    if (paymentMethod === 'card') {
-      const url = buildStripeCheckoutUrl(receiptId)
-      if (!url) {
-        setStripeError('Card payments are not yet configured. Please choose Pay at Gate, or contact the club to set up a Stripe Payment Link.')
-        return
-      }
-      // Record the purchase as pending; manager confirms once Stripe webhook
-      // (or manual reconciliation) marks it succeeded.
-      persistPurchase(receiptId, 'pending')
-      window.location.href = url
+    const security = validatePublicFormSecurity({
+      formStartedAt: ticketStartedAt,
+      rateLimitKey: `ticket:${buyerEmail.trim().toLowerCase()}`,
+      privacyAccepted,
+      turnstileToken,
+      maxAttempts: 8,
+    })
+    if (!security.ok) {
+      setStripeError(security.error)
       return
     }
 
+    if (paymentMethod === 'card') {
+      const receiptId = `DLBC-${Date.now().toString(36).toUpperCase()}`
+      const lineItems: { name: string; amountCents: number; quantity: number; imageUrl?: string }[] = []
+      if (adultQty > 0 && price.adultPrice > 0) {
+        lineItems.push({ name: `Adult ticket — ${fixtureName}`, amountCents: Math.round(price.adultPrice * 100), quantity: adultQty, imageUrl: ticketImageUrl })
+      }
+      if (kidQty > 0 && price.kidPrice > 0) {
+        lineItems.push({ name: `Kid ticket — ${fixtureName}`, amountCents: Math.round(price.kidPrice * 100), quantity: kidQty, imageUrl: ticketImageUrl })
+      }
+
+      setPaying(true)
+      try {
+        const redirected = await redirectToStripeCheckout({
+          purchaseType: 'ticket',
+          referenceId: receiptId,
+          customerName: buyerName.trim(),
+          customerEmail: buyerEmail.trim(),
+          lineItems,
+          metadata: {
+            fixture_name: fixtureName,
+            fixture_key: fixtureKey,
+            fixture_date: fixtureDate,
+            adult_qty: String(adultQty),
+            kid_qty: String(kidQty),
+            adult_price: String(price.adultPrice ?? 0),
+            kid_price: String(price.kidPrice ?? 0),
+            user_id: user?.id != null ? String(user.id) : '',
+          },
+          turnstileToken,
+        })
+        if (!redirected) setShowCardCheckout(true)
+      } catch (err) {
+        setStripeError(err instanceof Error ? err.message : 'Could not start payment')
+      } finally {
+        setPaying(false)
+      }
+      return
+    }
+
+    const receiptId = `DLBC-${Date.now().toString(36).toUpperCase()}`
     persistPurchase(receiptId, 'pending')
+    setReceipt({
+      receiptId,
+      total,
+      adultQty,
+      kidQty,
+      isLoggedIn,
+    })
+  }
+
+  const completeCardPurchase = (cardLast4: string) => {
+    const receiptId = `DLBC-${Date.now().toString(36).toUpperCase()}`
+    persistPurchase(receiptId, 'succeeded', cardLast4)
+    const lineItems: { name: string; quantity: number; amountCents: number; imageUrl?: string }[] = []
+    if (adultQty > 0 && price.adultPrice > 0) {
+      lineItems.push({ name: `Adult ticket — ${fixtureName}`, amountCents: Math.round(price.adultPrice * 100), quantity: adultQty, imageUrl: ticketImageUrl })
+    }
+    if (kidQty > 0 && price.kidPrice > 0) {
+      lineItems.push({ name: `Kid ticket — ${fixtureName}`, amountCents: Math.round(price.kidPrice * 100), quantity: kidQty, imageUrl: ticketImageUrl })
+    }
+    void sendPurchaseConfirmationEmail({
+      customerName: buyerName.trim(),
+      customerEmail: buyerEmail.trim(),
+      purchaseType: 'ticket',
+      referenceId: receiptId,
+      amountCents: Math.round(total * 100),
+      items: lineItems,
+      planLabel: `Ticket - ${fixtureName}`,
+    })
+    setShowCardCheckout(false)
     setReceipt({
       receiptId,
       total,
@@ -879,24 +839,24 @@ function TicketModal({
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto"
+        className="bg-[#0D1626] border border-white/10 rounded-3xl shadow-[0_40px_100px_-30px_rgba(0,0,0,0.9)] max-w-md w-full max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {!receipt ? (
           <>
             {/* Header */}
-            <div className="flex items-center justify-between p-6 border-b border-slate-100">
+            <div className="flex items-center justify-between p-6 border-b border-white/10">
               <div>
-                <h3 className="font-oswald font-bold text-xl text-deep-navy">
+                <h3 className="font-oswald font-bold text-xl text-white">
                   {fixtureName}
                 </h3>
-                <p className="font-inter text-sm text-slate-500 mt-1">
+                <p className="font-inter text-sm text-slate-400 mt-1">
                   {fixtureDate} · {venue} · {time}
                 </p>
               </div>
               <button
                 onClick={onClose}
-                className="text-slate-400 hover:text-deep-navy transition-colors"
+                className="text-slate-400 hover:text-white transition-colors"
                 aria-label="Close"
               >
                 <X size={24} />
@@ -909,22 +869,22 @@ function TicketModal({
               {price.adultPrice > 0 && (
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-inter font-semibold text-deep-navy">Adult Ticket</p>
-                    <p className="font-inter text-sm text-slate-500">€{price.adultPrice} each</p>
+                    <p className="font-inter font-semibold text-white">Adult Ticket</p>
+                    <p className="font-inter text-sm text-slate-400">€{price.adultPrice} each</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <button
                       onClick={() => setAdultQty(Math.max(0, adultQty - 1))}
-                      className="w-8 h-8 rounded-full border border-slate-300 flex items-center justify-center text-deep-navy hover:bg-slate-100 transition-colors"
+                      className="w-8 h-8 rounded-full border border-white/15 flex items-center justify-center text-white hover:bg-white/10 transition-colors"
                     >
                       -
                     </button>
-                    <span className="font-inter font-semibold text-lg w-6 text-center">
+                    <span className="font-inter font-semibold text-lg w-6 text-center text-white">
                       {adultQty}
                     </span>
                     <button
                       onClick={() => setAdultQty(adultQty + 1)}
-                      className="w-8 h-8 rounded-full border border-slate-300 flex items-center justify-center text-deep-navy hover:bg-slate-100 transition-colors"
+                      className="w-8 h-8 rounded-full border border-white/15 flex items-center justify-center text-white hover:bg-white/10 transition-colors"
                     >
                       +
                     </button>
@@ -936,22 +896,22 @@ function TicketModal({
               {price.kidPrice > 0 && (
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-inter font-semibold text-deep-navy">Kid Ticket</p>
-                    <p className="font-inter text-sm text-slate-500">€{price.kidPrice} each</p>
+                    <p className="font-inter font-semibold text-white">Kid Ticket</p>
+                    <p className="font-inter text-sm text-slate-400">€{price.kidPrice} each</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <button
                       onClick={() => setKidQty(Math.max(0, kidQty - 1))}
-                      className="w-8 h-8 rounded-full border border-slate-300 flex items-center justify-center text-deep-navy hover:bg-slate-100 transition-colors"
+                      className="w-8 h-8 rounded-full border border-white/15 flex items-center justify-center text-white hover:bg-white/10 transition-colors"
                     >
                       -
                     </button>
-                    <span className="font-inter font-semibold text-lg w-6 text-center">
+                    <span className="font-inter font-semibold text-lg w-6 text-center text-white">
                       {kidQty}
                     </span>
                     <button
                       onClick={() => setKidQty(kidQty + 1)}
-                      className="w-8 h-8 rounded-full border border-slate-300 flex items-center justify-center text-deep-navy hover:bg-slate-100 transition-colors"
+                      className="w-8 h-8 rounded-full border border-white/15 flex items-center justify-center text-white hover:bg-white/10 transition-colors"
                     >
                       +
                     </button>
@@ -960,10 +920,10 @@ function TicketModal({
               )}
 
               {/* Running Total */}
-              <div className="border-t border-slate-200 pt-4">
+              <div className="border-t border-white/10 pt-4">
                 <div className="flex justify-between items-center">
-                  <span className="font-inter font-semibold text-deep-navy">Total</span>
-                  <span className="font-oswald font-bold text-2xl text-electric-blue">
+                  <span className="font-inter font-semibold text-white">Total</span>
+                  <span className="font-oswald font-bold text-2xl text-lions-400">
                     €{total.toFixed(2)}
                   </span>
                 </div>
@@ -971,27 +931,32 @@ function TicketModal({
 
               {/* Buyer Info */}
               <div className="space-y-3">
+                {loggedInContact && (
+                  <p className="font-inter text-xs text-slate-400">
+                    Using your account details — edit below to use a different name or email.
+                  </p>
+                )}
                 <div>
-                  <label className="font-inter text-sm font-medium text-deep-navy mb-1 block">
+                  <label className="font-inter text-sm font-medium text-slate-200 mb-1 block">
                     Full Name
                   </label>
                   <input
                     type="text"
                     value={buyerName}
                     onChange={(e) => setBuyerName(e.target.value)}
-                    className="w-full border border-slate-300 rounded px-4 py-2 font-inter text-sm text-deep-navy placeholder:text-slate-400 focus:border-electric-blue outline-none transition-all"
+                    className="w-full border border-white/10 bg-white/[0.05] rounded-lg px-4 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:border-lions-400 focus:ring-2 focus:ring-lions-400/30 outline-none transition-all"
                     placeholder="Your full name"
                   />
                 </div>
                 <div>
-                  <label className="font-inter text-sm font-medium text-deep-navy mb-1 block">
+                  <label className="font-inter text-sm font-medium text-slate-200 mb-1 block">
                     Email
                   </label>
                   <input
                     type="email"
                     value={buyerEmail}
                     onChange={(e) => setBuyerEmail(e.target.value)}
-                    className="w-full border border-slate-300 rounded px-4 py-2 font-inter text-sm text-deep-navy placeholder:text-slate-400 focus:border-electric-blue outline-none transition-all"
+                    className="w-full border border-white/10 bg-white/[0.05] rounded-lg px-4 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:border-lions-400 focus:ring-2 focus:ring-lions-400/30 outline-none transition-all"
                     placeholder="you@example.com"
                   />
                 </div>
@@ -999,16 +964,16 @@ function TicketModal({
 
               {/* Payment Method */}
               <div>
-                <label className="font-inter text-sm font-medium text-deep-navy mb-2 block">
+                <label className="font-inter text-sm font-medium text-slate-200 mb-2 block">
                   Payment Method
                 </label>
                 <div className="flex gap-2">
                   <button
                     onClick={() => setPaymentMethod('card')}
-                    className={`flex-1 flex items-center justify-center gap-2 font-inter font-semibold text-sm px-4 py-3 rounded border transition-all duration-200 ${
+                    className={`flex-1 flex items-center justify-center gap-2 font-inter font-semibold text-sm px-4 py-3 rounded-lg border transition-all duration-200 ${
                       paymentMethod === 'card'
-                        ? 'border-electric-blue bg-blue-50 text-electric-blue'
-                        : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                        ? 'border-lions-400 bg-lions-500/15 text-lions-300'
+                        : 'border-white/10 text-slate-400 hover:border-white/25'
                     }`}
                   >
                     <CreditCard size={16} />
@@ -1016,10 +981,10 @@ function TicketModal({
                   </button>
                   <button
                     onClick={() => setPaymentMethod('cash')}
-                    className={`flex-1 flex items-center justify-center gap-2 font-inter font-semibold text-sm px-4 py-3 rounded border transition-all duration-200 ${
+                    className={`flex-1 flex items-center justify-center gap-2 font-inter font-semibold text-sm px-4 py-3 rounded-lg border transition-all duration-200 ${
                       paymentMethod === 'cash'
-                        ? 'border-electric-blue bg-blue-50 text-electric-blue'
-                        : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                        ? 'border-lions-400 bg-lions-500/15 text-lions-300'
+                        : 'border-white/10 text-slate-400 hover:border-white/25'
                     }`}
                   >
                     <Banknote size={16} />
@@ -1027,21 +992,28 @@ function TicketModal({
                   </button>
                 </div>
               </div>
+
+              <PrivacyConsentField checked={privacyAccepted} onChange={setPrivacyAccepted} className="px-6" />
+              <div className="px-6 pb-2">
+                <TurnstileWidget onVerify={setTurnstileToken} onExpire={() => setTurnstileToken('')} theme="dark" />
+              </div>
             </div>
 
             {/* Footer */}
-            <div className="p-6 border-t border-slate-100">
+            <div className="p-6 border-t border-white/10">
               {stripeError && (
-                <p className="font-inter text-sm text-red-600 bg-red-50 border border-red-100 rounded px-3 py-2 mb-3">
+                <p className="font-inter text-sm text-red-300 bg-red-500/10 border border-red-500/25 rounded-lg px-3 py-2 mb-3">
                   {stripeError}
                 </p>
               )}
               <button
                 onClick={handleSubmit}
-                disabled={total <= 0 || !buyerName.trim() || !buyerEmail.trim()}
-                className="w-full bg-electric-blue text-white font-inter font-semibold text-base uppercase tracking-widest px-4 py-4 rounded hover:bg-blue-400 transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                disabled={total <= 0 || !buyerName.trim() || !buyerEmail.trim() || paying}
+                className="w-full bg-gradient-to-br from-lions-400 to-lions-600 text-white font-inter font-semibold text-base uppercase tracking-widest px-4 py-4 rounded-full shadow-[0_14px_34px_-14px_rgba(46,107,255,0.85)] hover:-translate-y-0.5 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:translate-y-0 flex items-center justify-center gap-2"
               >
-                {paymentMethod === 'card' ? (
+                {paying ? (
+                  'Redirecting to Stripe…'
+                ) : paymentMethod === 'card' ? (
                   <>
                     <CreditCard size={18} />
                     Pay with Stripe
@@ -1058,40 +1030,40 @@ function TicketModal({
         ) : (
           /* Receipt View */
           <div className="p-8 text-center">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <CheckCircle size={32} className="text-green-600" />
+            <div className="w-16 h-16 bg-green-500/15 ring-1 ring-green-500/30 rounded-full flex items-center justify-center mx-auto mb-4">
+              <CheckCircle size={32} className="text-green-400" />
             </div>
-            <h3 className="font-oswald font-bold text-2xl text-deep-navy">
+            <h3 className="font-oswald font-bold text-2xl text-white">
               Tickets Purchased!
             </h3>
-            <p className="font-inter text-sm text-slate-500 mt-2">
-              Receipt ID: <span className="font-mono font-semibold text-deep-navy">{receipt.receiptId}</span>
+            <p className="font-inter text-sm text-slate-400 mt-2">
+              Receipt ID: <span className="font-mono font-semibold text-white">{receipt.receiptId}</span>
             </p>
 
-            <div className="mt-6 bg-slate-50 rounded-lg p-4 text-left space-y-2">
+            <div className="mt-6 bg-white/[0.04] border border-white/10 rounded-2xl p-4 text-left space-y-2">
               <div className="flex justify-between">
-                <span className="font-inter text-sm text-slate-500">Fixture</span>
-                <span className="font-inter text-sm text-deep-navy text-right">{fixtureName}</span>
+                <span className="font-inter text-sm text-slate-400">Fixture</span>
+                <span className="font-inter text-sm text-white text-right">{fixtureName}</span>
               </div>
               {receipt.adultQty > 0 && (
                 <div className="flex justify-between">
-                  <span className="font-inter text-sm text-slate-500">Adult x{receipt.adultQty}</span>
-                  <span className="font-inter text-sm text-deep-navy">€{(receipt.adultQty * price.adultPrice).toFixed(2)}</span>
+                  <span className="font-inter text-sm text-slate-400">Adult x{receipt.adultQty}</span>
+                  <span className="font-inter text-sm text-white">€{(receipt.adultQty * price.adultPrice).toFixed(2)}</span>
                 </div>
               )}
               {receipt.kidQty > 0 && (
                 <div className="flex justify-between">
-                  <span className="font-inter text-sm text-slate-500">Kid x{receipt.kidQty}</span>
-                  <span className="font-inter text-sm text-deep-navy">€{(receipt.kidQty * price.kidPrice).toFixed(2)}</span>
+                  <span className="font-inter text-sm text-slate-400">Kid x{receipt.kidQty}</span>
+                  <span className="font-inter text-sm text-white">€{(receipt.kidQty * price.kidPrice).toFixed(2)}</span>
                 </div>
               )}
-              <div className="border-t border-slate-200 pt-2 flex justify-between">
-                <span className="font-inter font-semibold text-deep-navy">Total Paid</span>
-                <span className="font-oswald font-bold text-electric-blue">€{receipt.total.toFixed(2)}</span>
+              <div className="border-t border-white/10 pt-2 flex justify-between">
+                <span className="font-inter font-semibold text-white">Total Paid</span>
+                <span className="font-oswald font-bold text-lions-400">€{receipt.total.toFixed(2)}</span>
               </div>
             </div>
 
-            <p className="font-inter text-sm text-slate-600 mt-6">
+            <p className="font-inter text-sm text-slate-400 mt-6">
               {receipt.isLoggedIn
                 ? 'Your tickets are saved to your account.'
                 : 'A confirmation has been sent to your email.'}
@@ -1099,13 +1071,24 @@ function TicketModal({
 
             <button
               onClick={onClose}
-              className="mt-6 w-full bg-electric-blue text-white font-inter font-semibold text-sm uppercase tracking-widest px-4 py-3 rounded hover:bg-blue-400 transition-all duration-150"
+              className="mt-6 w-full bg-gradient-to-br from-lions-400 to-lions-600 text-white font-inter font-semibold text-sm uppercase tracking-widest px-4 py-3 rounded-full shadow-[0_12px_30px_-14px_rgba(46,107,255,0.8)] hover:-translate-y-0.5 transition-all duration-200"
             >
               Done
             </button>
           </div>
         )}
       </div>
+
+      {showCardCheckout && (
+        <PaymentCheckout
+          open
+          title="Match tickets"
+          description={fixtureName}
+          amount={total}
+          onClose={() => setShowCardCheckout(false)}
+          onSuccess={({ cardLast4 }) => completeCardPurchase(cardLast4)}
+        />
+      )}
     </div>
   )
 }
@@ -1164,22 +1147,14 @@ function GallerySection() {
           {/* Header */}
           <div
             ref={headerReveal.ref}
-            className={`text-center mb-10 transition-all duration-600 ${
-              headerReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
-            }`}
+            className={`text-center mb-10 scroll-reveal-up ${headerReveal.visible ? 'scroll-reveal-up--in' : ''}`}
           >
-            <span className="font-inter font-semibold text-xs uppercase tracking-widest text-electric-blue">
-              GALLERY
-            </span>
+            <h4 className="font-inter text-sm font-semibold text-lions-400">Gallery</h4>
             <h2
-              className="font-oswald font-bold text-white mt-4"
-              style={{
-                fontSize: 'clamp(2.5rem, 5vw, 4rem)',
-                lineHeight: 0.95,
-                letterSpacing: '-0.02em',
-              }}
+              className="ldf-section-title text-white mt-3"
+              style={{ fontSize: 'clamp(2rem, 4vw, 3.25rem)' }}
             >
-              The Pride in Action
+              The pride in action
             </h2>
             <p className="font-inter text-base text-slate-300 max-w-md mx-auto mt-4">
               Moments from the court, the locker room, and the community.
@@ -1195,8 +1170,8 @@ function GallerySection() {
               <button
                 key={img}
                 onClick={() => openLightbox(i)}
-                className={`group relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all duration-600 ${
-                  gridReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
+                className={`group relative aspect-square rounded-lg overflow-hidden cursor-pointer scroll-reveal-up ${
+                  gridReveal.visible ? 'scroll-reveal-up--in' : ''
                 }`}
                 style={{ transitionDelay: `${i * 80}ms` }}
               >
@@ -1298,48 +1273,35 @@ function ContactSection() {
 
   return (
     <>
-      <div className="h-16" style={{ background: 'linear-gradient(to bottom, #0A1628, #F8FAFC)' }} />
-      <section id="contact" className="bg-soft-white py-20 md:py-28">
+      <div className="h-10" />
+      <section id="contact" className="site-light border-t border-slate-200/80 py-20 md:py-28">
         <div className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12">
-          {/* Header */}
           <div
             ref={headerReveal.ref}
-            className={`mb-12 transition-all duration-600 ${
-              headerReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
-            }`}
+            className={`mb-12 scroll-reveal-up ${headerReveal.visible ? 'scroll-reveal-up--in' : ''}`}
           >
-            <span className="font-inter font-semibold text-xs uppercase tracking-widest text-electric-blue">
-              GET IN TOUCH
-            </span>
+            <h4 className="font-inter text-sm font-semibold text-lions-600">Get in touch</h4>
             <h2
-              className="font-oswald font-bold text-deep-navy mt-4"
-              style={{
-                fontSize: 'clamp(2.5rem, 5vw, 4rem)',
-                lineHeight: 0.95,
-                letterSpacing: '-0.02em',
-              }}
+              className="ldf-section-title text-slate-900 mt-2"
+              style={{ fontSize: 'clamp(2rem, 4vw, 3.25rem)' }}
             >
               Contact the Pride
             </h2>
-            <p className="font-inter text-base text-slate-700 max-w-xl mt-4 leading-relaxed">
-              Have a question about membership, interested in sponsoring the club, or want to book a friendly? Reach out — we&apos;d love to hear from you.
+            <p className="font-inter text-base text-slate-600 max-w-xl mt-4 leading-relaxed">
+              Have a question about membership, interested in sponsoring the club, or want to book a friendly? We would love to hear from you.
             </p>
           </div>
 
-          {/* Two Column Layout */}
           <div ref={formReveal.ref} className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-            {/* Contact Form */}
             <div
-              className={`bg-white rounded-xl shadow-lg p-8 transition-all duration-600 ${
-                formReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
-              }`}
+              className={`bg-white border border-slate-200/80 rounded-[2rem] p-8 scroll-reveal-left ${formReveal.visible ? 'scroll-reveal-left--in' : ''}`}
             >
               {submitted ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
                     <Check size={32} className="text-green-600" />
                   </div>
-                  <h3 className="font-inter font-semibold text-lg text-deep-navy">
+                  <h3 className="font-inter font-semibold text-lg text-slate-900">
                     Message sent!
                   </h3>
                   <p className="font-inter text-sm text-slate-500 mt-2">
@@ -1349,7 +1311,7 @@ function ContactSection() {
               ) : (
                 <form onSubmit={handleSubmit} className="space-y-5">
                   <div>
-                    <label className="font-inter text-sm font-medium text-deep-navy mb-1 block">
+                    <label className="font-inter text-sm font-medium text-slate-700 mb-1 block">
                       Name
                     </label>
                     <input
@@ -1357,12 +1319,12 @@ function ContactSection() {
                       required
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full border border-slate-300 rounded px-4 py-3 font-inter text-base text-deep-navy placeholder:text-slate-400 focus:border-accent-gold focus:ring-2 focus:ring-amber-300/30 outline-none transition-all"
+                      className="w-full border border-slate-200 rounded-lg px-4 py-3 font-inter text-base text-slate-900 placeholder:text-slate-400 focus:border-lions-400 focus:ring-2 focus:ring-lions-400/20 outline-none transition-all bg-white"
                       placeholder="Your name"
                     />
                   </div>
                   <div>
-                    <label className="font-inter text-sm font-medium text-deep-navy mb-1 block">
+                    <label className="font-inter text-sm font-medium text-slate-700 mb-1 block">
                       Email
                     </label>
                     <input
@@ -1370,18 +1332,18 @@ function ContactSection() {
                       required
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      className="w-full border border-slate-300 rounded px-4 py-3 font-inter text-base text-deep-navy placeholder:text-slate-400 focus:border-accent-gold focus:ring-2 focus:ring-amber-300/30 outline-none transition-all"
+                      className="w-full border border-slate-200 rounded-lg px-4 py-3 font-inter text-base text-slate-900 placeholder:text-slate-400 focus:border-lions-400 focus:ring-2 focus:ring-lions-400/20 outline-none transition-all bg-white"
                       placeholder="you@example.com"
                     />
                   </div>
                   <div>
-                    <label className="font-inter text-sm font-medium text-deep-navy mb-1 block">
+                    <label className="font-inter text-sm font-medium text-slate-700 mb-1 block">
                       Subject
                     </label>
                     <select
                       value={formData.subject}
                       onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
-                      className="w-full border border-slate-300 rounded px-4 py-3 font-inter text-base text-deep-navy focus:border-accent-gold focus:ring-2 focus:ring-amber-300/30 outline-none transition-all bg-white"
+                      className="w-full border border-slate-200 rounded-lg px-4 py-3 font-inter text-base text-slate-900 focus:border-lions-400 focus:ring-2 focus:ring-lions-400/20 outline-none transition-all bg-white"
                     >
                       <option>General Enquiry</option>
                       <option>Membership</option>
@@ -1391,7 +1353,7 @@ function ContactSection() {
                     </select>
                   </div>
                   <div>
-                    <label className="font-inter text-sm font-medium text-deep-navy mb-1 block">
+                    <label className="font-inter text-sm font-medium text-slate-700 mb-1 block">
                       Message
                     </label>
                     <textarea
@@ -1399,15 +1361,12 @@ function ContactSection() {
                       rows={5}
                       value={formData.message}
                       onChange={(e) => setFormData({ ...formData, message: e.target.value })}
-                      className="w-full border border-slate-300 rounded px-4 py-3 font-inter text-base text-deep-navy placeholder:text-slate-400 focus:border-accent-gold focus:ring-2 focus:ring-amber-300/30 outline-none transition-all resize-none"
+                      className="w-full border border-slate-200 rounded-lg px-4 py-3 font-inter text-base text-slate-900 placeholder:text-slate-400 focus:border-lions-400 focus:ring-2 focus:ring-lions-400/20 outline-none transition-all resize-none bg-white"
                       placeholder="Tell us what's on your mind..."
                     />
                   </div>
-                  <button
-                    type="submit"
-                    className="w-full bg-electric-blue text-white font-inter font-semibold text-base uppercase tracking-widest px-4 py-4 rounded hover:bg-blue-400 transition-all duration-150 mt-2"
-                  >
-                    Send Message
+                  <button type="submit" className="ldf-btn-primary-dark w-full mt-2">
+                    Send message
                   </button>
                 </form>
               )}
@@ -1415,9 +1374,7 @@ function ContactSection() {
 
             {/* Contact Details */}
             <div
-              className={`space-y-8 transition-all duration-600 ${
-                formReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'
-              }`}
+              className={`space-y-8 scroll-reveal-right ${formReveal.visible ? 'scroll-reveal-right--in' : ''}`}
               style={{ transitionDelay: '150ms' }}
             >
               {[
@@ -1439,15 +1396,15 @@ function ContactSection() {
                 {
                   icon: User,
                   title: 'Club Secretary',
-                  info: 'Jack Maguire — secretary@dublinlions.ie',
+                  info: 'Jack Maguire, secretary@dublinlions.ie',
                 },
               ].map((detail) => (
                 <div key={detail.title} className="flex items-start gap-4">
-                  <div className="w-12 h-12 rounded-lg bg-white shadow-md flex items-center justify-center shrink-0">
-                    <detail.icon size={24} className="text-electric-blue" />
+                  <div className="w-12 h-12 rounded-xl bg-lions-500/10 flex items-center justify-center shrink-0">
+                    <detail.icon size={22} className="text-lions-600" />
                   </div>
                   <div>
-                    <h4 className="font-inter font-semibold text-lg text-deep-navy">
+                    <h4 className="font-inter font-semibold text-lg text-slate-900">
                       {detail.title}
                     </h4>
                     <p className="font-inter text-base text-slate-600 mt-1">
@@ -1470,6 +1427,7 @@ export default function Home() {
     <div>
       <HeroSection />
       <AboutSection />
+      <PathwaysSection />
       <TeamsSection />
       <ScheduleSection />
       <GallerySection />

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import {
   ShoppingBag,
   ShoppingCart,
@@ -20,9 +21,22 @@ import {
   getCartTotal,
   getCartCount,
   placeOrder,
-  buildStripeCheckoutUrl,
+  createPendingOrder,
+  markOrderPaid,
+  ensureAppStateKeySynced,
+  syncCartToStock,
+  getRemainingStock,
+  LOW_STOCK_THRESHOLD,
   type Product,
 } from '@/lib/clubData'
+import { PaymentCheckout } from '@/components/PaymentCheckout'
+import { redirectToStripeCheckout, isStripeCheckoutConfigured } from '@/lib/stripeCheckout'
+import { getLoggedInContact } from '@/lib/authUser'
+import { sendPurchaseConfirmationEmail } from '@/lib/purchaseEmail'
+import { toAbsoluteImageUrl } from '@/lib/imageUrl'
+import { HoneypotField, PrivacyConsentField } from '@/components/security/PrivacyConsentField'
+import { TurnstileWidget } from '@/components/security/TurnstileWidget'
+import { validatePublicFormSecurity } from '@/lib/security'
 
 const CATEGORIES = ['All', 'Jerseys', 'Apparel', 'Equipment', 'Accessories', 'Kits']
 
@@ -31,6 +45,7 @@ const CATEGORIES = ['All', 'Jerseys', 'Apparel', 'Equipment', 'Accessories', 'Ki
 function CartDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [cart, setCartState] = useState(getCart)
   const [products, setProductsState] = useState(getProducts)
+  const [cartNotice, setCartNotice] = useState('')
   const total = getCartTotal()
   const count = getCartCount()
 
@@ -39,8 +54,20 @@ function CartDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
     sync()
     const h = () => sync()
     window.addEventListener('dlbc-cart-change', h)
+    window.addEventListener('dlbc-auth-change', h)
     window.addEventListener('storage', h)
-    return () => { window.removeEventListener('dlbc-cart-change', h); window.removeEventListener('storage', h) }
+    return () => {
+      window.removeEventListener('dlbc-cart-change', h)
+      window.removeEventListener('dlbc-auth-change', h)
+      window.removeEventListener('storage', h)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const warnings = syncCartToStock()
+    if (warnings.length > 0) setCartNotice(warnings[0])
+    else setCartNotice('')
   }, [open])
 
   const cartItems = useMemo(() => {
@@ -78,6 +105,11 @@ function CartDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
           </div>
 
           <div className="flex-1 overflow-y-auto p-5 space-y-4">
+            {cartNotice && (
+              <p className="font-inter text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                {cartNotice}
+              </p>
+            )}
             {cartItems.length === 0 ? (
               <div className="text-center py-12">
                 <ShoppingCart size={48} className="text-slate-600 mx-auto mb-4" />
@@ -97,18 +129,30 @@ function CartDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
                   <div className="flex-1 min-w-0">
                     <p className="font-inter font-medium text-sm text-white truncate">{item.product.name}</p>
                     <p className="font-inter text-xs text-slate-400 mt-0.5">€{item.product.price.toFixed(2)} each</p>
+                    {item.product.stock <= LOW_STOCK_THRESHOLD && item.product.stock > 0 && (
+                      <p className="font-inter text-[10px] text-amber-400 mt-0.5">Only {item.product.stock} left</p>
+                    )}
                     <div className="flex items-center gap-3 mt-2">
                       <div className="flex items-center gap-1 bg-[#0A1628] rounded-lg">
                         <button
-                          onClick={() => updateCartQuantity(item.productId, item.quantity - 1)}
+                          onClick={() => {
+                            const result = updateCartQuantity(item.productId, item.quantity - 1)
+                            if (!result.ok && result.reason) setCartNotice(result.reason)
+                            else setCartNotice('')
+                          }}
                           className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white"
                         >
                           <Minus size={14} />
                         </button>
                         <span className="font-inter text-sm text-white w-6 text-center">{item.quantity}</span>
                         <button
-                          onClick={() => updateCartQuantity(item.productId, item.quantity + 1)}
-                          className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white"
+                          onClick={() => {
+                            const result = updateCartQuantity(item.productId, item.quantity + 1)
+                            if (!result.ok && result.reason) setCartNotice(result.reason)
+                            else setCartNotice('')
+                          }}
+                          disabled={getRemainingStock(item.productId) <= 0}
+                          className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
                         >
                           <Plus size={14} />
                         </button>
@@ -137,9 +181,9 @@ function CartDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
                 <span className="font-inter text-slate-300">Subtotal</span>
                 <span className="font-inter font-bold text-lg text-white">€{total.toFixed(2)}</span>
               </div>
-              <CheckoutButton onSuccess={onClose} />
             </div>
           )}
+          <CheckoutButton showTrigger={cartItems.length > 0} onSuccess={onClose} />
         </div>
       </div>
     </>
@@ -148,7 +192,7 @@ function CartDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 /* ─────────────────────── Checkout Modal ─────────────────────── */
 
-function CheckoutButton({ onSuccess }: { onSuccess: () => void }) {
+function CheckoutButton({ showTrigger, onSuccess }: { showTrigger: boolean; onSuccess: () => void }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -156,19 +200,82 @@ function CheckoutButton({ onSuccess }: { onSuccess: () => void }) {
   const [done, setDone] = useState(false)
   const [orderId, setOrderId] = useState('')
   const [error, setError] = useState('')
+  const [pendingOrder, setPendingOrder] = useState<{ id: string; total: number } | null>(null)
+  const [paying, setPaying] = useState(false)
+  const [checkoutStartedAt] = useState(() => Date.now())
+  const [honeypot, setHoneypot] = useState('')
+  const [privacyAccepted, setPrivacyAccepted] = useState(false)
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const loggedInContact = getLoggedInContact()
 
-  const handleCheckout = () => {
+  const openCheckout = () => {
+    const contact = getLoggedInContact()
+    if (contact) {
+      setName(contact.name)
+      setEmail(contact.email)
+    }
+    setOpen(true)
+  }
+
+  const handleCheckout = async () => {
     setError('')
     if (!name.trim() || !email.trim()) return
-    const order = placeOrder(name.trim(), email.trim())
-    if (!order) return
+
+    const security = validatePublicFormSecurity({
+      honeypot,
+      formStartedAt: checkoutStartedAt,
+      rateLimitKey: `checkout:${email.trim().toLowerCase()}`,
+      privacyAccepted,
+      turnstileToken,
+      maxAttempts: 8,
+    })
+    if (!security.ok) {
+      setError(security.error)
+      return
+    }
+
     if (method === 'card') {
-      const url = buildStripeCheckoutUrl(order.id)
-      if (!url) {
-        setError('Card payments are not yet configured. Choose Cash on Collection, or ask a manager to set up a Stripe Payment Link in Settings.')
+      const { order, errors } = createPendingOrder(name.trim(), email.trim())
+      if (!order) {
+        setError(errors?.[0] || 'Could not place order')
         return
       }
-      window.location.href = url
+      const lineItems = order.items.map((item) => {
+        const product = getProducts().find((p) => p.id === item.productId)
+        return {
+          name: item.productName,
+          amountCents: Math.round(item.price * 100),
+          quantity: item.quantity,
+          imageUrl: toAbsoluteImageUrl(product?.imageKey),
+        }
+      })
+      setPaying(true)
+      try {
+        await ensureAppStateKeySynced('dlbc_orders')
+        const redirected = await redirectToStripeCheckout({
+          purchaseType: 'store',
+          referenceId: order.id,
+          customerName: name.trim(),
+          customerEmail: email.trim(),
+          lineItems,
+          metadata: { order_id: order.id },
+          turnstileToken,
+        })
+        if (!redirected) {
+          setPendingOrder({ id: order.id, total: order.total })
+          setOpen(false)
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not start payment')
+        setOpen(true)
+      } finally {
+        setPaying(false)
+      }
+      return
+    }
+    const { order, errors } = placeOrder(name.trim(), email.trim())
+    if (!order) {
+      setError(errors?.[0] || 'Could not place order')
       return
     }
     setOrderId(order.id)
@@ -181,20 +288,25 @@ function CheckoutButton({ onSuccess }: { onSuccess: () => void }) {
     setName('')
     setEmail('')
     setMethod('card')
+    setPendingOrder(null)
     onSuccess()
   }
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className="w-full bg-electric-blue hover:bg-blue-400 text-white font-inter font-semibold text-sm rounded-lg px-4 py-3 transition-all flex items-center justify-center gap-2"
-      >
-        <CreditCard size={16} /> Checkout
-      </button>
+      {showTrigger && (
+        <div className="px-5 pb-5">
+          <button
+            onClick={openCheckout}
+            className="w-full bg-electric-blue hover:bg-blue-400 text-white font-inter font-semibold text-sm rounded-lg px-4 py-3 transition-all flex items-center justify-center gap-2"
+          >
+            <CreditCard size={16} /> Checkout
+          </button>
+        </div>
+      )}
 
-      {open && (
-        <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => !done && setOpen(false)}>
+      {open && createPortal(
+        <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => !done && setOpen(false)}>
           <div className="bg-[#1E293B] rounded-2xl max-w-md w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
             {!done ? (
               <>
@@ -204,7 +316,13 @@ function CheckoutButton({ onSuccess }: { onSuccess: () => void }) {
                     <X size={18} />
                   </button>
                 </div>
-                <div className="p-5 space-y-4">
+                <div className="p-5 space-y-4 relative">
+                  <HoneypotField value={honeypot} onChange={setHoneypot} />
+                  {loggedInContact && (
+                    <p className="font-inter text-xs text-slate-400 bg-white/[0.03] border border-white/[0.06] rounded-lg px-3 py-2">
+                      Pre-filled from your account — change name or email below if needed.
+                    </p>
+                  )}
                   <div>
                     <label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-1">Full Name</label>
                     <input
@@ -228,6 +346,7 @@ function CheckoutButton({ onSuccess }: { onSuccess: () => void }) {
                     <label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-2">Payment Method</label>
                     <div className="flex gap-2">
                       <button
+                        type="button"
                         onClick={() => setMethod('card')}
                         className={`flex-1 flex items-center justify-center gap-2 rounded-lg px-4 py-3 border font-inter text-sm transition-all ${
                           method === 'card'
@@ -238,6 +357,7 @@ function CheckoutButton({ onSuccess }: { onSuccess: () => void }) {
                         <CreditCard size={16} /> Card
                       </button>
                       <button
+                        type="button"
                         onClick={() => setMethod('cash')}
                         className={`flex-1 flex items-center justify-center gap-2 rounded-lg px-4 py-3 border font-inter text-sm transition-all ${
                           method === 'cash'
@@ -249,6 +369,8 @@ function CheckoutButton({ onSuccess }: { onSuccess: () => void }) {
                       </button>
                     </div>
                   </div>
+                  <PrivacyConsentField checked={privacyAccepted} onChange={setPrivacyAccepted} />
+                  <TurnstileWidget onVerify={setTurnstileToken} onExpire={() => setTurnstileToken('')} theme="dark" />
                 </div>
                 {error && (
                   <p className="font-inter text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded mx-5 mb-3 px-3 py-2">
@@ -261,10 +383,10 @@ function CheckoutButton({ onSuccess }: { onSuccess: () => void }) {
                   </button>
                   <button
                     onClick={handleCheckout}
-                    disabled={!name.trim() || !email.trim()}
+                    disabled={!name.trim() || !email.trim() || paying}
                     className="flex-1 bg-electric-blue hover:bg-blue-400 disabled:opacity-40 text-white font-inter font-semibold text-sm rounded-lg px-4 py-2.5 transition-colors"
                   >
-                    {method === 'card' ? 'Pay with Stripe' : 'Place Order'}
+                    {paying ? 'Redirecting to Stripe…' : method === 'card' ? (isStripeCheckoutConfigured() ? 'Pay with Stripe' : 'Continue to payment') : 'Place Order'}
                   </button>
                 </div>
               </>
@@ -273,6 +395,7 @@ function CheckoutButton({ onSuccess }: { onSuccess: () => void }) {
                 <CheckCircle size={56} className="text-green-400 mx-auto mb-4" />
                 <h3 className="font-oswald font-bold text-2xl text-white mb-2">Order Confirmed!</h3>
                 <p className="font-inter text-slate-300 mb-1">Thank you for supporting Dublin Lions BC.</p>
+                <p className="font-inter text-sm text-slate-400 mb-1">A confirmation email has been sent to {email || 'your inbox'}.</p>
                 <p className="font-inter text-sm text-slate-400 mb-6">Order ID: <span className="text-white font-mono">{orderId}</span></p>
                 <button
                   onClick={closeAll}
@@ -283,7 +406,43 @@ function CheckoutButton({ onSuccess }: { onSuccess: () => void }) {
               </div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
+      )}
+
+      {pendingOrder && (
+        <PaymentCheckout
+          open
+          title="Club store checkout"
+          description={`Order ${pendingOrder.id}`}
+          amount={pendingOrder.total}
+          onClose={() => setPendingOrder(null)}
+          onSuccess={({ cardLast4 }) => {
+            const paid = markOrderPaid(pendingOrder.id, cardLast4)
+            if (paid) {
+              void sendPurchaseConfirmationEmail({
+                customerName: paid.customerName,
+                customerEmail: paid.customerEmail,
+                purchaseType: 'store',
+                referenceId: paid.id,
+                amountCents: Math.round(paid.total * 100),
+                items: paid.items.map((item) => {
+                  const product = getProducts().find((p) => p.id === item.productId)
+                  return {
+                    name: item.productName,
+                    quantity: item.quantity,
+                    amountCents: Math.round(item.price * 100),
+                    imageUrl: toAbsoluteImageUrl(product?.imageKey),
+                  }
+                }),
+              })
+            }
+            setOrderId(pendingOrder.id)
+            setPendingOrder(null)
+            setDone(true)
+            setOpen(true)
+          }}
+        />
       )}
     </>
   )
@@ -297,6 +456,7 @@ export default function Store() {
   const [cartOpen, setCartOpen] = useState(false)
   const [cartCount, setCartCount] = useState(getCartCount)
   const [addedId, setAddedId] = useState<string | null>(null)
+  const [storeNotice, setStoreNotice] = useState('')
 
   useEffect(() => {
     const sync = () => {
@@ -306,8 +466,13 @@ export default function Store() {
     sync()
     const h = () => sync()
     window.addEventListener('dlbc-cart-change', h)
+    window.addEventListener('dlbc-auth-change', h)
     window.addEventListener('storage', h)
-    return () => { window.removeEventListener('dlbc-cart-change', h); window.removeEventListener('storage', h) }
+    return () => {
+      window.removeEventListener('dlbc-cart-change', h)
+      window.removeEventListener('dlbc-auth-change', h)
+      window.removeEventListener('storage', h)
+    }
   }, [])
 
   const filtered = useMemo(() => {
@@ -316,7 +481,13 @@ export default function Store() {
   }, [products, category])
 
   const handleAdd = useCallback((id: string) => {
-    addToCart(id)
+    const result = addToCart(id)
+    if (!result.ok) {
+      setStoreNotice(result.reason || 'Could not add to cart')
+      setTimeout(() => setStoreNotice(''), 3000)
+      return
+    }
+    setStoreNotice('')
     setCartCount(getCartCount())
     setAddedId(id)
     setTimeout(() => setAddedId((curr) => (curr === id ? null : curr)), 1200)
@@ -365,6 +536,14 @@ export default function Store() {
         </div>
       </div>
 
+      {storeNotice && (
+        <div className="px-4 md:px-8 lg:px-12 max-w-7xl mx-auto">
+          <p className="font-inter text-sm text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3 mb-4">
+            {storeNotice}
+          </p>
+        </div>
+      )}
+
       {/* Product Grid */}
       <div className="px-4 md:px-8 lg:px-12 pb-20 max-w-7xl mx-auto">
         {filtered.length === 0 ? (
@@ -391,9 +570,9 @@ export default function Store() {
                       <Package size={48} className="text-slate-700" />
                     </div>
                   )}
-                  {product.stock <= 5 && product.stock > 0 && (
+                  {product.stock <= LOW_STOCK_THRESHOLD && product.stock > 0 && (
                     <span className="absolute top-3 right-3 bg-amber-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded">
-                      Low Stock
+                      Only {product.stock} left
                     </span>
                   )}
                   {product.stock === 0 && (
@@ -423,6 +602,8 @@ export default function Store() {
                         <>
                           <CheckCircle size={14} /> Added
                         </>
+                      ) : product.stock === 0 ? (
+                        <>Out of Stock</>
                       ) : (
                         <>
                           <ShoppingBag size={14} /> Add to Cart
