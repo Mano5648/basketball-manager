@@ -9,6 +9,7 @@ import {
   getChatMessages,
   addChatMessage,
   getChatRoom,
+  getAnnouncements as getClubAnnouncements,
   getPayments,
   findPlayerByEmail,
   getFeeConfigForPlayer,
@@ -105,7 +106,7 @@ interface SessionEvent {
 }
 
 interface NotificationItem {
-  id: number
+  id: string
   title: string
   message: string
   date: string
@@ -196,28 +197,94 @@ function saveAttendanceStore(store: Record<string, { attended?: boolean; excused
   localStorage.setItem('dlbc_session_attendance', JSON.stringify(store))
 }
 
-function getMockNotifications(): NotificationItem[] {
-  const raw = localStorage.getItem('dlbc_notifications')
-  if (raw) {
-    try {
-      return JSON.parse(raw)
-    } catch {
-      // fall through
-    }
+const NOTIF_READ_KEY = 'dlbc_player_notif_read'
+const NOTIF_DELETED_KEY = 'dlbc_player_notif_deleted'
+
+function getNotifIdSet(key: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(key)
+    return new Set(raw ? (JSON.parse(raw) as string[]) : [])
+  } catch {
+    return new Set()
   }
-  const notifications: NotificationItem[] = [
-    { id: 1, title: 'Payment Reminder', message: 'Your monthly membership payment of €50 is due on 15 January 2025.', date: '2 hours ago', read: false, type: 'payment' },
-    { id: 2, title: 'Training Update', message: 'Tuesday training has been moved to 20:00 this week due to hall maintenance.', date: '1 day ago', read: false, type: 'session' },
-    { id: 3, title: 'New Club Announcement', message: 'The club is organising a fundraising event on 25 February. All players welcome!', date: '3 days ago', read: true, type: 'announcement' },
-    { id: 4, title: 'Match Day Info', message: 'Please arrive 30 minutes early for the match against Neptune BC this Saturday.', date: '5 days ago', read: true, type: 'session' },
-  ]
-  localStorage.setItem('dlbc_notifications', JSON.stringify(notifications))
-  return notifications
 }
 
-function saveNotifications(notifications: NotificationItem[]) {
-  localStorage.setItem('dlbc_notifications', JSON.stringify(notifications))
+function saveNotifIdSet(key: string, ids: Set<string>) {
+  localStorage.setItem(key, JSON.stringify([...ids]))
 }
+
+function relativeDate(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso
+  const diffMs = Date.now() - d.getTime()
+  const day = 24 * 60 * 60 * 1000
+  if (diffMs < 0) return d.toLocaleDateString('en-IE', { day: 'numeric', month: 'short' })
+  if (diffMs < day) return 'Today'
+  if (diffMs < 2 * day) return 'Yesterday'
+  const days = Math.floor(diffMs / day)
+  if (days < 7) return `${days} days ago`
+  return d.toLocaleDateString('en-IE', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+/** Build the member's notifications from REAL club data (no placeholders). */
+function buildPlayerNotifications(clubPlayer: ClubPlayer | null): NotificationItem[] {
+  const readIds = getNotifIdSet(NOTIF_READ_KEY)
+  const deletedIds = getNotifIdSet(NOTIF_DELETED_KEY)
+  const items: NotificationItem[] = []
+
+  // 1) Outstanding membership fee.
+  if (clubPlayer && !needsPlayerOnboarding(clubPlayer)) {
+    const focus = getMemberPaymentFocus(clubPlayer)
+    if (focus && !isMemberFeePaid(clubPlayer)) {
+      const id = focus === 'monthly' ? `fee-monthly-${currentMonthLabel()}` : 'fee-registration'
+      items.push({
+        id,
+        title: focus === 'monthly' ? 'Membership payment due' : 'Registration fee due',
+        message:
+          focus === 'monthly'
+            ? `Your membership fee for ${currentMonthLabel()} hasn't been recorded yet. Pay it from the Payments tab.`
+            : 'Your one-time registration fee is outstanding. Pay it from the Payments tab.',
+        date: 'Now',
+        read: readIds.has(id),
+        type: 'payment',
+      })
+    }
+  }
+
+  // 2) Next upcoming session for the member's team.
+  if (clubPlayer && hasTeamAssignment(clubPlayer)) {
+    const todayIso = new Date().toISOString().split('T')[0]
+    const next = loadClubScheduleForPlayer(clubPlayer).find((s) => s.date >= todayIso)
+    if (next) {
+      const id = `session-${next.id}`
+      items.push({
+        id,
+        title: next.type === 'Match' ? 'Upcoming match' : `Upcoming ${next.type.toLowerCase()}`,
+        message: `${next.title} on ${new Date(next.date).toLocaleDateString('en-IE', { weekday: 'long', day: 'numeric', month: 'long' })} at ${next.time}, ${next.venue}.`,
+        date: relativeDate(next.date),
+        read: readIds.has(id),
+        type: 'session',
+      })
+    }
+  }
+
+  // 3) Club announcements broadcast by the manager.
+  for (const a of getClubAnnouncements()) {
+    if (a.status !== 'Sent') continue
+    const id = `ann-${a.id}`
+    items.push({
+      id,
+      title: a.subject,
+      message: a.message,
+      date: relativeDate(a.date),
+      read: readIds.has(id),
+      type: 'announcement',
+    })
+  }
+
+  return items.filter((n) => !deletedIds.has(n.id))
+}
+
 
 const TAB_CONFIG: { key: TabKey; label: string; icon: React.ElementType }[] = [
   { key: 'overview', label: 'My Dashboard', icon: LayoutDashboard },
@@ -555,6 +622,10 @@ function OverviewTab({
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
   const firstName = user.name.split(' ')[0]
   const registeredChildren = clubPlayer ? getRegisteredChildrenSummary(clubPlayer) : []
+  const clubNews = getClubAnnouncements()
+    .filter((a) => a.status === 'Sent')
+    .slice(0, 3)
+    .map((a) => ({ id: a.id, title: a.subject, preview: a.message, date: relativeDate(a.date) }))
 
   const fade = (delay = 0) =>
     reduceMotion
@@ -753,31 +824,23 @@ function OverviewTab({
             </button>
           </div>
           <ul className="player-news-list">
-            {[
-              {
-                title: 'Fundraiser — 25 February',
-                preview: 'All players and families welcome at our winter fundraiser.',
-                date: '3 days ago',
-              },
-              {
-                title: 'Kit pre-orders open',
-                preview: 'Early orders for the 2025/26 season kit are now available.',
-                date: '1 week ago',
-              },
-              {
-                title: 'Mid-season check-ins',
-                preview: 'Coaches will reach out to arrange short progress chats.',
-                date: '2 weeks ago',
-              },
-            ].map((item) => (
-              <li key={item.title} className="player-news-item">
+            {clubNews.length === 0 ? (
+              <li className="player-news-item">
                 <div>
-                  <p className="player-news-item__title">{item.title}</p>
-                  <p className="player-news-item__preview">{item.preview}</p>
+                  <p className="player-news-item__preview">No club announcements yet. Check back soon.</p>
                 </div>
-                <span className="player-news-item__date">{item.date}</span>
               </li>
-            ))}
+            ) : (
+              clubNews.map((item) => (
+                <li key={item.id} className="player-news-item">
+                  <div>
+                    <p className="player-news-item__title">{item.title}</p>
+                    <p className="player-news-item__preview">{item.preview}</p>
+                  </div>
+                  <span className="player-news-item__date">{item.date}</span>
+                </li>
+              ))
+            )}
           </ul>
         </motion.section>
       </div>
@@ -1615,25 +1678,32 @@ function ProfileTab({
 }
 
 /* ───────── Notifications Tab ───────── */
-function NotificationsTab() {
-  const [notifications, setNotifications] = useState<NotificationItem[]>(getMockNotifications)
+function NotificationsTab({ clubPlayer }: { clubPlayer: ClubPlayer | null }) {
+  const [notifications, setNotifications] = useState<NotificationItem[]>(() => buildPlayerNotifications(clubPlayer))
 
-  const markRead = (id: number) => {
-    const updated = notifications.map((n) => (n.id === id ? { ...n, read: true } : n))
-    setNotifications(updated)
-    saveNotifications(updated)
+  useEffect(() => {
+    setNotifications(buildPlayerNotifications(clubPlayer))
+  }, [clubPlayer])
+
+  const markRead = (id: string) => {
+    const readIds = getNotifIdSet(NOTIF_READ_KEY)
+    readIds.add(id)
+    saveNotifIdSet(NOTIF_READ_KEY, readIds)
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)))
   }
 
-  const markUnread = (id: number) => {
-    const updated = notifications.map((n) => (n.id === id ? { ...n, read: false } : n))
-    setNotifications(updated)
-    saveNotifications(updated)
+  const markUnread = (id: string) => {
+    const readIds = getNotifIdSet(NOTIF_READ_KEY)
+    readIds.delete(id)
+    saveNotifIdSet(NOTIF_READ_KEY, readIds)
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: false } : n)))
   }
 
-  const deleteNotif = (id: number) => {
-    const updated = notifications.filter((n) => n.id !== id)
-    setNotifications(updated)
-    saveNotifications(updated)
+  const deleteNotif = (id: string) => {
+    const deletedIds = getNotifIdSet(NOTIF_DELETED_KEY)
+    deletedIds.add(id)
+    saveNotifIdSet(NOTIF_DELETED_KEY, deletedIds)
+    setNotifications((prev) => prev.filter((n) => n.id !== id))
   }
 
   const typeIcon = (type: NotificationItem['type']) => {
@@ -1659,6 +1729,13 @@ function NotificationsTab() {
       </div>
 
       <div className="space-y-3">
+        {notifications.length === 0 && (
+          <div className="bg-[#1E293B] border border-white/[0.08] rounded-xl p-8 text-center">
+            <Bell size={28} className="mx-auto text-slate-500 mb-3" />
+            <p className="font-inter text-sm text-slate-300 font-medium">You're all caught up</p>
+            <p className="font-inter text-xs text-slate-500 mt-1">Club announcements, fee reminders, and upcoming sessions will appear here.</p>
+          </div>
+        )}
         {notifications.map((notif) => (
           <div
             key={notif.id}
@@ -1956,7 +2033,7 @@ export default function PlayerDashboard() {
     )
   }
 
-  const unreadCount = getMockNotifications().filter((n) => !n.read).length
+  const unreadCount = buildPlayerNotifications(clubPlayer).filter((n) => !n.read).length
 
   return (
     <div className="dashboard-shell player-dash min-h-[100dvh] flex">
@@ -2122,7 +2199,7 @@ export default function PlayerDashboard() {
                 onClubPlayerUpdate={setClubPlayer}
               />
             )}
-            {activeTab === 'notifications' && <NotificationsTab />}
+            {activeTab === 'notifications' && <NotificationsTab clubPlayer={clubPlayer} />}
             {activeTab === 'chat' && <ChatTab user={user} />}
           </div>
         </main>

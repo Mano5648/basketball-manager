@@ -911,7 +911,38 @@ function mergeContributionIntoPlayers(value: unknown): void {
   const rows = Array.isArray(value) ? (value as Player[]) : []
   if (rows.length === 0) return
   const local = readPlayersFromStorage()
-  const merged = mergePlayersForSync(local, rows)
+
+  // The contributor's own row has no parentPlayerId; its children carry
+  // parentPlayerId === owner.id. The contribution is authoritative for THIS
+  // owner's set of children, so we must also honour deletions: drop any child
+  // rows for this owner that the contribution no longer includes.
+  const ownerRow = rows.find((r) => !r.parentPlayerId) ?? null
+  const ownerId = ownerRow?.id
+
+  let base = local
+  if (ownerId) {
+    const contribIds = new Set(rows.map((r) => r.id))
+    base = local.filter((p) => !(p.parentPlayerId === ownerId && !contribIds.has(p.id)))
+  }
+
+  let merged = mergePlayersForSync(base, rows)
+
+  // mergePlayersForSync keeps the "largest" registeredChildren set, which would
+  // resurrect a deleted child. The contributor owns their own row, so take its
+  // children list verbatim.
+  if (ownerRow) {
+    merged = merged.map((p) =>
+      p.id === ownerRow.id
+        ? {
+            ...p,
+            registeredChildren: ownerRow.registeredChildren,
+            childName: ownerRow.childName,
+            childDob: ownerRow.childDob,
+          }
+        : p,
+    )
+  }
+
   if (JSON.stringify(merged) !== JSON.stringify(local)) {
     setPlayers(merged)
   }
@@ -934,19 +965,13 @@ export function syncRegisteredChildrenFromAuthMetadata(
 
   const authChildren = parseAuthRegisteredChildren(metadata?.registeredChildren)
   const localChildren = getRegisteredChildren(player)
-  const children = authChildren?.length ? authChildren : localChildren
 
-  if (children.length === 0) return player
-
-  const childrenMatch =
-    localChildren.length === children.length &&
-    children.every((child) =>
-      localChildren.some(
-        (local) => local.id === child.id && local.name === child.name && local.dob === child.dob,
-      ),
-    )
-
-  if (!childrenMatch && authChildren?.length) {
+  // Local is the source of truth for edits made on THIS device. Only restore
+  // children from auth metadata when local has none (recovery after a fresh
+  // login / sync reset). Never overwrite a just-saved local edit — doing so
+  // reverted both newly-added children AND deletions (auth metadata lags the
+  // updateUser round-trip, so it is frequently stale right after a save).
+  if (localChildren.length === 0 && authChildren?.length) {
     return updateRegisteredChildren(player.id, authChildren)
   }
 
