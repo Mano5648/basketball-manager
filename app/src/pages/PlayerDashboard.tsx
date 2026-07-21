@@ -213,6 +213,19 @@ function saveNotifIdSet(key: string, ids: Set<string>) {
   localStorage.setItem(key, JSON.stringify([...ids]))
 }
 
+async function updateAuthUserData(data: Record<string, unknown>): Promise<void> {
+  if (!supabase) return
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const { error } = await supabase.auth.updateUser({ data })
+      if (!error) return
+    } catch {
+      /* transient network error — retry */
+    }
+    await new Promise((r) => setTimeout(r, 600 * (attempt + 1)))
+  }
+}
+
 function relativeDate(iso: string): string {
   const d = new Date(iso)
   if (isNaN(d.getTime())) return iso
@@ -369,14 +382,13 @@ function OnboardingScreen({
           return
         }
         if (supabase) {
-          await supabase.auth.updateUser({
-            data: {
-              memberType,
-              registeredChildren: updated.registeredChildren ?? [],
-              alsoPlays: updated.alsoPlays ?? false,
-              birthYear: updated.birthYear ?? null,
-              onboardingCompletedAt: updated.onboardingCompletedAt ?? new Date().toISOString(),
-            },
+          await updateAuthUserData({
+            memberType,
+            registeredChildren: updated.registeredChildren ?? [],
+            childrenUpdatedAt: updated.childrenUpdatedAt ?? Date.now(),
+            alsoPlays: updated.alsoPlays ?? false,
+            birthYear: updated.birthYear ?? null,
+            onboardingCompletedAt: updated.onboardingCompletedAt ?? new Date().toISOString(),
           })
         }
         await ensureClubRosterSynced()
@@ -404,12 +416,10 @@ function OnboardingScreen({
         return
       }
       if (supabase) {
-        await supabase.auth.updateUser({
-          data: {
-            memberType: 'player',
-            birthYear: year,
-            onboardingCompletedAt: updated.onboardingCompletedAt ?? new Date().toISOString(),
-          },
+        await updateAuthUserData({
+          memberType: 'player',
+          birthYear: year,
+          onboardingCompletedAt: updated.onboardingCompletedAt ?? new Date().toISOString(),
         })
       }
       await ensureClubRosterSynced()
@@ -1470,13 +1480,12 @@ function ProfileTab({
       }
 
       if (supabase) {
-        await supabase.auth.updateUser({
-          data: {
-            memberType: updated.memberType ?? 'player',
-            registeredChildren: updated.registeredChildren ?? [],
-            alsoPlays: updated.alsoPlays ?? false,
-            birthYear: updated.birthYear ?? null,
-          },
+        await updateAuthUserData({
+          memberType: updated.memberType ?? 'player',
+          registeredChildren: updated.registeredChildren ?? [],
+          childrenUpdatedAt: updated.childrenUpdatedAt ?? Date.now(),
+          alsoPlays: updated.alsoPlays ?? false,
+          birthYear: updated.birthYear ?? null,
         })
       }
 

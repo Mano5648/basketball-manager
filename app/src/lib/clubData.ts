@@ -80,6 +80,8 @@ export interface Player {
   registeredChildId?: string
   /** Set when the member finishes the player/parent onboarding wizard. */
   onboardingCompletedAt?: string
+  /** Monotonic client timestamp of the last edit to registeredChildren (last-write-wins). */
+  childrenUpdatedAt?: number
 }
 
 export interface RegisteredChild {
@@ -892,17 +894,27 @@ export async function pushMemberRosterContribution(): Promise<void> {
   if (!contact?.email || currentUserIsManager()) return
   const owned = computeOwnedRosterRows(contact.email)
   if (owned.length === 0) return
+  let uid: string | undefined
   try {
     const { data } = await supabase.auth.getUser()
-    const uid = data.user?.id
-    if (!uid) return
-    const key = CONTRIB_PREFIX + uid
-    const { error } = await supabase
-      .from('app_state')
-      .upsert({ key, value: owned, updated_at: new Date().toISOString() }, { onConflict: 'key' })
-    if (error) console.warn('[app_state] member contribution sync failed', error.message)
+    uid = data.user?.id
   } catch {
-    /* offline or unreachable — keep working from localStorage */
+    uid = undefined
+  }
+  if (!uid) return
+  const key = CONTRIB_PREFIX + uid
+  const payload = { key, value: owned, updated_at: new Date().toISOString() }
+  // Retry on transient network failures ("Failed to fetch") so a dropped push
+  // doesn't leave the remote roster (and therefore the manager) stale.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const { error } = await supabase.from('app_state').upsert(payload, { onConflict: 'key' })
+      if (!error) return
+      console.warn('[app_state] member contribution sync failed', error.message)
+    } catch (e) {
+      console.warn('[app_state] member contribution push threw, retrying', e)
+    }
+    await new Promise((r) => setTimeout(r, 600 * (attempt + 1)))
   }
 }
 
@@ -937,6 +949,16 @@ function mergeContributionIntoPlayers(value: unknown): void {
   const ownerRow = rows.find((r) => !r.parentPlayerId) ?? null
   const ownerId = ownerRow?.id
 
+  // Ignore a stale contribution: if the manager already holds a newer edit for
+  // this owner (larger childrenUpdatedAt), don't let an out-of-order/retried
+  // push revert it.
+  if (ownerRow && ownerId) {
+    const localOwner = local.find((p) => p.id === ownerId)
+    const localTs = localOwner?.childrenUpdatedAt ?? 0
+    const contribTs = ownerRow.childrenUpdatedAt ?? 0
+    if (localOwner && contribTs < localTs) return
+  }
+
   let base = local
   if (ownerId) {
     const contribIds = new Set(rows.map((r) => r.id))
@@ -956,6 +978,7 @@ function mergeContributionIntoPlayers(value: unknown): void {
             registeredChildren: ownerRow.registeredChildren,
             childName: ownerRow.childName,
             childDob: ownerRow.childDob,
+            childrenUpdatedAt: ownerRow.childrenUpdatedAt,
           }
         : p,
     )
@@ -983,14 +1006,18 @@ export function syncRegisteredChildrenFromAuthMetadata(
 
   const authChildren = parseAuthRegisteredChildren(metadata?.registeredChildren)
   const localChildren = getRegisteredChildren(player)
+  const authTs = typeof metadata?.childrenUpdatedAt === 'number' ? metadata.childrenUpdatedAt : 0
+  const localTs = player.childrenUpdatedAt ?? 0
 
-  // Local is the source of truth for edits made on THIS device. Only restore
-  // children from auth metadata when local has none (recovery after a fresh
-  // login / sync reset). Never overwrite a just-saved local edit — doing so
-  // reverted both newly-added children AND deletions (auth metadata lags the
-  // updateUser round-trip, so it is frequently stale right after a save).
-  if (localChildren.length === 0 && authChildren?.length) {
-    return updateRegisteredChildren(player.id, authChildren)
+  // Last-write-wins. Restore children FROM auth metadata only when it is
+  // genuinely newer than the local edit (e.g. changed on another device), or
+  // when local has no record at all (fresh-device recovery). This prevents a
+  // stale auth-metadata snapshot from resurrecting a just-added/deleted child
+  // after reload — the exact revert bug we hit when a Supabase push failed.
+  const authIsNewer = authTs > localTs
+  const localNeverEdited = localTs === 0 && localChildren.length === 0
+  if (authChildren && (authIsNewer || (localNeverEdited && authChildren.length > 0))) {
+    return updateRegisteredChildren(player.id, authChildren, authTs || Date.now())
   }
 
   if (hasUnsyncedParentChildren()) {
@@ -1081,6 +1108,7 @@ export function completePlayerOnboarding(
     guardianName: isParent ? current.guardianName || current.name : current.guardianName,
     paymentPlan: isParent ? 'Monthly' : current.paymentPlan,
     onboardingCompletedAt: new Date().toISOString(),
+    childrenUpdatedAt: Date.now(),
   }
   const next = [...players]
   next[idx] = updated
@@ -1089,7 +1117,11 @@ export function completePlayerOnboarding(
   return updated
 }
 
-export function updateRegisteredChildren(playerId: string, children: RegisteredChild[]): Player | null {
+export function updateRegisteredChildren(
+  playerId: string,
+  children: RegisteredChild[],
+  childrenUpdatedAt: number = Date.now(),
+): Player | null {
   const players = getPlayers()
   const idx = players.findIndex((p) => p.id === playerId)
   if (idx < 0) return null
@@ -1131,6 +1163,7 @@ export function updateRegisteredChildren(playerId: string, children: RegisteredC
     alsoPlays: memberType === 'parent' ? alsoPlays : undefined,
     paymentPlan,
     guardianName: memberType === 'parent' ? current.guardianName || current.name : current.guardianName,
+    childrenUpdatedAt,
   }
   const next = [...players]
   next[idx] = updated
