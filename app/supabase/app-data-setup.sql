@@ -91,16 +91,26 @@ create policy "app_state_manager_read_all"
   to authenticated
   using (public.is_manager());
 
+-- Any authenticated member can contribute shared state. This is required so
+-- that non-manager sign-ups actually reach the club: a parent registering a
+-- child (dlbc_players), a member sending a Team Chat message (dlbc_chat_*),
+-- buying a ticket (dlbc_ticket_purchases) or recording a card payment
+-- (dlbc_payments) all write via the same localStorage->app_state mirror.
+-- Restricting writes to managers silently dropped every member contribution
+-- (RLS rejected the upsert), so children never appeared in the manager roster.
+-- Reads stay locked down above (member PII is manager-only); the client merges
+-- local + remote rows (see mergePlayersForSync) so concurrent writers converge.
 create policy "app_state_auth_insert"
   on public.app_state for insert
   to authenticated
-  with check (public.is_manager());
+  with check (true);
 
 create policy "app_state_auth_update"
   on public.app_state for update
   to authenticated
-  using (public.is_manager()) with check (public.is_manager());
+  using (true) with check (true);
 
+-- Deletes remain manager-only to prevent members clearing shared records.
 create policy "app_state_auth_delete"
   on public.app_state for delete
   to authenticated

@@ -1466,6 +1466,37 @@ export async function ensureAppStateKeySynced(key: string): Promise<void> {
  * every open tab/device stays in sync without a refresh. No-ops when
  * Supabase isn't configured (the app keeps working purely from localStorage).
  */
+function applyRemoteAppStateRow(key: string, value: unknown) {
+  if (!SYNCED_KEYS.has(key)) return
+  if (key === KEYS.players) {
+    applySyncedPlayersValue(value)
+    window.dispatchEvent(new StorageEvent('storage', { key }))
+    return
+  }
+  localStorage.setItem(key, JSON.stringify(value))
+  window.dispatchEvent(new StorageEvent('storage', { key }))
+}
+
+/**
+ * Re-pull the shared app_state table into localStorage (merging, not
+ * overwriting). Used both on startup and as a lightweight polling fallback so
+ * the manager dashboard picks up new member sign-ups even when Supabase
+ * Realtime isn't delivering events. No-ops without Supabase.
+ */
+export async function pullRemoteAppState(): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return
+  try {
+    const { data, error } = await supabase.from('app_state').select('key, value')
+    if (error || !data) return
+    for (const row of data as { key: string; value: unknown }[]) {
+      applyRemoteAppStateRow(row.key, row.value)
+    }
+    reconcileClubRosterIfNeeded()
+  } catch {
+    /* offline or unreachable — keep working from localStorage */
+  }
+}
+
 export async function initAppStateSync(): Promise<void> {
   if (appStateSyncPromise) return appStateSyncPromise
   if (!isSupabaseConfigured || !supabase) {
@@ -1473,16 +1504,7 @@ export async function initAppStateSync(): Promise<void> {
     return appStateSyncPromise
   }
   appStateSyncPromise = (async () => {
-  const applyRemoteRow = (key: string, value: unknown) => {
-    if (!SYNCED_KEYS.has(key)) return
-    if (key === KEYS.players) {
-      applySyncedPlayersValue(value)
-      window.dispatchEvent(new StorageEvent('storage', { key }))
-      return
-    }
-    localStorage.setItem(key, JSON.stringify(value))
-    window.dispatchEvent(new StorageEvent('storage', { key }))
-  }
+  const applyRemoteRow = applyRemoteAppStateRow
 
   // Awaited so callers (e.g. pruneDemoSeedData in main.tsx) can safely run
   // AFTER remote state has been merged in — otherwise a fresh device could

@@ -148,6 +148,7 @@ import {
   isRosterListedMember,
   reconcileClubRoster,
   reconcileClubRosterIfNeeded,
+  pullRemoteAppState,
   whenClubDataReady,
   ensureClubRosterSynced,
   getRosterListedMembers,
@@ -253,9 +254,17 @@ function useLiveData() {
     }
     window.addEventListener('storage', handler)
     const interval = setInterval(refresh, 3000)
+    // Realtime can silently fail (e.g. publication not enabled), so also
+    // re-pull the shared state periodically. This is how a manager keeps
+    // seeing brand-new member/child sign-ups without a manual page reload.
+    const remotePull = setInterval(() => {
+      void pullRemoteAppState().then(() => refresh())
+    }, 12000)
+    void pullRemoteAppState().then(() => refresh())
     return () => {
       window.removeEventListener('storage', handler)
       clearInterval(interval)
+      clearInterval(remotePull)
     }
   }, [refresh])
 
