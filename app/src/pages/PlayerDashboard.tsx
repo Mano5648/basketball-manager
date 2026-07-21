@@ -24,7 +24,22 @@ import {
   getMemberPaymentFocus,
   hasTeamAssignment,
   getSessionsForPlayer,
+  calcAgeFromBirthYear,
+  isValidBirthYear,
+  isValidChildDob,
+  getRegisteredChildren,
+  getFeeConfigForBirthYear,
+  getPlayerBirthYear,
+  updateRegisteredChildren,
+  getTeamIdsForMember,
   calcAge,
+  ensureClubRosterSynced,
+  whenClubDataReady,
+  syncPlayerProfileFromAuthMetadata,
+  getChildRosterPlayersForParent,
+  childRosterPlayerId,
+  getTeamAgeDivisionLabel,
+  type RegisteredChild,
   type Player as ClubPlayer,
   type ChatMessage,
   type Payment,
@@ -36,6 +51,7 @@ import { sendPurchaseConfirmationEmail } from '@/lib/purchaseEmail'
 import { toAbsoluteImageUrl } from '@/lib/imageUrl'
 import { useAuth } from '@/lib/AuthContext'
 import { supabase } from '@/lib/supabase'
+import { BirthYearPicker, ChildDobPicker } from '@/components/forms/BirthDateFields'
 import {
   LayoutDashboard,
   CreditCard,
@@ -57,6 +73,7 @@ import {
   ArrowRight,
   Menu,
   Users,
+  Plus,
 } from 'lucide-react'
 
 interface PlayerUser {
@@ -221,23 +238,12 @@ function isMemberFeePaid(player: ClubPlayer): boolean {
 }
 
 /* ───────── First-login onboarding ───────── */
-function isValidDob(value: string): boolean {
-  if (!value) return false
-  const d = new Date(value)
-  if (isNaN(d.getTime())) return false
-  const today = new Date()
-  today.setHours(23, 59, 59, 999)
-  return d <= today
-}
+type ChildDraft = { id: string; name: string; dob: string; gender: 'Male' | 'Female' }
 
-function AgeFromDob({ dob }: { dob: string }) {
-  const age = calcAge(dob)
-  if (age === null) return null
-  return (
-    <p className="mt-1.5 font-inter text-sm text-slate-500">
-      Age: <span className="font-medium text-slate-700">{age}</span> years old
-    </p>
-  )
+const MIN_CHILD_AGE = 10
+
+function newChildDraft(): ChildDraft {
+  return { id: `child-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, name: '', dob: '', gender: 'Male' }
 }
 
 function OnboardingScreen({
@@ -251,60 +257,98 @@ function OnboardingScreen({
 }) {
   const reduceMotion = useReducedMotion()
   const [memberType, setMemberType] = useState<'player' | 'parent' | null>(null)
-  const [childName, setChildName] = useState('')
-  const [childDob, setChildDob] = useState('')
-  const [dob, setDob] = useState('')
+  const [children, setChildren] = useState<ChildDraft[]>([newChildDraft()])
+  const [birthYear, setBirthYear] = useState('')
   const [alsoPlays, setAlsoPlays] = useState(false)
+  const [parentBirthYear, setParentBirthYear] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!memberType) {
       setError('Please choose how you are registering.')
       return
     }
     if (memberType === 'parent') {
-      if (!childName.trim()) {
-        setError('Please enter your child\'s name.')
+      const validChildren = children
+        .map((c) => ({
+          id: c.id,
+          name: c.name.trim(),
+          dob: c.dob.trim(),
+          gender: c.gender,
+        }))
+        .filter((c) => c.name && isValidChildDob(c.dob))
+
+      if (validChildren.length === 0) {
+        setError(`Please add at least one child with a name and full date of birth (minimum age ${MIN_CHILD_AGE}).`)
         return
       }
-      if (!isValidDob(childDob)) {
-        setError('Please enter your child\'s date of birth.')
+      if (alsoPlays && !isValidBirthYear(parseInt(parentBirthYear, 10))) {
+        setError('Please enter your year of birth if you are also playing.')
         return
       }
-      if (alsoPlays && !isValidDob(dob)) {
-        setError('Please enter your date of birth to register as a player.')
-        return
+      setError('')
+      setSaving(true)
+      try {
+        const updated = completePlayerOnboarding(clubPlayer.id, {
+          memberType,
+          registeredChildren: validChildren,
+          birthYear: alsoPlays ? parseInt(parentBirthYear, 10) : undefined,
+          alsoPlays,
+        })
+        if (!updated) {
+          setError('Could not save your details. Please try again.')
+          return
+        }
+        if (supabase) {
+          await supabase.auth.updateUser({
+            data: {
+              memberType,
+              registeredChildren: updated.registeredChildren ?? [],
+              alsoPlays: updated.alsoPlays ?? false,
+              birthYear: updated.birthYear ?? null,
+              onboardingCompletedAt: updated.onboardingCompletedAt ?? new Date().toISOString(),
+            },
+          })
+        }
+        await ensureClubRosterSynced()
+        onComplete(updated)
+      } finally {
+        setSaving(false)
       }
-    } else if (!isValidDob(dob)) {
-      setError('Please enter your date of birth.')
+      return
+    }
+
+    const year = parseInt(birthYear, 10)
+    if (!isValidBirthYear(year)) {
+      setError('Please select your year of birth.')
       return
     }
     setError('')
     setSaving(true)
-    const updated = completePlayerOnboarding(clubPlayer.id, {
-      memberType,
-      childName: memberType === 'parent' ? childName : undefined,
-      childDob: memberType === 'parent' ? childDob : undefined,
-      dob: memberType === 'player' || alsoPlays ? dob : undefined,
-      alsoPlays: memberType === 'parent' ? alsoPlays : undefined,
-    })
-    setSaving(false)
-    if (!updated) {
-      setError('Could not save your details. Please try again.')
-      return
-    }
-    if (supabase) {
-      void supabase.auth.updateUser({
-        data: {
-          memberType,
-          childName: updated.childName ?? null,
-          childDob: updated.childDob ?? null,
-          alsoPlays: updated.alsoPlays ?? false,
-        },
+    try {
+      const updated = completePlayerOnboarding(clubPlayer.id, {
+        memberType: 'player',
+        birthYear: year,
       })
+      if (!updated) {
+        setError('Could not save your details. Please try again.')
+        return
+      }
+      if (supabase) {
+        await supabase.auth.updateUser({
+          data: {
+            memberType: 'player',
+            birthYear: year,
+            onboardingCompletedAt: updated.onboardingCompletedAt ?? new Date().toISOString(),
+          },
+        })
+      }
+      await ensureClubRosterSynced()
+      onComplete(updated)
+    } finally {
+      setSaving(false)
     }
-    onComplete(updated)
   }
 
   const fade = (delay = 0) =>
@@ -317,12 +361,12 @@ function OnboardingScreen({
         }
 
   return (
-    <div className="player-onboarding min-h-[100dvh] flex items-center justify-center p-6 bg-[#f4f7fc]">
+    <div className="dashboard-shell player-dash player-onboarding min-h-[100dvh] flex items-center justify-center p-6 bg-[#f4f7fc]">
       <motion.div className="player-onboarding__card dash-card w-full max-w-lg p-8 md:p-10" {...fade(0)}>
         <p className="font-inter text-[11px] uppercase tracking-[0.28em] text-lions-600 font-semibold">Welcome</p>
         <h2 className="font-oswald font-bold text-3xl text-slate-900 mt-2">Hi {user.name.split(' ')[0]}</h2>
         <p className="font-inter text-slate-600 mt-2 leading-relaxed">
-          Before we show your fees, tell us how you&apos;re joining Dublin Lions.
+          Tell us a bit about who is joining Dublin Lions so we can set up your account.
         </p>
 
         <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -333,7 +377,7 @@ function OnboardingScreen({
           >
             <Users size={22} className="text-lions-600" />
             <span className="font-inter font-semibold text-slate-900">I&apos;m a parent</span>
-            <span className="font-inter text-xs text-slate-500">Registering my child · monthly fee</span>
+            <span className="font-inter text-xs text-slate-500">Registering my child or children</span>
           </button>
           <button
             type="button"
@@ -342,32 +386,69 @@ function OnboardingScreen({
           >
             <User size={22} className="text-lions-600" />
             <span className="font-inter font-semibold text-slate-900">I&apos;m a player</span>
-            <span className="font-inter text-xs text-slate-500">Registering myself · one-time fee</span>
+            <span className="font-inter text-xs text-slate-500">Registering myself</span>
           </button>
         </div>
 
         {memberType === 'parent' && (
           <motion.div className="mt-5 space-y-4" {...fade(0.05)}>
-            <div>
-              <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Child&apos;s name</label>
-              <input
-                type="text"
-                value={childName}
-                onChange={(e) => setChildName(e.target.value)}
-                placeholder="e.g. Jamie O'Brien"
-                className="dash-input w-full"
-              />
-            </div>
-            <div>
-              <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Child&apos;s date of birth</label>
-              <input
-                type="date"
-                value={childDob}
-                max={new Date().toISOString().split('T')[0]}
-                onChange={(e) => setChildDob(e.target.value)}
-                className="dash-input w-full"
-              />
-              <AgeFromDob dob={childDob} />
+            <div className="space-y-3">
+              <p className="font-inter text-sm font-medium text-slate-800">Your children</p>
+              {children.map((child, index) => (
+                <div key={child.id} className="player-onboarding__child-row rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-inter text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      Child {index + 1}
+                    </p>
+                    {children.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setChildren((prev) => prev.filter((c) => c.id !== child.id))}
+                        className="font-inter text-xs text-red-600 hover:text-red-700 flex items-center gap-1"
+                      >
+                        <Trash2 size={12} /> Remove
+                      </button>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Name</label>
+                    <input
+                      type="text"
+                      value={child.name}
+                      onChange={(e) => setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, name: e.target.value } : c)))}
+                      placeholder="e.g. Jamie O'Brien"
+                      className="dash-input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Date of birth</label>
+                    <ChildDobPicker
+                      id={`child-dob-${child.id}`}
+                      value={child.dob}
+                      onChange={(dob) => setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, dob } : c)))}
+                    />
+                    <p className="mt-1 font-inter text-xs text-slate-500">Must be at least {MIN_CHILD_AGE} years old.</p>
+                  </div>
+                  <div>
+                    <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Gender</label>
+                    <select
+                      value={child.gender}
+                      onChange={(e) => setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, gender: e.target.value as 'Male' | 'Female' } : c)))}
+                      className="dash-input w-full"
+                    >
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                    </select>
+                  </div>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => setChildren((prev) => [...prev, newChildDraft()])}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-slate-300 text-slate-600 hover:border-lions-400 hover:text-lions-700 font-inter text-sm transition-colors"
+              >
+                <Plus size={16} /> Add another child
+              </button>
             </div>
             <label className="player-onboarding__checkbox flex items-start gap-3 cursor-pointer">
               <input
@@ -375,26 +456,18 @@ function OnboardingScreen({
                 checked={alsoPlays}
                 onChange={(e) => {
                   setAlsoPlays(e.target.checked)
-                  if (!e.target.checked) setDob('')
+                  if (!e.target.checked) setParentBirthYear('')
                 }}
                 className="mt-1 h-4 w-4 rounded border-slate-300 text-lions-600 focus:ring-lions-500"
               />
               <span className="font-inter text-sm text-slate-700 leading-snug">
                 I also want to play myself
-                <span className="block text-xs text-slate-500 mt-0.5">One-time registration fee applies for you as a player.</span>
               </span>
             </label>
             {alsoPlays && (
               <div>
-                <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Your date of birth</label>
-                <input
-                  type="date"
-                  value={dob}
-                  max={new Date().toISOString().split('T')[0]}
-                  onChange={(e) => setDob(e.target.value)}
-                  className="dash-input w-full"
-                />
-                <AgeFromDob dob={dob} />
+                <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Your year of birth</label>
+                <BirthYearPicker value={parentBirthYear} onChange={setParentBirthYear} />
               </div>
             )}
           </motion.div>
@@ -402,15 +475,8 @@ function OnboardingScreen({
 
         {memberType === 'player' && (
           <motion.div className="mt-5" {...fade(0.05)}>
-            <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Your date of birth</label>
-            <input
-              type="date"
-              value={dob}
-              max={new Date().toISOString().split('T')[0]}
-              onChange={(e) => setDob(e.target.value)}
-              className="dash-input w-full"
-            />
-            <AgeFromDob dob={dob} />
+            <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Your year of birth</label>
+            <BirthYearPicker value={birthYear} onChange={setBirthYear} />
           </motion.div>
         )}
 
@@ -429,6 +495,40 @@ function OnboardingScreen({
       </motion.div>
     </div>
   )
+}
+
+function formatChildDob(dob: string): string {
+  const d = new Date(dob)
+  if (isNaN(d.getTime())) return dob
+  return d.toLocaleDateString('en-IE', { day: 'numeric', month: 'long', year: 'numeric' })
+}
+
+function getRegisteredChildrenSummary(parent: ClubPlayer) {
+  const registered = getRegisteredChildren(parent)
+  if (registered.length === 0) return []
+
+  const rosterChildren = getChildRosterPlayersForParent(parent.id)
+  const teams = getClubTeams()
+
+  return registered.map((child) => {
+    const rosterId = childRosterPlayerId(parent.id, child.id)
+    const rosterPlayer =
+      rosterChildren.find((c) => c.id === rosterId || c.registeredChildId === child.id) ?? null
+    const team = rosterPlayer?.teamIds[0]
+      ? teams.find((t) => t.id === rosterPlayer.teamIds[0]) ?? null
+      : null
+
+    return {
+      id: child.id,
+      name: child.name,
+      dob: child.dob,
+      gender: child.gender || 'Male',
+      age: calcAge(child.dob),
+      teamName: team?.name ?? null,
+      teamLabel: team ? getTeamAgeDivisionLabel(team) : null,
+      assigned: !!team,
+    }
+  })
 }
 
 /* ───────── Overview Tab ───────── */
@@ -452,6 +552,7 @@ function OverviewTab({
   const hour = new Date().getHours()
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
   const firstName = user.name.split(' ')[0]
+  const registeredChildren = clubPlayer ? getRegisteredChildrenSummary(clubPlayer) : []
 
   const fade = (delay = 0) =>
     reduceMotion
@@ -532,6 +633,53 @@ function OverviewTab({
             </button>
           )}
         </motion.section>
+
+        {registeredChildren.length > 0 && (
+          <motion.section className="player-bento__children dash-card" {...fade(0.08)}>
+            <div className="player-bento__label">
+              <Users size={16} />
+              My children
+            </div>
+            <ul className="player-children-list">
+              {registeredChildren.map((child) => (
+                <li key={child.id} className="player-child-card">
+                  <div className="player-child-card__avatar" aria-hidden>
+                    <User size={18} />
+                  </div>
+                  <div className="player-child-card__body">
+                    <p className="player-child-card__name">{child.name}</p>
+                    <p className="player-child-card__meta">
+                      {child.age !== null ? `Age ${child.age}` : 'Age —'}
+                      {' · '}
+                      {formatChildDob(child.dob)}
+                      {' · '}
+                      {child.gender}
+                    </p>
+                    <p className="player-child-card__team">
+                      {child.assigned ? (
+                        <>
+                          <CheckCircle size={14} className="text-emerald-600 shrink-0" />
+                          <span>
+                            {child.teamName}
+                            {child.teamLabel ? ` · ${child.teamLabel}` : ''}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <Clock size={14} className="shrink-0" />
+                          <span>Awaiting team assignment from your coach</span>
+                        </>
+                      )}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <button type="button" onClick={() => onNavigate('profile')} className="player-text-btn mt-4">
+              Manage children <ArrowRight size={14} />
+            </button>
+          </motion.section>
+        )}
 
         <motion.section className="player-bento__membership dash-card" {...fade(0.1)}>
           <div className="player-bento__label">
@@ -634,7 +782,17 @@ function OverviewTab({
 
       <motion.aside className="player-parent-note dash-card" {...fade(0.22)}>
         <p className="font-inter text-sm text-slate-600 leading-relaxed">
-          <strong className="text-slate-800 font-semibold">Registering a child?</strong> Pay fees here — your coach will assign a team and schedule when ready.
+          {registeredChildren.length > 0 ? (
+            <>
+              <strong className="text-slate-800 font-semibold">Your registered children</strong> are listed above.
+              Pay fees under Payments — your coach will assign teams and schedules when ready.
+            </>
+          ) : (
+            <>
+              <strong className="text-slate-800 font-semibold">Registering a child?</strong> Add them in your profile,
+              then pay fees here — your coach will assign a team and schedule when ready.
+            </>
+          )}
         </p>
       </motion.aside>
     </div>
@@ -695,6 +853,7 @@ function PaymentsTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (
   }
 
   const fees = getFeeConfigForPlayer(clubPlayer.id)
+  const registeredChildren = getRegisteredChildren(clubPlayer)
   const selfFees = clubPlayer.alsoPlays ? getSelfFeeConfigForPlayer(clubPlayer) : null
   const paymentFocus = getMemberPaymentFocus(clubPlayer)!
   const monthlyPaid = hasPaidThisMonth(clubPlayer.id)
@@ -795,19 +954,46 @@ function PaymentsTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (
         </p>
       </div>
 
-      <div className={`grid grid-cols-1 ${clubPlayer.alsoPlays ? 'md:grid-cols-2 max-w-3xl' : 'max-w-md'} gap-4`}>
+      <div className={`grid grid-cols-1 ${registeredChildren.length > 1 || clubPlayer.alsoPlays ? 'md:grid-cols-2 max-w-3xl' : 'max-w-md'} gap-4`}>
         {paymentFocus === 'monthly' ? (
+          registeredChildren.length > 0 ? (
+            registeredChildren.map((child) => {
+              const childFees = getFeeConfigForBirthYear(parseInt(child.dob.slice(0, 4), 10))
+              return (
+                <div key={child.id} className="dash-card p-6">
+                  <p className="font-inter text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">Monthly membership</p>
+                  <p className="font-oswald font-bold text-3xl text-lions-700 mt-2">
+                    €{childFees.monthly}
+                    <span className="text-base font-inter text-slate-500 font-normal">/month</span>
+                  </p>
+                  <p className="font-inter text-sm text-slate-600 mt-2">
+                    For {child.name} (age {calcAge(child.dob)})
+                  </p>
+                  {monthlyPaid ? (
+                    <p className="mt-4 inline-flex items-center gap-2 font-inter text-sm text-emerald-600">
+                      <CheckCircle size={16} /> Paid this month
+                    </p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => startMembershipCheckout('monthly', childFees.monthly, `Monthly membership — ${child.name}`)}
+                      disabled={paying}
+                      className="mt-4 w-full btn-accent font-inter text-sm font-semibold uppercase tracking-wider px-4 py-3 rounded-xl disabled:opacity-50"
+                    >
+                      {paying ? 'Redirecting to Stripe…' : isStripeCheckoutConfigured() ? 'Pay with Stripe' : 'Pay monthly fee'}
+                    </button>
+                  )}
+                </div>
+              )
+            })
+          ) : (
         <div className="dash-card p-6">
           <p className="font-inter text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">Monthly membership</p>
           <p className="font-oswald font-bold text-3xl text-lions-700 mt-2">
             €{fees.monthly}
             <span className="text-base font-inter text-slate-500 font-normal">/month</span>
           </p>
-          <p className="font-inter text-sm text-slate-600 mt-2">
-            {clubPlayer.childName
-              ? `For ${clubPlayer.childName}${clubPlayer.childDob && calcAge(clubPlayer.childDob) !== null ? ` (age ${calcAge(clubPlayer.childDob)})` : ''}`
-              : 'Recurring fee for your child\'s age group.'}
-          </p>
+          <p className="font-inter text-sm text-slate-600 mt-2">Recurring fee for your child&apos;s age group.</p>
           {monthlyPaid ? (
             <p className="mt-4 inline-flex items-center gap-2 font-inter text-sm text-emerald-600">
               <CheckCircle size={16} /> Paid this month
@@ -823,6 +1009,7 @@ function PaymentsTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (
             </button>
           )}
         </div>
+          )
         ) : (
         <div className="dash-card p-6">
           <p className="font-inter text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">One-time registration</p>
@@ -849,8 +1036,8 @@ function PaymentsTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (
           <p className="font-inter text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">Your player registration</p>
           <p className="font-oswald font-bold text-3xl text-lions-700 mt-2">€{selfFees.oneTime}</p>
           <p className="font-inter text-sm text-slate-600 mt-2">
-            One-time fee for you as a player
-            {clubPlayer.dob && calcAge(clubPlayer.dob) !== null ? ` (age ${calcAge(clubPlayer.dob)})` : ''}.
+            Your registration
+            {getPlayerBirthYear(clubPlayer) ? ` (age ${calcAgeFromBirthYear(getPlayerBirthYear(clubPlayer)!)}).` : '.'}
           </p>
           {oneTimePaid ? (
             <p className="mt-4 inline-flex items-center gap-2 font-inter text-sm text-emerald-600">
@@ -1107,7 +1294,17 @@ function ScheduleTab({ clubPlayer }: { clubPlayer: ClubPlayer | null }) {
 }
 
 /* ───────── Profile Tab ───────── */
-function ProfileTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (u: PlayerUser) => void }) {
+function ProfileTab({
+  user,
+  clubPlayer,
+  onUpdateUser,
+  onClubPlayerUpdate,
+}: {
+  user: PlayerUser
+  clubPlayer: ClubPlayer | null
+  onUpdateUser: (u: PlayerUser) => void
+  onClubPlayerUpdate: (p: ClubPlayer) => void
+}) {
   const [form, setForm] = useState({
     name: user.name,
     email: user.email,
@@ -1116,6 +1313,29 @@ function ProfileTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (u
     jerseySize: user.jerseySize || 'M',
   })
   const [saved, setSaved] = useState(false)
+  const canManageChildren = clubPlayer ? !needsPlayerOnboarding(clubPlayer) : false
+  const [children, setChildren] = useState<ChildDraft[]>([])
+  const [childrenError, setChildrenError] = useState('')
+  const [childrenSaved, setChildrenSaved] = useState(false)
+  const [childrenSaving, setChildrenSaving] = useState(false)
+
+  useEffect(() => {
+    if (!clubPlayer) {
+      setChildren([])
+      return
+    }
+    const registered = getRegisteredChildren(clubPlayer)
+    setChildren(
+      registered.length > 0
+        ? registered.map((c) => ({
+            id: c.id,
+            name: c.name,
+            dob: c.dob,
+            gender: c.gender || 'Male',
+          }))
+        : [],
+    )
+  }, [clubPlayer])
 
   const handleChange = (field: string, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }))
@@ -1133,7 +1353,6 @@ function ProfileTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (u
     })
     onUpdateUser(updated)
 
-    // Update in players array too
     const players = getPlayers()
     const idx = players.findIndex((p) => p.id === user.id)
     if (idx >= 0) {
@@ -1143,6 +1362,63 @@ function ProfileTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (u
 
     setSaved(true)
     setTimeout(() => setSaved(false), 3000)
+  }
+
+  const handleSaveChildren = async () => {
+    if (!clubPlayer) return
+
+    const hasPartialChild = children.some(
+      (c) => (c.name.trim() && !isValidChildDob(c.dob.trim())) || (!c.name.trim() && c.dob.trim()),
+    )
+    if (hasPartialChild) {
+      setChildrenError(`Each child needs a name and full date of birth (minimum age ${MIN_CHILD_AGE}).`)
+      return
+    }
+
+    const validChildren: RegisteredChild[] = children
+      .map((c) => ({
+        id: c.id,
+        name: c.name.trim(),
+        dob: c.dob.trim(),
+        gender: c.gender,
+      }))
+      .filter((c) => c.name && isValidChildDob(c.dob))
+
+    setChildrenError('')
+    setChildrenSaving(true)
+    try {
+      const updated = updateRegisteredChildren(clubPlayer.id, validChildren)
+      if (!updated) {
+        setChildrenError('Could not save children. Please try again.')
+        return
+      }
+
+      if (supabase) {
+        await supabase.auth.updateUser({
+          data: {
+            memberType: updated.memberType ?? 'player',
+            registeredChildren: updated.registeredChildren ?? [],
+            alsoPlays: updated.alsoPlays ?? false,
+            birthYear: updated.birthYear ?? null,
+          },
+        })
+      }
+
+      await ensureClubRosterSynced()
+      onClubPlayerUpdate(updated)
+      setChildren(
+        getRegisteredChildren(updated).map((c) => ({
+          id: c.id,
+          name: c.name,
+          dob: c.dob,
+          gender: c.gender || 'Male',
+        })),
+      )
+      setChildrenSaved(true)
+      setTimeout(() => setChildrenSaved(false), 3000)
+    } finally {
+      setChildrenSaving(false)
+    }
   }
 
   return (
@@ -1166,74 +1442,163 @@ function ProfileTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (u
           </p>
         </div>
 
-        <div className="lg:col-span-2 dash-card p-6 md:p-8">
-          <h3 className="font-inter font-semibold text-xl text-slate-900 mb-6">Contact details</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <div className="space-y-2">
-              <label className="block font-inter font-medium text-sm text-slate-700">Full name</label>
-              <input
-                type="text"
-                value={form.name}
-                onChange={(e) => handleChange('name', e.target.value)}
-                className="dash-input w-full"
-              />
+        <div className="lg:col-span-2 space-y-6">
+          <div className="dash-card p-6 md:p-8">
+            <h3 className="font-inter font-semibold text-xl text-slate-900 mb-6">Contact details</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div className="space-y-2">
+                <label className="block font-inter font-medium text-sm text-slate-700">Full name</label>
+                <input
+                  type="text"
+                  value={form.name}
+                  onChange={(e) => handleChange('name', e.target.value)}
+                  className="dash-input w-full"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="block font-inter font-medium text-sm text-slate-700">Email</label>
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => handleChange('email', e.target.value)}
+                  className="dash-input w-full"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="block font-inter font-medium text-sm text-slate-700">Phone</label>
+                <input
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => handleChange('phone', e.target.value)}
+                  placeholder="+353 1 234 5678"
+                  className="dash-input w-full"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="block font-inter font-medium text-sm text-slate-700">Emergency contact</label>
+                <input
+                  type="text"
+                  value={form.emergencyContact}
+                  onChange={(e) => handleChange('emergencyContact', e.target.value)}
+                  placeholder="Name & phone"
+                  className="dash-input w-full"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="block font-inter font-medium text-sm text-slate-700">Jersey size</label>
+                <select
+                  value={form.jerseySize}
+                  onChange={(e) => handleChange('jerseySize', e.target.value)}
+                  className="dash-input w-full"
+                >
+                  <option value="XS">XS</option>
+                  <option value="S">S</option>
+                  <option value="M">M</option>
+                  <option value="L">L</option>
+                  <option value="XL">XL</option>
+                  <option value="XXL">XXL</option>
+                </select>
+              </div>
             </div>
-            <div className="space-y-2">
-              <label className="block font-inter font-medium text-sm text-slate-700">Email</label>
-              <input
-                type="email"
-                value={form.email}
-                onChange={(e) => handleChange('email', e.target.value)}
-                className="dash-input w-full"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="block font-inter font-medium text-sm text-slate-700">Phone</label>
-              <input
-                type="tel"
-                value={form.phone}
-                onChange={(e) => handleChange('phone', e.target.value)}
-                placeholder="+353 1 234 5678"
-                className="dash-input w-full"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="block font-inter font-medium text-sm text-slate-700">Emergency contact</label>
-              <input
-                type="text"
-                value={form.emergencyContact}
-                onChange={(e) => handleChange('emergencyContact', e.target.value)}
-                placeholder="Name & phone"
-                className="dash-input w-full"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="block font-inter font-medium text-sm text-slate-700">Jersey size</label>
-              <select
-                value={form.jerseySize}
-                onChange={(e) => handleChange('jerseySize', e.target.value)}
-                className="dash-input w-full"
-              >
-                <option value="XS">XS</option>
-                <option value="S">S</option>
-                <option value="M">M</option>
-                <option value="L">L</option>
-                <option value="XL">XL</option>
-                <option value="XXL">XXL</option>
-              </select>
+
+            <div className="mt-6 flex items-center gap-4">
+              <button onClick={handleSave} className="btn-gold font-inter font-semibold text-sm uppercase tracking-wider px-8 py-3 rounded-xl">
+                Save changes
+              </button>
+              {saved && (
+                <span className="flex items-center gap-1 text-emerald-600 font-inter text-sm">
+                  <CheckCircle size={16} /> Saved
+                </span>
+              )}
             </div>
           </div>
 
-          <div className="mt-6 flex items-center gap-4">
-            <button onClick={handleSave} className="btn-gold font-inter font-semibold text-sm uppercase tracking-wider px-8 py-3 rounded-xl">
-              Save changes
-            </button>
-            {saved && (
-              <span className="flex items-center gap-1 text-emerald-600 font-inter text-sm">
-                <CheckCircle size={16} /> Saved
-              </span>
-            )}
-          </div>
+          {canManageChildren && clubPlayer && (
+            <div className="dash-card p-6 md:p-8">
+              <h3 className="font-inter font-semibold text-xl text-slate-900 mb-2">Registered children</h3>
+              <p className="font-inter text-sm text-slate-600 mb-5">
+                Register a child at any time, or update existing children linked to your account.
+              </p>
+              <div className="space-y-3">
+                {children.length === 0 && (
+                  <p className="font-inter text-sm text-slate-500 rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-5 text-center">
+                    No children registered yet. Add a child below when you are ready.
+                  </p>
+                )}
+                {children.map((child, index) => (
+                  <div key={child.id} className="player-onboarding__child-row rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-inter text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Child {index + 1}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setChildren((prev) => prev.filter((c) => c.id !== child.id))}
+                        className="font-inter text-xs text-red-600 hover:text-red-700 flex items-center gap-1"
+                      >
+                        <Trash2 size={12} /> Remove
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Name</label>
+                        <input
+                          type="text"
+                          value={child.name}
+                          onChange={(e) => setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, name: e.target.value } : c)))}
+                          className="dash-input w-full"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Date of birth</label>
+                        <ChildDobPicker
+                          id={`profile-child-dob-${child.id}`}
+                          value={child.dob}
+                          onChange={(dob) => setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, dob } : c)))}
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Gender</label>
+                        <select
+                          value={child.gender}
+                          onChange={(e) => setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, gender: e.target.value as 'Male' | 'Female' } : c)))}
+                          className="dash-input w-full"
+                        >
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setChildren((prev) => [...prev, newChildDraft()])}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-slate-300 text-slate-600 hover:border-lions-400 hover:text-lions-700 font-inter text-sm transition-colors"
+                >
+                  <Plus size={16} /> {children.length === 0 ? 'Add a child' : 'Add another child'}
+                </button>
+              </div>
+              {childrenError && (
+                <p className="mt-4 font-inter text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{childrenError}</p>
+              )}
+              <div className="mt-5 flex items-center gap-4">
+                <button
+                  type="button"
+                  onClick={() => void handleSaveChildren()}
+                  disabled={childrenSaving}
+                  className="btn-accent font-inter font-semibold text-sm uppercase tracking-wider px-8 py-3 rounded-xl disabled:opacity-60"
+                >
+                  {childrenSaving ? 'Saving…' : 'Save children'}
+                </button>
+                {childrenSaved && (
+                  <span className="flex items-center gap-1 text-emerald-600 font-inter text-sm">
+                    <CheckCircle size={16} /> Saved
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1339,7 +1704,8 @@ function ChatTab({ user }: { user: PlayerUser | null }) {
     ? getClubPlayers().find((p) => p.email.toLowerCase() === user.email.toLowerCase())
     : undefined
   const teams = getClubTeams()
-  const myTeams = clubPlayer ? teams.filter((t) => clubPlayer.teamIds.includes(t.id)) : []
+  const myTeamIds = clubPlayer ? getTeamIdsForMember(clubPlayer) : []
+  const myTeams = clubPlayer ? teams.filter((t) => myTeamIds.includes(t.id)) : []
 
   const [teamId, setTeamId] = useState<string>(myTeams[0]?.id ?? '')
   const [messages, setMessages] = useState<ChatMessage[]>(getChatMessages())
@@ -1459,7 +1825,7 @@ function ChatTab({ user }: { user: PlayerUser | null }) {
 /* ───────── Main PlayerDashboard Component ───────── */
 export default function PlayerDashboard() {
   const navigate = useNavigate()
-  const { signOut } = useAuth()
+  const { signOut, user: authUser } = useAuth()
   const logoUrl = useSiteImage('logo')
   const [user, setUser] = useState<PlayerUser | null>(null)
   const [clubPlayer, setClubPlayer] = useState<ClubPlayer | null>(null)
@@ -1467,35 +1833,55 @@ export default function PlayerDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
 
+  const [dataReady, setDataReady] = useState(false)
+
   const refreshClubPlayer = useCallback((email: string, name: string) => {
     if (!isPlayerAccountActive(email)) {
       setClubPlayer(null)
       return
     }
-    const player = findPlayerByEmail(email) ?? upsertPlayerFromAuth({ email, name })
+    let player = findPlayerByEmail(email) ?? upsertPlayerFromAuth({ email, name })
+    if (player && authUser?.user_metadata) {
+      player =
+        syncPlayerProfileFromAuthMetadata(
+          email,
+          authUser.user_metadata as Record<string, unknown>,
+        ) ?? player
+    }
     setClubPlayer(player)
-  }, [])
+  }, [authUser?.user_metadata])
 
   useEffect(() => {
-    const u = getUser()
-    if (!u) {
-      navigate('/player/login')
-      return
-    }
-    const synced = syncUserFromRoster(u)
-    setUser(synced)
-    if (JSON.stringify(synced) !== JSON.stringify(u)) {
-      saveUser(synced)
-    }
-    refreshClubPlayer(synced.email, synced.name)
+    let cancelled = false
+    void whenClubDataReady().then(() => {
+      if (cancelled) return
+      setDataReady(true)
+      const u = getUser()
+      if (!u) {
+        navigate('/player/login')
+        return
+      }
+      const synced = syncUserFromRoster(u)
+      setUser(synced)
+      if (JSON.stringify(synced) !== JSON.stringify(u)) {
+        saveUser(synced)
+      }
+      refreshClubPlayer(synced.email, synced.name)
+    })
+    return () => { cancelled = true }
   }, [navigate, refreshClubPlayer])
 
   useEffect(() => {
-    if (!user) return
+    if (!user || !dataReady) return
     const onSync = () => refreshClubPlayer(user.email, user.name)
     window.addEventListener('storage', onSync)
     return () => window.removeEventListener('storage', onSync)
-  }, [user, refreshClubPlayer])
+  }, [user, dataReady, refreshClubPlayer])
+
+  useEffect(() => {
+    if (!user || !dataReady || !authUser?.user_metadata) return
+    refreshClubPlayer(user.email, user.name)
+  }, [authUser?.user_metadata, user, dataReady, refreshClubPlayer])
 
   const needsOnboarding = clubPlayer ? needsPlayerOnboarding(clubPlayer) : false
   const paymentFocus = clubPlayer ? getMemberPaymentFocus(clubPlayer) : null
@@ -1532,7 +1918,7 @@ export default function PlayerDashboard() {
     navigate('/player/login')
   }
 
-  if (!user) {
+  if (!user || !dataReady) {
     return (
       <div className="dashboard-shell player-dash min-h-[100dvh] flex items-center justify-center">
         <div className="text-center">
@@ -1719,7 +2105,14 @@ export default function PlayerDashboard() {
             {activeTab === 'overview' && <OverviewTab user={user} clubPlayer={clubPlayer} onNavigate={setActiveTab} />}
             {activeTab === 'payments' && <PaymentsTab user={user} onUpdateUser={handleUpdateUser} />}
             {activeTab === 'schedule' && <ScheduleTab clubPlayer={clubPlayer} />}
-            {activeTab === 'profile' && <ProfileTab user={user} onUpdateUser={handleUpdateUser} />}
+            {activeTab === 'profile' && (
+              <ProfileTab
+                user={user}
+                clubPlayer={clubPlayer}
+                onUpdateUser={handleUpdateUser}
+                onClubPlayerUpdate={setClubPlayer}
+              />
+            )}
             {activeTab === 'notifications' && <NotificationsTab />}
             {activeTab === 'chat' && <ChatTab user={user} />}
           </div>

@@ -185,14 +185,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) return { error: error.message, role: null }
         const signedInUser = data.user
         if (signedInUser?.email) {
-          const meta = signedInUser.user_metadata ?? {}
-          const linked = upsertPlayerFromAuth({
-            email: signedInUser.email,
-            name: (meta.name as string) || signedInUser.email,
-          })
-          if (!linked) {
-            await forceSignOut()
-            return { error: 'Your account was removed from the club. Please contact your manager.', role: null }
+          const signedInRole = roleForUser(signedInUser)
+          if (signedInRole !== 'manager') {
+            const meta = signedInUser.user_metadata ?? {}
+            const linked = upsertPlayerFromAuth({
+              email: signedInUser.email,
+              name: (meta.name as string) || signedInUser.email,
+            })
+            if (!linked) {
+              await forceSignOut()
+              return { error: 'Your account was removed from the club. Please contact your manager.', role: null }
+            }
           }
         }
         return { error: null, role: roleForUser(signedInUser) }
@@ -215,6 +218,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           },
         })
         if (error) return { error: error.message, needsConfirmation: false }
+        if (isManagerEmail(email)) {
+          return {
+            error: 'Manager accounts are created by the club. Use the manager sign-in page instead.',
+            needsConfirmation: false,
+          }
+        }
         const linked = upsertPlayerFromAuth({
           email,
           name: profile.name,

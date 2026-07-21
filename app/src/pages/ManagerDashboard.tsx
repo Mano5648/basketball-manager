@@ -142,6 +142,20 @@ import {
   clearPendingTeamAssignment,
   removePlayerFromClub,
   clearMemberRevocation,
+  getRegisteredChildren,
+  getParentForChildRosterPlayer,
+  isChildRosterPlayer,
+  isRosterListedMember,
+  reconcileClubRoster,
+  reconcileClubRosterIfNeeded,
+  whenClubDataReady,
+  getRosterListedMembers,
+  getUnassignedRosterMembers,
+  assignPlayerToTeam,
+  unassignPlayerFromTeam,
+  getFeeAgeGroupIdForPlayer,
+  syncChildrenRosterForParent,
+  calcAge,
   startNewSeason,
   endSeason,
   restoreSeasonFromHistory,
@@ -221,8 +235,20 @@ function useLiveData() {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+    void whenClubDataReady().then(() => {
+      if (cancelled) return
+      reconcileClubRoster()
+      refresh()
+    })
+    return () => { cancelled = true }
+  }, [refresh])
+
+  useEffect(() => {
     const handler = (e: StorageEvent) => {
-      if (e.key && e.key.startsWith('dlbc_')) refresh()
+      if (!e.key?.startsWith('dlbc_')) return
+      if (e.key === 'dlbc_players') reconcileClubRosterIfNeeded()
+      refresh()
     }
     window.addEventListener('storage', handler)
     const interval = setInterval(refresh, 3000)
@@ -630,7 +656,7 @@ function TopBar({
   notifications: { id: string; text: string; detail: string; type: string }[]
   onDismissNotification: (id: string) => void
   onClearNotifications: () => void
-  onQuickAction: (action: 'add-member' | 'add-payment' | 'send-message' | 'add-fixture') => void
+  onQuickAction: (action: 'add-payment' | 'send-message' | 'add-fixture') => void
   sidebarCollapsed: boolean
 }) {
   const [showQuickActions, setShowQuickActions] = useState(false)
@@ -706,7 +732,6 @@ function TopBar({
           {showQuickActions && (
             <div className="absolute right-0 top-full mt-2 w-56 dash-card shadow-xl z-50 py-2">
               {([
-                { label: 'Add Member', icon: UserPlus, action: 'add-member' as const },
                 { label: 'Record Payment', icon: Banknote, action: 'add-payment' as const },
                 { label: 'Send Message', icon: Send, action: 'send-message' as const },
                 { label: 'Add Fixture', icon: Calendar, action: 'add-fixture' as const },
@@ -833,7 +858,7 @@ function DashboardView({ data, onNavigate }: { data: ReturnType<typeof useLiveDa
   // ── Live-derived stat captions (no hardcoded figures) ──
   const now = new Date()
   const thisMonthKey = `${now.getFullYear()}-${now.getMonth()}`
-  const activeMembers = players.filter((p) => (p.status || '').toLowerCase() === 'paid').length
+  const activeMembers = getRosterListedMembers().filter((p) => (p.status || '').toLowerCase() === 'paid').length
   const paymentsThisMonth = payments.filter((p) => {
     const d = new Date(p.date)
     return !isNaN(d.getTime()) && `${d.getFullYear()}-${d.getMonth()}` === thisMonthKey && p.status === 'succeeded'
@@ -965,7 +990,6 @@ function DashboardView({ data, onNavigate }: { data: ReturnType<typeof useLiveDa
             <h3 className="mgr-panel-title mb-4">Quick actions</h3>
             <div className="mgr-quick-grid">
               {[
-                { label: 'Add member', icon: UserPlus, onClick: () => { onNavigate('members'); setTimeout(() => window.dispatchEvent(new Event('dlbc-open-add-member')), 0) } },
                 { label: 'Record payment', icon: Banknote, onClick: () => onNavigate('payments') },
                 { label: 'Announcement', icon: Send, onClick: () => onNavigate('chat') },
                 { label: 'Report', icon: FileText, onClick: () => onNavigate('reports') },
@@ -1470,17 +1494,28 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
 
   useEffect(() => { setSearch(initialSearch) }, [initialSearch])
 
-  useEffect(() => {
-    const h = () => setShowAddModal(true)
-    window.addEventListener('dlbc-open-add-member', h)
-    return () => window.removeEventListener('dlbc-open-add-member', h)
-  }, [])
   const [teamFilter, setTeamFilter] = useState('All')
   const [statusFilter, setStatusFilter] = useState('All')
   const [ageGroupFilter, setAgeGroupFilter] = useState('All')
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingPlayer, setEditingPlayer] = useState<Player | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void whenClubDataReady().then(() => {
+      if (cancelled) return
+      reconcileClubRoster()
+      data.refresh()
+    })
+    return () => { cancelled = true }
+  }, [data.refresh])
+
+  const rosterMembers = useMemo(() => players.filter(isRosterListedMember), [players])
+  const unassignedMembers = useMemo(
+    () => players.filter(isRosterListedMember).filter((p) => p.teamIds.length === 0),
+    [players],
+  )
 
   const [form, setForm] = useState<Partial<Player>>({
     name: '', email: '', phone: '', dob: '', gender: 'Male', teamIds: [], position: 'Guard', jerseyNumber: 0,
@@ -1489,19 +1524,27 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
   })
 
   const filtered = useMemo(() => {
-    return players.filter((p) => {
+    return rosterMembers.filter((p) => {
       const matchesSearch =
         p.name.toLowerCase().includes(search.toLowerCase()) ||
-        p.email.toLowerCase().includes(search.toLowerCase())
+        p.email.toLowerCase().includes(search.toLowerCase()) ||
+        (isChildRosterPlayer(p) && (getParentForChildRosterPlayer(p.id)?.name.toLowerCase().includes(search.toLowerCase()) ?? false))
       const matchesStatus = statusFilter === 'All' || p.status === statusFilter
       const matchesAge = ageGroupFilter === 'All' || p.teamIds.some((tid) => {
         const t = teams.find((tm) => tm.id === tid)
         return t?.ageGroupId === ageGroupFilter
-      })
-      const matchesTeam = teamFilter === 'All' || p.teamIds.includes(teamFilter)
+      }) || (
+        ageGroupFilter !== 'All' &&
+        p.teamIds.length === 0 &&
+        getFeeAgeGroupIdForPlayer(p) === ageGroupFilter
+      )
+      const matchesTeam =
+        teamFilter === 'All' ||
+        (teamFilter === 'unassigned' && p.teamIds.length === 0) ||
+        p.teamIds.includes(teamFilter)
       return matchesSearch && matchesStatus && matchesAge && matchesTeam
     })
-  }, [search, teamFilter, statusFilter, ageGroupFilter, players, teams])
+  }, [search, teamFilter, statusFilter, ageGroupFilter, rosterMembers, teams])
 
   const resetForm = () => {
     setForm({
@@ -1512,54 +1555,26 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
   }
 
   const handleSave = () => {
-    if (!form.name?.trim() || !form.email?.trim()) return
-    const now = new Date().toISOString().split('T')[0]
-    if (editingPlayer) {
-      const updated: Player = {
-        ...editingPlayer,
-        ...(form as Player),
-      }
-      if (updated.email?.trim()) clearMemberRevocation(updated.email)
-      const next = players.map((p) => (p.id === updated.id ? updated : p))
-      savePlayers(next)
-      // Update team rosters
-      const nextTeams = teams.map((t) => {
-        const onTeam = updated.teamIds.includes(t.id)
-        const wasOnTeam = t.players.includes(updated.id)
-        if (onTeam && !wasOnTeam) return { ...t, players: [...t.players, updated.id] }
-        if (!onTeam && wasOnTeam) return { ...t, players: t.players.filter((pid) => pid !== updated.id) }
-        return t
-      })
-      saveTeams(nextTeams)
-      setEditingPlayer(null)
-    } else {
-      if (form.email?.trim()) clearMemberRevocation(form.email)
-      const newPlayer: Player = {
-        id: `p${Date.now()}`,
-        name: form.name!,
-        email: form.email!,
-        phone: form.phone || '',
-        dob: form.dob || '',
-        gender: form.gender || 'Male',
-        teamIds: form.teamIds || [],
-        position: form.position || 'Guard',
-        jerseyNumber: form.jerseyNumber || 0,
-        status: form.status || 'Paid',
-        paymentPlan: form.paymentPlan || 'Monthly',
-        amount: form.amount || 50,
-        lastPaymentDate: form.lastPaymentDate || now,
-        registrationDate: form.registrationDate || now,
-        guardianName: form.guardianName,
-        guardianPhone: form.guardianPhone,
-        registeredWithBI: form.registeredWithBI ?? true,
-      }
-      const next = [...players, newPlayer]
-      savePlayers(next)
-      const nextTeams = teams.map((t) =>
-        newPlayer.teamIds.includes(t.id) ? { ...t, players: [...t.players, newPlayer.id] } : t
-      )
-      saveTeams(nextTeams)
+    if (!editingPlayer) return
+    const isChild = isChildRosterPlayer(editingPlayer)
+    if (!form.name?.trim() || (!isChild && !form.email?.trim())) return
+    const updated: Player = {
+      ...editingPlayer,
+      ...(form as Player),
     }
+    if (updated.email?.trim()) clearMemberRevocation(updated.email)
+    const next = players.map((p) => (p.id === updated.id ? updated : p))
+    savePlayers(next)
+    const nextTeams = teams.map((t) => {
+      const onTeam = updated.teamIds.includes(t.id)
+      const wasOnTeam = t.players.includes(updated.id)
+      if (onTeam && !wasOnTeam) return { ...t, players: [...t.players, updated.id] }
+      if (!onTeam && wasOnTeam) return { ...t, players: t.players.filter((pid) => pid !== updated.id) }
+      return t
+    })
+    saveTeams(nextTeams)
+    if (updated.memberType === 'parent') syncChildrenRosterForParent(updated.id)
+    setEditingPlayer(null)
     setShowAddModal(false)
     resetForm()
   }
@@ -1572,12 +1587,6 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
   const openEdit = (player: Player) => {
     setForm({ ...player })
     setEditingPlayer(player)
-    setShowAddModal(true)
-  }
-
-  const openAdd = () => {
-    resetForm()
-    setEditingPlayer(null)
     setShowAddModal(true)
   }
 
@@ -1607,14 +1616,16 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Members</h2>
-          <p className="font-inter text-sm text-slate-400 mt-1.5">Player profiles, teams &amp; membership status</p>
+          <p className="font-inter text-sm text-slate-400 mt-1.5">
+            Players and children who signed up and completed registration — assign teams from here or the Teams tab.
+          </p>
         </div>
         <button
-          onClick={openAdd}
-          className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg hover:scale-[1.03] transition-all duration-150"
+          onClick={handleExportCsv}
+          className="flex items-center gap-2 bg-transparent border border-white/30 text-white font-inter font-medium text-sm px-3 py-2 rounded hover:bg-white/5 transition-colors duration-150"
         >
-          <Plus size={16} />
-          Add Member
+          <Download size={14} />
+          Export CSV
         </button>
       </div>
 
@@ -1629,12 +1640,25 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
             className="w-48 bg-white/5 border border-[#334155] rounded-lg pl-9 pr-3 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 transition-all duration-200"
           />
         </div>
+        <button
+          type="button"
+          onClick={() => setTeamFilter(teamFilter === 'unassigned' ? 'All' : 'unassigned')}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-inter text-sm font-medium border transition-all ${
+            teamFilter === 'unassigned'
+              ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+              : 'bg-white/5 text-slate-300 border-[#334155] hover:border-amber-500/30 hover:text-amber-200'
+          }`}
+        >
+          <UserPlus size={14} />
+          Unassigned ({unassignedMembers.length})
+        </button>
         <select
           value={teamFilter}
           onChange={(e) => setTeamFilter(e.target.value)}
           className="bg-white/5 border border-[#334155] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
         >
           <option value="All">All Teams</option>
+          <option value="unassigned">Unassigned only</option>
           {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
         <select
@@ -1680,8 +1704,22 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
                     <div className="flex items-center gap-3">
                       <InitialsAvatar name={member.name} />
                       <div>
-                        <p className="font-inter font-medium text-sm text-white">{member.name}</p>
-                        <p className="font-inter text-xs text-slate-400">{member.email}</p>
+                        <p className="font-inter font-medium text-sm text-white flex items-center gap-2">
+                          {member.name}
+                          {isChildRosterPlayer(member) && (
+                            <span className="text-[10px] uppercase tracking-wider text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">Child</span>
+                          )}
+                          {member.memberType === 'parent' && !isChildRosterPlayer(member) && (
+                            <span className="text-[10px] uppercase tracking-wider text-blue-300 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">Parent</span>
+                          )}
+                        </p>
+                        <p className="font-inter text-xs text-slate-400">
+                          {isChildRosterPlayer(member)
+                            ? member.dob
+                              ? `DOB ${new Date(member.dob).toLocaleDateString('en-IE')}${calcAge(member.dob) !== null ? ` · Age ${calcAge(member.dob)}` : ''}`
+                              : 'Child member'
+                            : member.email || 'No email'}
+                        </p>
                       </div>
                     </div>
                   </td>
@@ -1745,12 +1783,44 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
         </div>
         <div className="px-6 py-4 border-t border-white/[0.06]">
           <p className="font-inter text-xs text-slate-400">
-            Showing {filtered.length} of {players.length} members
+            Showing {filtered.length} of {rosterMembers.length} members
           </p>
         </div>
       </div>
 
-      <Modal open={showAddModal} onClose={() => { setShowAddModal(false); setEditingPlayer(null) }} title={editingPlayer ? 'Edit Member' : 'Add New Member'} maxWidth="max-w-2xl">
+      <Modal open={showAddModal} onClose={() => { setShowAddModal(false); setEditingPlayer(null) }} title={editingPlayer ? (isChildRosterPlayer(editingPlayer) ? 'Child Member' : 'Edit Member') : 'Edit Member'} maxWidth="max-w-2xl">
+        {editingPlayer && isChildRosterPlayer(editingPlayer) && (() => {
+          const parentAccount = getParentForChildRosterPlayer(editingPlayer.id)
+          if (!parentAccount) return null
+          return (
+            <div className="mb-4 p-4 rounded-lg bg-blue-500/10 border border-blue-500/20">
+              <p className="font-inter text-xs uppercase tracking-wider text-blue-300 mb-2">Parent / Guardian</p>
+              <p className="font-inter font-semibold text-white">{parentAccount.name}</p>
+              <p className="font-inter text-sm text-slate-300">{parentAccount.email}</p>
+              {parentAccount.phone ? <p className="font-inter text-sm text-slate-400">{parentAccount.phone}</p> : null}
+            </div>
+          )
+        })()}
+        {editingPlayer && editingPlayer.memberType === 'parent' && !isChildRosterPlayer(editingPlayer) && (
+          <div className="mb-4 p-4 rounded-lg bg-white/5 border border-white/10">
+            <p className="font-inter text-xs uppercase tracking-wider text-slate-400 mb-3">Registered children</p>
+            {getRegisteredChildren(editingPlayer).length === 0 ? (
+              <p className="font-inter text-sm text-slate-500">No children on this account yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {getRegisteredChildren(editingPlayer).map((child) => (
+                  <li key={child.id} className="font-inter text-sm text-slate-200">
+                    <span className="font-medium text-white">{child.name}</span>
+                    <span className="text-slate-400">
+                      {' '}· DOB {child.dob ? new Date(child.dob).toLocaleDateString('en-IE') : '—'}
+                      {child.dob && calcAge(child.dob) !== null ? ` (age ${calcAge(child.dob)})` : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {formField('Full Name', <input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="John Doe" />)}
           {formField('Email', <input type="email" value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="john@email.ie" />)}
@@ -1814,7 +1884,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
         <div className="flex justify-end gap-3 pt-4 border-t border-white/[0.06]">
           <button onClick={() => { setShowAddModal(false); setEditingPlayer(null) }} className="px-4 py-2 font-inter text-sm text-slate-300 hover:text-white transition-colors">Cancel</button>
           <button onClick={handleSave} className="btn-gradient text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">
-            {editingPlayer ? 'Save Changes' : 'Add Member'}
+            Save Changes
           </button>
         </div>
       </Modal>
@@ -1835,12 +1905,14 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
 /* ─────────────────────── View: Teams ─────────────────────── */
 
 function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
-  const { teams, ageGroups, saveTeams, saveAgeGroups } = data
+  const { teams, ageGroups, players, saveTeams, saveAgeGroups, refresh } = data
   const [activeAgeGroup, setActiveAgeGroup] = useState('senior')
   const [activeDivision, setActiveDivision] = useState<string | 'all'>('all')
   const [showAddTeam, setShowAddTeam] = useState(false)
   const [showAddDivision, setShowAddDivision] = useState(false)
   const [showAddAgeGroup, setShowAddAgeGroup] = useState(false)
+  const [rosterTeam, setRosterTeam] = useState<Team | null>(null)
+  const [rosterSearch, setRosterSearch] = useState('')
   const [teamForm, setTeamForm] = useState({ name: '', gender: 'Men' as Team['gender'], divisionId: '', coach: '' })
   const [divisionName, setDivisionName] = useState('')
   const [ageGroupForm, setAgeGroupForm] = useState({ name: '', minAge: '', maxAge: '' })
@@ -1934,6 +2006,26 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
     )
     saveAgeGroups(nextAgeGroups)
     if (activeDivision === divisionId) setActiveDivision('all')
+  }
+
+  const rosterTeamPlayers = rosterTeam ? getTeamPlayers(rosterTeam.id) : []
+  const unassignedForRoster = useMemo(() => {
+    const q = rosterSearch.trim().toLowerCase()
+    return getUnassignedRosterMembers().filter((p) =>
+      !q || p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q),
+    )
+  }, [players, rosterSearch])
+
+  const handleAssignToRosterTeam = (playerId: string) => {
+    if (!rosterTeam) return
+    assignPlayerToTeam(playerId, rosterTeam.id)
+    refresh()
+  }
+
+  const handleRemoveFromRosterTeam = (playerId: string) => {
+    if (!rosterTeam) return
+    unassignPlayerFromTeam(playerId, rosterTeam.id)
+    refresh()
   }
 
   return (
@@ -2070,18 +2162,119 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
                   </div>
                 </div>
 
-                <button
-                  onClick={() => handleDeleteTeam(team.id)}
-                  className="w-full flex items-center justify-center gap-2 bg-transparent border border-red-500/30 text-red-400 hover:bg-red-500/10 font-inter font-medium text-xs px-3 py-2 rounded transition-all"
-                >
-                  <Trash2 size={14} />
-                  Delete Team
-                </button>
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => { setRosterTeam(team); setRosterSearch('') }}
+                    className="flex-1 flex items-center justify-center gap-2 bg-blue-500/10 border border-blue-500/25 text-blue-300 hover:bg-blue-500/20 font-inter font-medium text-xs px-3 py-2.5 rounded transition-all"
+                  >
+                    <UserPlus size={14} />
+                    Manage Roster
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteTeam(team.id)}
+                    className="flex items-center justify-center gap-2 bg-transparent border border-red-500/30 text-red-400 hover:bg-red-500/10 font-inter font-medium text-xs px-3 py-2.5 rounded transition-all"
+                    title="Delete team"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
             )
           })}
         </div>
       )}
+
+      <Modal
+        open={!!rosterTeam}
+        onClose={() => { setRosterTeam(null); setRosterSearch('') }}
+        title={rosterTeam ? `Roster — ${rosterTeam.name}` : 'Team Roster'}
+        maxWidth="max-w-lg"
+      >
+        {rosterTeam && (
+          <div className="space-y-6">
+            <div>
+              <p className="font-inter text-xs uppercase tracking-wider text-slate-400 mb-3">
+                On this team ({rosterTeamPlayers.length})
+              </p>
+              {rosterTeamPlayers.length === 0 ? (
+                <p className="font-inter text-sm text-slate-500 py-2">No players assigned yet.</p>
+              ) : (
+                <ul className="space-y-2 max-h-48 overflow-y-auto scroll-slim pr-1">
+                  {rosterTeamPlayers.map((p) => (
+                    <li
+                      key={p.id}
+                      className="flex items-center justify-between gap-3 rounded-lg bg-white/5 border border-white/[0.06] px-3 py-2.5"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-inter text-sm font-medium text-white truncate">{p.name}</p>
+                        <p className="font-inter text-xs text-slate-400">
+                          {isChildRosterPlayer(p) ? 'Child' : p.position || 'Player'}
+                          {p.jerseyNumber ? ` · #${p.jerseyNumber}` : ''}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveFromRosterTeam(p.id)}
+                        className="shrink-0 text-xs font-inter text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-red-500/10 transition-colors"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div>
+              <p className="font-inter text-xs uppercase tracking-wider text-slate-400 mb-3">
+                Add unassigned members
+              </p>
+              <div className="relative mb-3">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  value={rosterSearch}
+                  onChange={(e) => setRosterSearch(e.target.value)}
+                  placeholder="Search by name…"
+                  className="w-full bg-white/5 border border-[#334155] rounded-lg pl-9 pr-3 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              {unassignedForRoster.length === 0 ? (
+                <p className="font-inter text-sm text-slate-500 py-2">
+                  {rosterSearch ? 'No matches.' : 'Everyone is already on a team.'}
+                </p>
+              ) : (
+                <ul className="space-y-2 max-h-56 overflow-y-auto scroll-slim pr-1">
+                  {unassignedForRoster.map((p) => (
+                    <li
+                      key={p.id}
+                      className="flex items-center justify-between gap-3 rounded-lg bg-[#0A1628] border border-white/[0.06] px-3 py-2.5"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-inter text-sm font-medium text-white truncate">{p.name}</p>
+                        <p className="font-inter text-xs text-slate-400">
+                          {isChildRosterPlayer(p) && p.dob
+                            ? `Age ${calcAge(p.dob) ?? '—'}`
+                            : p.email || 'Unassigned'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleAssignToRosterTeam(p.id)}
+                        className="shrink-0 flex items-center gap-1 text-xs font-inter font-semibold text-blue-300 hover:text-white bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/25 px-2.5 py-1.5 rounded transition-colors"
+                      >
+                        <Plus size={12} /> Add
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal open={showAddTeam} onClose={() => setShowAddTeam(false)} title="Add New Team">
         <div className="space-y-4">
@@ -4517,7 +4710,6 @@ export default function ManagerDashboard() {
       })),
     ),
     { id: 'nav-settings', label: 'Settings', hint: 'Go to', group: 'Navigate', icon: Settings, run: () => setActiveView('settings') },
-    { id: 'act-add-member', label: 'Add New Member', group: 'Quick actions', icon: UserPlus, keywords: 'create player register', run: () => { setActiveView('members'); setTimeout(() => window.dispatchEvent(new Event('dlbc-open-add-member')), 0) } },
     { id: 'act-add-payment', label: 'Record Cash Payment', group: 'Quick actions', icon: Banknote, keywords: 'money fee', run: () => setActiveView('payments') },
     { id: 'act-send-message', label: 'Send Announcement', group: 'Quick actions', icon: Send, keywords: 'chat message team', run: () => setActiveView('chat') },
     { id: 'act-add-fixture', label: 'Add Fixture', group: 'Quick actions', icon: Calendar, keywords: 'schedule match game', run: () => setActiveView('schedule') },
@@ -4545,8 +4737,7 @@ export default function ManagerDashboard() {
         onClearNotifications={() => setDismissedIds(new Set(derivedNotifications.map((n) => n.id)))}
         sidebarCollapsed={sidebarCollapsed}
         onQuickAction={(action) => {
-          if (action === 'add-member') { setActiveView('members'); window.dispatchEvent(new Event('dlbc-open-add-member')) }
-          else if (action === 'add-payment') setActiveView('payments')
+          if (action === 'add-payment') setActiveView('payments')
           else if (action === 'send-message') setActiveView('chat')
           else if (action === 'add-fixture') setActiveView('schedule')
         }}

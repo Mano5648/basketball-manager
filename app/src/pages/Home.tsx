@@ -29,7 +29,7 @@ function HeroSection() {
   const reduceMotion = useReducedMotion()
 
   return (
-    <section className="relative min-h-[100dvh] flex items-center justify-center overflow-hidden">
+    <section className="relative w-full min-h-[100dvh] flex items-center justify-center overflow-hidden">
       <HeroBackground />
 
       <div className="absolute inset-0 ldf-hero-overlay pointer-events-none" />
@@ -46,11 +46,6 @@ function HeroSection() {
         aria-hidden
       >
         <span className="font-inter text-[10px] uppercase tracking-[0.25em]">Scroll</span>
-        <motion.span
-          className="block h-8 w-px bg-gradient-to-b from-white/50 to-transparent"
-          animate={reduceMotion ? {} : { scaleY: [1, 0.4, 1], opacity: [0.5, 1, 0.5] }}
-          transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-        />
       </motion.div>
     </section>
   )

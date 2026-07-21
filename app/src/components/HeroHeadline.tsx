@@ -10,7 +10,7 @@ export default function HeroHeadline({ className = '' }: { className?: string })
   return (
     <div className={className}>
       <motion.p
-        className="font-inter text-[11px] md:text-xs uppercase tracking-[0.32em] text-warn-400/90 mb-5"
+        className="font-inter text-[11px] md:text-xs uppercase tracking-[0.2em] md:tracking-[0.32em] text-warn-400/90 mb-5"
         initial={reduceMotion ? false : { opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6, delay: 0.1, ease: easeOut }}
@@ -35,15 +35,6 @@ export default function HeroHeadline({ className = '' }: { className?: string })
           </motion.span>
         ))}
       </h1>
-
-      <motion.span
-        className="mx-auto mt-6 block h-[3px] w-16 rounded-full bg-gradient-to-r from-warn-500 via-warn-400 to-lions-400"
-        initial={reduceMotion ? false : { opacity: 0, scaleX: 0 }}
-        animate={{ opacity: 1, scaleX: 1 }}
-        transition={{ duration: 0.7, delay: headlineDelay + words.length * 0.12 + 0.15, ease: easeOut }}
-        style={{ transformOrigin: 'center' }}
-        aria-hidden
-      />
 
       <motion.p
         className="mt-7 font-inter text-lg md:text-xl text-white/80 max-w-md mx-auto leading-relaxed"

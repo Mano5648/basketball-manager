@@ -4,7 +4,7 @@ import { HashRouter } from 'react-router-dom'
 import './index.css'
 import App from './App.tsx'
 import { AuthProvider } from './lib/AuthContext'
-import { initAppStateSync, pruneDemoSeedData } from './lib/clubData'
+import { initAppStateSync, pruneDemoSeedData, reconcileClubRoster } from './lib/clubData'
 
 // Pulls shared data (players, teams, fixtures, Team Chat, etc.) from Supabase
 // and keeps it live-synced across devices/browsers. No-ops if Supabase env
@@ -12,7 +12,10 @@ import { initAppStateSync, pruneDemoSeedData } from './lib/clubData'
 // Demo-roster cleanup runs only AFTER the remote pull finishes, so a fresh
 // device never prunes its (possibly stale/default) local data ahead of
 // picking up what's already been synced from elsewhere.
-initAppStateSync().then(() => pruneDemoSeedData())
+initAppStateSync().then(() => {
+  pruneDemoSeedData()
+  reconcileClubRoster()
+})
 
 createRoot(document.getElementById('root')!).render(
   <HashRouter>

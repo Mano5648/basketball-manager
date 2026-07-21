@@ -6,7 +6,7 @@
    below and supabase/app-data-setup.sql).
    ─────────────────────────────────────────────────────────── */
 
-import { supabase, isSupabaseConfigured } from './supabase'
+import { supabase, isSupabaseConfigured, isManagerEmail } from './supabase'
 import { getLoggedInContact } from './authUser'
 
 export interface Division {
@@ -65,12 +65,30 @@ export interface Player {
   since?: number
   /** Set on first login — drives which fees the member sees. */
   memberType?: 'player' | 'parent'
-  /** Parent flow — name of the child being registered. */
+  /** Player or parent-who-plays — year of birth. */
+  birthYear?: number
+  /** Parent flow — children registered under this account. */
+  registeredChildren?: RegisteredChild[]
+  /** @deprecated Use registeredChildren */
   childName?: string
-  /** Parent flow — child's date of birth (YYYY-MM-DD). */
+  /** @deprecated Use registeredChildren */
   childDob?: string
   /** Parent flow — parent also registers to play themselves. */
   alsoPlays?: boolean
+  /** Roster-only child record — links to parent account (no login). */
+  parentPlayerId?: string
+  registeredChildId?: string
+  /** Set when the member finishes the player/parent onboarding wizard. */
+  onboardingCompletedAt?: string
+}
+
+export interface RegisteredChild {
+  id: string
+  name: string
+  dob: string
+  gender?: 'Male' | 'Female'
+  /** @deprecated Derived from dob */
+  birthYear?: number
 }
 
 export type MemberPaymentFocus = 'monthly' | 'oneTime'
@@ -365,17 +383,354 @@ export function getAgeGroupIdForPlayer(playerId: string): string | null {
   return team?.ageGroupId ?? null
 }
 
-/** Age group used for membership fees — team assignment, else DOB from onboarding. */
+export function isValidBirthYear(year: number): boolean {
+  const current = new Date().getFullYear()
+  return Number.isInteger(year) && year >= current - 80 && year <= current
+}
+
+export const MIN_CHILD_AGE = 10
+
+export function isValidChildDob(dob: string): boolean {
+  if (!dob?.trim()) return false
+  const age = calcAge(dob.trim())
+  if (age === null) return false
+  return age >= MIN_CHILD_AGE
+}
+
+/** @deprecated Use isValidChildDob with full date */
+export function isValidChildBirthYear(year: number): boolean {
+  const current = new Date().getFullYear()
+  const newestAllowed = current - MIN_CHILD_AGE
+  return Number.isInteger(year) && year >= current - 80 && year <= newestAllowed
+}
+
+export function childBirthYearOptions(): number[] {
+  const current = new Date().getFullYear()
+  const newest = current - MIN_CHILD_AGE
+  const oldest = current - 80
+  return Array.from({ length: newest - oldest + 1 }, (_, i) => newest - i)
+}
+
+export function calcAgeFromBirthYear(birthYear: number): number {
+  return new Date().getFullYear() - birthYear
+}
+
+export function getPlayerBirthYear(player: Player): number | null {
+  if (player.birthYear && isValidBirthYear(player.birthYear)) return player.birthYear
+  if (player.dob) {
+    const age = calcAge(player.dob)
+    if (age !== null) return new Date().getFullYear() - age
+  }
+  return null
+}
+
+/** Normalises legacy single-child fields into registeredChildren. */
+export function getRegisteredChildren(player: Player | undefined | null): RegisteredChild[] {
+  if (!player) return []
+  if (player.registeredChildren?.length) {
+    return player.registeredChildren.map((c) => ({
+      ...c,
+      dob: c.dob || (c.birthYear ? `${c.birthYear}-01-01` : ''),
+      gender: c.gender || 'Male',
+    }))
+  }
+  if (player.childName?.trim()) {
+    const dob = player.childDob || (player.birthYear ? `${player.birthYear}-01-01` : '')
+    if (dob) {
+      return [{
+        id: 'legacy-1',
+        name: player.childName.trim(),
+        dob,
+        gender: 'Male',
+        birthYear: parseInt(dob.slice(0, 4), 10) || undefined,
+      }]
+    }
+  }
+  return []
+}
+
+export function isChildRosterPlayer(player: Player | undefined | null): boolean {
+  return !!player?.parentPlayerId
+}
+
+/** Club manager / admin logins — not roster members. */
+export function isClubAdminEmail(email: string | undefined | null): boolean {
+  return isManagerEmail(email)
+}
+
+/**
+ * Who appears in the manager Members list: children and players who completed
+ * sign-up onboarding. No manual manager entries or incomplete registrations.
+ */
+export function isRosterListedMember(player: Player | undefined | null): boolean {
+  if (!player) return false
+  if (isClubAdminEmail(player.email)) return false
+  if (player.memberType === 'parent' && !isChildRosterPlayer(player)) return false
+  if (isChildRosterPlayer(player)) return true
+  if (player.memberType === 'player') {
+    return !!player.onboardingCompletedAt || !needsPlayerOnboarding(player)
+  }
+  return false
+}
+
+export function getRosterListedMembers(): Player[] {
+  return getPlayers().filter(isRosterListedMember)
+}
+
+export function getChildRosterPlayersForParent(parentId: string): Player[] {
+  return getPlayers().filter((p) => p.parentPlayerId === parentId)
+}
+
+export function getParentForChildRosterPlayer(childPlayerId: string): Player | null {
+  const child = getPlayers().find((p) => p.id === childPlayerId)
+  if (!child?.parentPlayerId) return null
+  return getPlayers().find((p) => p.id === child.parentPlayerId) ?? null
+}
+
+export function childRosterPlayerId(parentId: string, childId: string): string {
+  return `child-${parentId}-${childId}`
+}
+
+export function findTeamForChild(child: RegisteredChild): Team | null {
+  const age = calcAge(child.dob)
+  if (age === null) return null
+  const target = computeTargetAgeGroup(age)
+  if (!target) return null
+  const preferredGender: Team['gender'] = child.gender === 'Female' ? 'Girls' : 'Boys'
+  const teams = getTeams().filter((t) => t.ageGroupId === target.id)
+  return teams.find((t) => t.gender === preferredGender) ?? teams[0] ?? null
+}
+
+/** Chat members for a team: parents of child roster entries + adult players (not children). */
+export function getChatEligibleMemberIds(teamId: string): string[] {
+  const team = getTeams().find((t) => t.id === teamId)
+  if (!team) return []
+  const players = getPlayers()
+  const ids = new Set<string>()
+  for (const pid of team.players) {
+    const p = players.find((pl) => pl.id === pid)
+    if (!p) continue
+    if (p.parentPlayerId) {
+      ids.add(p.parentPlayerId)
+    } else if (!isChildRosterPlayer(p)) {
+      ids.add(pid)
+    }
+  }
+  return [...ids]
+}
+
+/** Team IDs a parent can access (own teams + children's teams). */
+export function getTeamIdsForMember(player: Player): string[] {
+  const ids = new Set(player.teamIds)
+  if (player.memberType === 'parent') {
+    for (const child of getChildRosterPlayersForParent(player.id)) {
+      child.teamIds.forEach((tid) => ids.add(tid))
+    }
+  }
+  return [...ids]
+}
+
+/**
+ * Creates/updates roster Player records for each registered child, assigns them
+ * to the age-appropriate team, and adds the parent (not the child) to team chat.
+ */
+export function syncChildrenRosterForParent(parentId: string): Player | null {
+  const players = getPlayers()
+  const parent = players.find((p) => p.id === parentId)
+  if (!parent || parent.parentPlayerId) return parent ?? null
+
+  const children = getRegisteredChildren(parent)
+  let nextPlayers = [...players]
+  let nextTeams = getTeams().map((t) => ({ ...t, players: [...t.players] }))
+  const activeChildIds = new Set<string>()
+
+  for (const child of children) {
+    if (!child.name.trim() || !isValidChildDob(child.dob)) continue
+    activeChildIds.add(child.id)
+
+    const rosterId = childRosterPlayerId(parentId, child.id)
+    const team = findTeamForChild(child)
+    const teamId = team?.id
+    const teamIds = teamId ? [teamId] : []
+    const age = calcAge(child.dob) ?? undefined
+    const existingIdx = nextPlayers.findIndex((p) => p.id === rosterId)
+    const now = new Date().toISOString().split('T')[0]
+
+    const childPlayer: Player = existingIdx >= 0
+      ? {
+          ...nextPlayers[existingIdx],
+          name: child.name.trim(),
+          dob: child.dob,
+          gender: child.gender || 'Male',
+          teamIds,
+          guardianName: parent.name,
+          guardianPhone: parent.phone,
+          age,
+        }
+      : {
+          id: rosterId,
+          name: child.name.trim(),
+          email: '',
+          phone: parent.phone || '',
+          dob: child.dob,
+          gender: child.gender || 'Male',
+          teamIds,
+          position: '',
+          jerseyNumber: 0,
+          status: parent.status,
+          paymentPlan: 'Monthly',
+          amount: 0,
+          lastPaymentDate: '',
+          registrationDate: parent.registrationDate || now,
+          guardianName: parent.name,
+          guardianPhone: parent.phone,
+          registeredWithBI: false,
+          parentPlayerId: parentId,
+          registeredChildId: child.id,
+          age,
+        }
+
+    if (existingIdx >= 0) nextPlayers[existingIdx] = childPlayer
+    else nextPlayers.push(childPlayer)
+
+    for (const t of nextTeams) {
+      const onTeam = teamIds.includes(t.id)
+      const wasOn = t.players.includes(rosterId)
+      if (onTeam && !wasOn) t.players.push(rosterId)
+      if (!onTeam && wasOn) t.players = t.players.filter((pid) => pid !== rosterId)
+    }
+
+    if (teamId) {
+      addChatMember(teamId, parentId)
+      removeChatMember(teamId, rosterId)
+    }
+  }
+
+  const staleChildren = nextPlayers.filter(
+    (p) => p.parentPlayerId === parentId && p.registeredChildId && !activeChildIds.has(p.registeredChildId),
+  )
+  for (const stale of staleChildren) {
+    nextPlayers = nextPlayers.filter((p) => p.id !== stale.id)
+    nextTeams = nextTeams.map((t) => ({
+      ...t,
+      players: t.players.filter((pid) => pid !== stale.id),
+    }))
+  }
+
+  const currentPlayers = getPlayers()
+  const currentTeams = getTeams()
+  const playersChanged = JSON.stringify(nextPlayers) !== JSON.stringify(currentPlayers)
+  const teamsChanged = JSON.stringify(nextTeams) !== JSON.stringify(currentTeams)
+
+  if (playersChanged) setPlayers(nextPlayers)
+  if (teamsChanged) setTeams(nextTeams)
+  return nextPlayers.find((p) => p.id === parentId) ?? null
+}
+
+/** Ensures every parent account has up-to-date child roster Player rows (for manager view). */
+export function reconcileAllParentChildRosters(): void {
+  const players = getPlayers()
+  for (const p of players) {
+    if (p.parentPlayerId) continue
+    if (p.memberType === 'parent' || getRegisteredChildren(p).length > 0) {
+      syncChildrenRosterForParent(p.id)
+    }
+  }
+}
+
+/** Remove spurious player records created for club admin logins (admins are not members). */
+export function pruneAdminAccountsFromRoster(): void {
+  const players = getPlayers()
+  const toRemove = players.filter(
+    (p) =>
+      isClubAdminEmail(p.email) &&
+      !isChildRosterPlayer(p) &&
+      getRegisteredChildren(p).length === 0,
+  )
+  if (toRemove.length === 0) return
+
+  const removeIds = new Set(toRemove.map((p) => p.id))
+  setPlayers(players.filter((p) => !removeIds.has(p.id)))
+  setTeams(
+    getTeams().map((t) => ({
+      ...t,
+      players: t.players.filter((pid) => !removeIds.has(pid)),
+    })),
+  )
+}
+
+/** Sync child roster rows and drop admin accounts from the members list. */
+export function reconcileClubRoster(): void {
+  pruneAdminAccountsFromRoster()
+  reconcileAllParentChildRosters()
+}
+
+/** True when a parent account has registered children not yet mirrored as roster members. */
+export function hasUnsyncedParentChildren(players: Player[] = getPlayers()): boolean {
+  for (const parent of players) {
+    if (parent.parentPlayerId) continue
+    const children = getRegisteredChildren(parent)
+    if (children.length === 0) continue
+    for (const child of children) {
+      if (!child.name.trim() || !isValidChildDob(child.dob)) continue
+      const rosterId = childRosterPlayerId(parent.id, child.id)
+      const rosterRow = players.find((p) => p.id === rosterId)
+      if (!rosterRow) return true
+      if (rosterRow.name !== child.name.trim() || rosterRow.dob !== child.dob) return true
+    }
+  }
+  return false
+}
+
+export function reconcileClubRosterIfNeeded(): void {
+  if (hasUnsyncedParentChildren()) reconcileClubRoster()
+  else pruneAdminAccountsFromRoster()
+}
+
+/** Push roster changes to Supabase so managers on other devices see new sign-ups immediately. */
+export async function ensureClubRosterSynced(): Promise<void> {
+  await ensureAppStateKeySynced(KEYS.players)
+  await ensureAppStateKeySynced(KEYS.teams)
+}
+
+export function getFeeConfigForBirthYear(birthYear: number): AgeGroupFeeConfig {
+  if (!isValidBirthYear(birthYear)) return { monthly: 0, oneTime: 0 }
+  const ageGroupId = computeTargetAgeGroup(calcAgeFromBirthYear(birthYear))?.id
+  if (!ageGroupId) {
+    const cfg = getMembershipFeeConfig()
+    const senior = cfg.senior
+    if (senior) return senior
+    const first = Object.values(cfg)[0]
+    return first ?? { monthly: 0, oneTime: 0 }
+  }
+  return getFeeConfigForAgeGroup(ageGroupId)
+}
+
+/** Age group used for membership fees — team assignment, else birth year from onboarding. */
 export function getFeeAgeGroupIdForPlayer(player: Player): string | null {
   const teamAgeGroup = getAgeGroupIdForPlayer(player.id)
   if (teamAgeGroup) return teamAgeGroup
 
-  const dobForFees = player.memberType === 'parent' ? player.childDob : player.dob
-  if (!dobForFees) return null
+  if (player.memberType === 'parent') {
+    const firstChild = getRegisteredChildren(player)[0]
+    if (firstChild?.dob) {
+      const age = calcAge(firstChild.dob)
+      if (age !== null) return computeTargetAgeGroup(age)?.id ?? null
+    }
+    if (player.childDob) {
+      const age = calcAge(player.childDob)
+      if (age !== null) return computeTargetAgeGroup(age)?.id ?? null
+    }
+    return null
+  }
 
-  const age = calcAge(dobForFees)
-  if (age === null) return null
-  return computeTargetAgeGroup(age)?.id ?? null
+  const birthYear = getPlayerBirthYear(player)
+  if (birthYear) return computeTargetAgeGroup(calcAgeFromBirthYear(birthYear))?.id ?? null
+  if (player.dob) {
+    const age = calcAge(player.dob)
+    if (age !== null) return computeTargetAgeGroup(age)?.id ?? null
+  }
+  return null
 }
 
 export function getFeeConfigForAgeGroup(ageGroupId: string): AgeGroupFeeConfig {
@@ -399,28 +754,77 @@ export function getFeeConfigForPlayer(playerId: string): AgeGroupFeeConfig {
   return getFeeConfigForAgeGroup(ageGroupId)
 }
 
-/** One-time / self fees for a parent who also plays (uses their own DOB). */
+/** One-time / self fees for a parent who also plays (uses their birth year). */
 export function getSelfFeeConfigForPlayer(player: Player): AgeGroupFeeConfig {
-  if (!player.dob) return { monthly: 0, oneTime: 0 }
-  const age = calcAge(player.dob)
-  if (age === null) return { monthly: 0, oneTime: 0 }
-  const ageGroupId = computeTargetAgeGroup(age)?.id
-  if (!ageGroupId) {
-    const cfg = getMembershipFeeConfig()
-    const senior = cfg.senior
-    if (senior) return senior
-    const first = Object.values(cfg)[0]
-    return first ?? { monthly: 0, oneTime: 0 }
-  }
-  return getFeeConfigForAgeGroup(ageGroupId)
+  const birthYear = getPlayerBirthYear(player)
+  if (birthYear) return getFeeConfigForBirthYear(birthYear)
+  return { monthly: 0, oneTime: 0 }
 }
 
 export function needsPlayerOnboarding(player: Player | undefined | null): boolean {
-  if (!player?.memberType) return true
-  if (player.memberType === 'player') return !player.dob?.trim()
-  if (!player.childName?.trim() || !player.childDob?.trim()) return true
-  if (player.alsoPlays && !player.dob?.trim()) return true
+  if (!player) return true
+  if (player.onboardingCompletedAt) return false
+  if (!player.memberType) return true
+  if (player.memberType === 'player') return getPlayerBirthYear(player) === null
+  const children = getRegisteredChildren(player)
+  if (
+    children.length === 0
+    || children.some((c) => !c.name.trim() || !isValidChildDob(c.dob))
+  ) {
+    return true
+  }
+  if (player.alsoPlays && getPlayerBirthYear(player) === null) return true
   return false
+}
+
+function parseAuthRegisteredChildren(raw: unknown): RegisteredChild[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  return raw
+    .filter((c): c is Record<string, unknown> => !!c && typeof c === 'object')
+    .map((c) => ({
+      id: String(c.id ?? `child-${Date.now().toString(36)}`),
+      name: String(c.name ?? '').trim(),
+      dob: String(c.dob ?? '').trim(),
+      gender: c.gender === 'Female' ? 'Female' as const : 'Male' as const,
+    }))
+    .filter((c) => c.name && c.dob)
+}
+
+/**
+ * Re-applies saved onboarding answers from Supabase Auth user_metadata when the
+ * local roster row was reset (e.g. after syncing from another device).
+ */
+export function syncPlayerProfileFromAuthMetadata(
+  email: string,
+  metadata: Record<string, unknown> | undefined,
+): Player | null {
+  if (!metadata) return null
+  const memberType = metadata.memberType
+  if (memberType !== 'player' && memberType !== 'parent') return null
+
+  const player = findPlayerByEmail(email)
+  if (!player) return null
+  if (!needsPlayerOnboarding(player)) return player
+
+  const birthYear =
+    typeof metadata.birthYear === 'number' && isValidBirthYear(metadata.birthYear)
+      ? metadata.birthYear
+      : undefined
+  const alsoPlays = !!metadata.alsoPlays
+  const registeredChildren =
+    memberType === 'parent' ? parseAuthRegisteredChildren(metadata.registeredChildren) : undefined
+
+  if (memberType === 'parent' && (!registeredChildren || registeredChildren.length === 0)) {
+    return null
+  }
+  if (memberType === 'player' && !birthYear) return null
+
+  return completePlayerOnboarding(player.id, {
+    memberType,
+    birthYear,
+    alsoPlays,
+    registeredChildren,
+  })
 }
 
 export function getMemberPaymentFocus(player: Player | undefined | null): MemberPaymentFocus | null {
@@ -432,9 +836,8 @@ export function completePlayerOnboarding(
   playerId: string,
   input: {
     memberType: 'player' | 'parent'
-    childName?: string
-    childDob?: string
-    dob?: string
+    registeredChildren?: RegisteredChild[]
+    birthYear?: number
     alsoPlays?: boolean
   },
 ): Player | null {
@@ -444,41 +847,103 @@ export function completePlayerOnboarding(
 
   const current = players[idx]
   const isParent = input.memberType === 'parent'
-  const childDob = isParent ? input.childDob?.trim() || undefined : undefined
-  const dob =
-    input.memberType === 'player'
-      ? input.dob?.trim() || undefined
-      : input.alsoPlays
-        ? input.dob?.trim() || undefined
-        : current.dob
-  const playerAge = dob ? calcAge(dob) ?? undefined : undefined
+  const birthYear = input.birthYear && isValidBirthYear(input.birthYear) ? input.birthYear : undefined
+  const children = isParent
+    ? (input.registeredChildren ?? []).map((c) => ({
+        id: c.id,
+        name: c.name.trim(),
+        dob: c.dob.trim(),
+        gender: c.gender || 'Male',
+        birthYear: parseInt(c.dob.slice(0, 4), 10) || undefined,
+      }))
+    : undefined
+  const firstChild = children?.[0]
 
   const updated: Player = {
     ...current,
     memberType: input.memberType,
-    childName: isParent ? input.childName?.trim() || undefined : undefined,
-    childDob,
+    birthYear: input.memberType === 'player' || input.alsoPlays ? birthYear : undefined,
+    registeredChildren: children,
+    childName: firstChild?.name,
+    childDob: firstChild?.dob,
     alsoPlays: isParent ? !!input.alsoPlays : undefined,
-    dob: dob || current.dob,
-    age: input.memberType === 'player' ? playerAge : input.alsoPlays ? playerAge : current.age,
+    dob: birthYear ? `${birthYear}-01-01` : current.dob,
+    age: birthYear ? calcAgeFromBirthYear(birthYear) : current.age,
     guardianName: isParent ? current.guardianName || current.name : current.guardianName,
     paymentPlan: isParent ? 'Monthly' : current.paymentPlan,
+    onboardingCompletedAt: new Date().toISOString(),
   }
   const next = [...players]
   next[idx] = updated
   setPlayers(next)
+  if (isParent) return syncChildrenRosterForParent(playerId)
   return updated
 }
 
+export function updateRegisteredChildren(playerId: string, children: RegisteredChild[]): Player | null {
+  const players = getPlayers()
+  const idx = players.findIndex((p) => p.id === playerId)
+  if (idx < 0) return null
+
+  const current = players[idx]
+  const hasSelfRegistration =
+    current.memberType === 'player' || !!current.alsoPlays || getPlayerBirthYear(current) !== null
+
+  const normalised = children
+    .map((c) => ({
+      id: c.id || `child-${Date.now().toString(36)}`,
+      name: c.name.trim(),
+      dob: c.dob.trim(),
+      gender: c.gender || 'Male',
+      birthYear: parseInt(c.dob.slice(0, 4), 10) || undefined,
+    }))
+    .filter((c) => c.name && isValidChildDob(c.dob))
+
+  const firstChild = normalised[0]
+  let memberType: 'player' | 'parent' = current.memberType ?? 'player'
+  let alsoPlays = current.alsoPlays
+  let paymentPlan = current.paymentPlan
+
+  if (normalised.length > 0) {
+    memberType = 'parent'
+    if (hasSelfRegistration) alsoPlays = true
+    paymentPlan = 'Monthly'
+  } else if (hasSelfRegistration) {
+    memberType = 'player'
+    alsoPlays = undefined
+  }
+
+  const updated: Player = {
+    ...current,
+    memberType,
+    registeredChildren: normalised.length > 0 ? normalised : undefined,
+    childName: firstChild?.name,
+    childDob: firstChild?.dob,
+    alsoPlays: memberType === 'parent' ? alsoPlays : undefined,
+    paymentPlan,
+    guardianName: memberType === 'parent' ? current.guardianName || current.name : current.guardianName,
+  }
+  const next = [...players]
+  next[idx] = updated
+  setPlayers(next)
+  return syncChildrenRosterForParent(playerId)
+}
+
 export function hasTeamAssignment(player: Player | undefined | null): boolean {
-  return !!player && player.teamIds.length > 0
+  if (!player) return false
+  if (player.teamIds.length > 0) return true
+  if (player.memberType === 'parent') {
+    return getChildRosterPlayersForParent(player.id).some((c) => c.teamIds.length > 0)
+  }
+  return false
 }
 
 /** Sessions for a member's assigned team(s) only — empty until a manager assigns teams. */
 export function getSessionsForPlayer(playerId: string): Session[] {
   const player = getPlayers().find((p) => p.id === playerId)
-  if (!player || player.teamIds.length === 0) return []
-  const teamIds = new Set(player.teamIds)
+  if (!player) return []
+  const teamIds = new Set(getTeamIdsForMember(player))
+  if (teamIds.size === 0) return []
   return getSessions().filter((s) => teamIds.has(s.teamId))
 }
 
@@ -569,11 +1034,14 @@ export function removePlayerFromClub(playerId: string): boolean {
   const player = players.find((p) => p.id === playerId)
   if (!player) return false
 
-  setPlayers(players.filter((p) => p.id !== playerId))
+  const childIds = players.filter((p) => p.parentPlayerId === playerId).map((p) => p.id)
+  const removeIds = new Set([playerId, ...childIds])
+
+  setPlayers(players.filter((p) => !removeIds.has(p.id)))
   setTeams(
     getTeams().map((t) => ({
       ...t,
-      players: t.players.filter((pid) => pid !== playerId),
+      players: t.players.filter((pid) => !removeIds.has(pid)),
     })),
   )
   clearPendingSeniorPlayer(playerId)
@@ -845,7 +1313,12 @@ export function clearStore(key: string) {
    See supabase/app-data-setup.sql for the table + RLS + Realtime setup.
    ─────────────────────────────────────────────────────────────────── */
 
-let appStateSyncStarted = false
+let appStateSyncPromise: Promise<void> | null = null
+
+/** Resolves once the initial Supabase → localStorage pull has finished (or immediately if offline). */
+export function whenClubDataReady(): Promise<void> {
+  return appStateSyncPromise ?? Promise.resolve()
+}
 
 function syncKeyToRemote(key: string, value: unknown) {
   if (!isSupabaseConfigured || !supabase) return
@@ -888,10 +1361,12 @@ export async function ensureAppStateKeySynced(key: string): Promise<void> {
  * Supabase isn't configured (the app keeps working purely from localStorage).
  */
 export async function initAppStateSync(): Promise<void> {
-  if (appStateSyncStarted) return
-  if (!isSupabaseConfigured || !supabase) return
-  appStateSyncStarted = true
-
+  if (appStateSyncPromise) return appStateSyncPromise
+  if (!isSupabaseConfigured || !supabase) {
+    appStateSyncPromise = Promise.resolve()
+    return appStateSyncPromise
+  }
+  appStateSyncPromise = (async () => {
   const applyRemoteRow = (key: string, value: unknown) => {
     if (!SYNCED_KEYS.has(key)) return
     localStorage.setItem(key, JSON.stringify(value))
@@ -930,6 +1405,9 @@ export async function initAppStateSync(): Promise<void> {
       },
     )
     .subscribe()
+  })()
+
+  return appStateSyncPromise
 }
 
 /* ─────────────────── Typed Getters / Setters ─────────────────── */
@@ -957,6 +1435,7 @@ export function upsertPlayerFromAuth(input: {
   jerseyNumber?: number
 }): Player | null {
   if (isMemberAccessRevoked(input.email)) return null
+  if (isClubAdminEmail(input.email)) return null
 
   const players = getPlayers()
   const existing = players.find((p) => p.email.toLowerCase() === input.email.toLowerCase())
@@ -1293,7 +1772,7 @@ export function applyDefaultTicketPriceToAllFixtures(adultPrice: number, kidPric
 /* ─────────────────── Stats ─────────────────── */
 
 export function computeClubStats() {
-  const players = getPlayers()
+  const players = getRosterListedMembers()
   const teams = getTeams()
   const payments = getPayments()
   return {
@@ -1319,6 +1798,63 @@ export function getPlayerTeams(playerId: string): Team[] {
   if (!player) return []
   const teams = getTeams()
   return teams.filter((t) => player.teamIds.includes(t.id))
+}
+
+/** Add a roster member to a team (updates player + team records and team chat). */
+export function assignPlayerToTeam(playerId: string, teamId: string): Player | null {
+  const players = getPlayers()
+  const player = players.find((p) => p.id === playerId)
+  if (!player || player.teamIds.includes(teamId)) return player ?? null
+
+  const nextPlayers = players.map((p) =>
+    p.id === playerId ? { ...p, teamIds: [...p.teamIds, teamId] } : p,
+  )
+  const nextTeams = getTeams().map((t) =>
+    t.id === teamId && !t.players.includes(playerId)
+      ? { ...t, players: [...t.players, playerId] }
+      : t,
+  )
+  setPlayers(nextPlayers)
+  setTeams(nextTeams)
+
+  if (isChildRosterPlayer(player)) {
+    const parent = getParentForChildRosterPlayer(playerId)
+    if (parent) addChatMember(teamId, parent.id)
+  } else if (!isClubAdminEmail(player.email)) {
+    addChatMember(teamId, playerId)
+  }
+
+  return nextPlayers.find((p) => p.id === playerId) ?? null
+}
+
+/** Remove a roster member from a team. */
+export function unassignPlayerFromTeam(playerId: string, teamId: string): void {
+  const players = getPlayers()
+  const player = players.find((p) => p.id === playerId)
+  if (!player || !player.teamIds.includes(teamId)) return
+
+  const nextPlayers = players.map((p) =>
+    p.id === playerId ? { ...p, teamIds: p.teamIds.filter((tid) => tid !== teamId) } : p,
+  )
+  const nextTeams = getTeams().map((t) =>
+    t.id === teamId ? { ...t, players: t.players.filter((pid) => pid !== playerId) } : t,
+  )
+  setPlayers(nextPlayers)
+  setTeams(nextTeams)
+
+  if (isChildRosterPlayer(player)) {
+    const parent = getParentForChildRosterPlayer(playerId)
+    if (parent) {
+      const stillOnTeam = getChildRosterPlayersForParent(parent.id).some((c) => c.teamIds.includes(teamId))
+      if (!stillOnTeam) removeChatMember(teamId, parent.id)
+    }
+  } else {
+    removeChatMember(teamId, playerId)
+  }
+}
+
+export function getUnassignedRosterMembers(): Player[] {
+  return getRosterListedMembers().filter((p) => p.teamIds.length === 0)
 }
 
 export function getAgeGroupName(id: string): string {
@@ -1400,10 +1936,16 @@ export function pruneDemoSeedData() {
 
 export function getChatRoom(teamId: string): ChatRoomMembership {
   const map = getChatMembersMap()
-  if (map[teamId]) return map[teamId]
-  // Default: seed from the team's roster, no admins yet.
-  const team = getTeams().find((t) => t.id === teamId)
-  return { memberIds: team ? [...team.players] : [], adminIds: [] }
+  if (map[teamId]) {
+    const room = map[teamId]
+    const players = getPlayers()
+    const memberIds = room.memberIds.filter((id) => {
+      const p = players.find((pl) => pl.id === id)
+      return !p || !isChildRosterPlayer(p)
+    })
+    return { memberIds, adminIds: room.adminIds }
+  }
+  return { memberIds: getChatEligibleMemberIds(teamId), adminIds: [] }
 }
 
 export function setChatRoom(teamId: string, room: ChatRoomMembership) {

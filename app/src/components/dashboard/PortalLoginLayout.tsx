@@ -56,7 +56,7 @@ export function PortalLoginLayout({
 
   return (
     <div className="portal-shell-v2 min-h-[100dvh] relative flex flex-col lg:flex-row overflow-hidden">
-      <ClubVideoBackground overlay="portal" showCourtLines className="!fixed inset-0" />
+      <ClubVideoBackground overlay="portal" className="!fixed inset-0" />
 
       <Link
         to="/"

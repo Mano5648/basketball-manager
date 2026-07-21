@@ -13,7 +13,7 @@ export default function Layout({ children, hideFooter = false }: LayoutProps) {
   useSmoothScroll()
 
   return (
-    <div className="min-h-[100dvh] flex flex-col">
+    <div className="min-h-[100dvh] w-full overflow-x-hidden flex flex-col">
       <Navbar />
       <main className="flex-1">
         {children}
