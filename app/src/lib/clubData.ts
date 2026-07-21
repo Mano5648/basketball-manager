@@ -906,6 +906,24 @@ export async function pushMemberRosterContribution(): Promise<void> {
   }
 }
 
+let contribPushTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Debounced member contribution push. A single roster save triggers several
+ * `setPlayers` calls (parent row update, then child-roster reconcile, then the
+ * global reconcile). Firing an immediate push on each one captured different
+ * (and sometimes stale, e.g. pre-deletion) snapshots that could land out of
+ * order in Supabase — leaving a deleted child alive in the contribution row.
+ * Coalescing to one push after the state settles always sends the final roster.
+ */
+function scheduleMemberContributionPush(): void {
+  if (contribPushTimer) clearTimeout(contribPushTimer)
+  contribPushTimer = setTimeout(() => {
+    contribPushTimer = null
+    void pushMemberRosterContribution()
+  }, 250)
+}
+
 /** Merge a member contribution row into the local players roster (manager-side aggregation). */
 function mergeContributionIntoPlayers(value: unknown): void {
   const rows = Array.isArray(value) ? (value as Player[]) : []
@@ -1523,7 +1541,7 @@ function syncKeyToRemote(key: string, value: unknown) {
   // Members never overwrite the shared roster/team blobs — they publish only the
   // rows they own to their private contribution row instead (see P2 hardening).
   if (key === KEYS.players && !currentUserIsManager()) {
-    void pushMemberRosterContribution()
+    scheduleMemberContributionPush()
     return
   }
   if (key === KEYS.teams && !currentUserIsManager()) {
