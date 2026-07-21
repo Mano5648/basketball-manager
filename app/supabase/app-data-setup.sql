@@ -93,13 +93,15 @@ create policy "app_state_manager_read_all"
 
 -- Any authenticated member can contribute shared state. This is required so
 -- that non-manager sign-ups actually reach the club: a parent registering a
--- child (dlbc_players), a member sending a Team Chat message (dlbc_chat_*),
--- buying a ticket (dlbc_ticket_purchases) or recording a card payment
--- (dlbc_payments) all write via the same localStorage->app_state mirror.
--- Restricting writes to managers silently dropped every member contribution
--- (RLS rejected the upsert), so children never appeared in the manager roster.
--- Reads stay locked down above (member PII is manager-only); the client merges
--- local + remote rows (see mergePlayersForSync) so concurrent writers converge.
+-- child now publishes their own rows to a private per-user row
+-- ("dlbc_roster_contrib:<auth.uid()>") which managers aggregate into the shared
+-- roster, plus members send Team Chat (dlbc_chat_*), buy tickets
+-- (dlbc_ticket_purchases) and record card payments (dlbc_payments) through the
+-- same localStorage->app_state mirror. Restricting writes to managers silently
+-- dropped every member contribution (RLS rejected the upsert), so children
+-- never appeared in the manager roster. Member PII reads stay manager-only
+-- above; the client merges local + remote rows (mergePlayersForSync) and only
+-- managers own the shared dlbc_players blob, so members never clobber it.
 create policy "app_state_auth_insert"
   on public.app_state for insert
   to authenticated

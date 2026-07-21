@@ -857,6 +857,66 @@ function applySyncedPlayersValue(value: unknown): Player[] {
   return merged
 }
 
+/* ─── Per-member roster contributions (P2 hardening) ───
+   A shared `dlbc_players` blob means the last writer wins: a member pushing
+   their local roster would clobber rows they can't see (they can't read other
+   members' PII). To make member sign-ups collision-free, each member writes
+   ONLY the rows they own — their own roster row + their child rows — to a row
+   keyed by their auth uid: `dlbc_roster_contrib:<uid>`. The manager reads every
+   contribution row and merges it into the authoritative `dlbc_players` blob.
+   No member ever overwrites another member's data. */
+export const CONTRIB_PREFIX = 'dlbc_roster_contrib:'
+
+function currentUserIsManager(): boolean {
+  const contact = getLoggedInContact()
+  if (!contact) return false
+  return contact.role === 'manager' || isManagerEmail(contact.email)
+}
+
+/** Rows the signed-in member owns: their own roster row + any child rows. */
+function computeOwnedRosterRows(email: string): Player[] {
+  const players = getPlayers()
+  const own = players.find((p) => p.email && p.email.toLowerCase() === email.toLowerCase())
+  if (!own) return []
+  return [own, ...players.filter((p) => p.parentPlayerId === own.id)]
+}
+
+/**
+ * Publishes the signed-in member's owned roster rows to their private
+ * `dlbc_roster_contrib:<uid>` app_state row. No-op for managers (they own the
+ * shared blob) and when Supabase isn't configured.
+ */
+export async function pushMemberRosterContribution(): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return
+  const contact = getLoggedInContact()
+  if (!contact?.email || currentUserIsManager()) return
+  const owned = computeOwnedRosterRows(contact.email)
+  if (owned.length === 0) return
+  try {
+    const { data } = await supabase.auth.getUser()
+    const uid = data.user?.id
+    if (!uid) return
+    const key = CONTRIB_PREFIX + uid
+    const { error } = await supabase
+      .from('app_state')
+      .upsert({ key, value: owned, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+    if (error) console.warn('[app_state] member contribution sync failed', error.message)
+  } catch {
+    /* offline or unreachable — keep working from localStorage */
+  }
+}
+
+/** Merge a member contribution row into the local players roster (manager-side aggregation). */
+function mergeContributionIntoPlayers(value: unknown): void {
+  const rows = Array.isArray(value) ? (value as Player[]) : []
+  if (rows.length === 0) return
+  const local = readPlayersFromStorage()
+  const merged = mergePlayersForSync(local, rows)
+  if (JSON.stringify(merged) !== JSON.stringify(local)) {
+    setPlayers(merged)
+  }
+}
+
 /**
  * Re-applies saved onboarding answers from Supabase Auth user_metadata when the
  * local roster row was reset (e.g. after syncing from another device).
@@ -1435,6 +1495,12 @@ function syncKeyToRemote(key: string, value: unknown) {
     })
     return
   }
+  // Members never overwrite the shared roster blob — they publish only the rows
+  // they own to their private contribution row instead (see P2 hardening).
+  if (key === KEYS.players && !currentUserIsManager()) {
+    void pushMemberRosterContribution()
+    return
+  }
   supabase
     .from('app_state')
     .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
@@ -1446,6 +1512,12 @@ function syncKeyToRemote(key: string, value: unknown) {
 /** Await remote sync before server-side validation (e.g. Stripe checkout). */
 export async function ensureAppStateKeySynced(key: string): Promise<void> {
   if (!isSupabaseConfigured || !supabase || !SYNCED_KEYS.has(key)) return
+  // Members publish the roster via their private contribution row, never the
+  // shared blob (see P2 hardening) — otherwise this would clobber other members.
+  if (key === KEYS.players && !currentUserIsManager()) {
+    await pushMemberRosterContribution()
+    return
+  }
   const raw = localStorage.getItem(key)
   if (!raw) return
   try {
@@ -1467,6 +1539,11 @@ export async function ensureAppStateKeySynced(key: string): Promise<void> {
  * Supabase isn't configured (the app keeps working purely from localStorage).
  */
 function applyRemoteAppStateRow(key: string, value: unknown) {
+  if (key.startsWith(CONTRIB_PREFIX)) {
+    mergeContributionIntoPlayers(value)
+    window.dispatchEvent(new StorageEvent('storage', { key: KEYS.players }))
+    return
+  }
   if (!SYNCED_KEYS.has(key)) return
   if (key === KEYS.players) {
     applySyncedPlayersValue(value)
@@ -1534,11 +1611,11 @@ export async function initAppStateSync(): Promise<void> {
         const row = (payload.new ?? payload.old) as { key?: string; value?: unknown } | null
         if (!row?.key) return
         if (payload.eventType === 'DELETE') {
-          localStorage.removeItem(row.key)
+          if (!row.key.startsWith(CONTRIB_PREFIX)) localStorage.removeItem(row.key)
           window.dispatchEvent(new StorageEvent('storage', { key: row.key }))
         } else {
           applyRemoteRow(row.key, row.value)
-          if (row.key === KEYS.players) {
+          if (row.key === KEYS.players || row.key.startsWith(CONTRIB_PREFIX)) {
             reconcileClubRosterIfNeeded()
             void ensureAppStateKeySynced(KEYS.players)
             void ensureAppStateKeySynced(KEYS.teams)
