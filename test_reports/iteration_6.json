@@ -1,0 +1,57 @@
+{
+  "summary": "TEST C (PRIMARY): PARENT-SIDE PASS after LWW fix in mergePlayersForSync — deleted 'john' STAYS deleted after 4 consecutive reloads over ~30s (regChildren=['amu'], ts=1784677306872 unchanged). TEST A PASS: AddY1784677600 (dob 2012-05-15 Male) added and survives reload. TEST B PASS: same AddY removed + reload → gone. REGRESSION PASS: parent Notifications page shows no banned strings (no 'Neptune BC', no 'fundraising event 25 February', no 'monthly membership €50', no 'Tuesday training moved'). MANAGER-SIDE FAIL: after logging in as manager@dublinlions.ie, the parent's row correctly holds registeredChildren=['amu'] with the new ts=1784677306872 (LWW works there too), BUT an orphan child-roster row for 'john' still exists in the manager's dlbc_players (players.filter(p=>p.parentPlayerId===parent.id).map(k=>k.name) => ['amu','john']), so the Members page continues to list BOTH amu and john as CHILD rows even after waiting 22s and reloading. Root cause: applySyncedPlayersValue does NOT strip child roster rows whose parent's LWW-winning registeredChildren no longer references them — the 'honour deletions' logic exists in mergeContributionIntoPlayers but was never replicated to the shared dlbc_players merge path (the exact P0 item #2 from iteration_5). Also intermittent 'TypeError: Failed to fetch' from supabase.from('app_state').upsert during member contribution push is still occurring (once during PREP save, once during TEST B save, once during TEST C save) — the 4x retry silently gives up.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "applySyncedPlayersValue (src/lib/clubData.ts:862-871)",
+        "issue": "CRITICAL residual: after mergePlayersForSync correctly picks the newer registeredChildren=['amu'] for the parent's own row via LWW, the child-roster rows (players where parentPlayerId===parent.id) are still merged in verbatim from the remote dlbc_players blob. The remote blob still contains the pre-delete child row for 'john' (because the manager last flushed the aggregated snapshot with john present, and/or because the parent's contribution push failed with 'Failed to fetch'). applySyncedPlayersValue never drops orphaned child rows, so the manager Members page keeps showing 'john' as a CHILD row indefinitely even though the parent's registeredChildren does not include him. The 'honour deletions' logic in mergeContributionIntoPlayers (clubData.ts:973-977 base = local.filter(p => !(p.parentPlayerId === ownerId && !contribIds.has(p.id)))) was NEVER replicated to applySyncedPlayersValue.",
+        "selector": "n/a (state sync layer; observable on manager Members page)",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "pushMemberRosterContribution (src/lib/clubData.ts:902-930)",
+        "issue": "HIGH: The 4x retry against supabase.from('app_state').upsert still fails with 'TypeError: Failed to fetch' from the preview browser during almost every parent save (observed 3x in this run: PREP add-john save, TEST B delete AddY save, TEST C delete-john save). Because the retry loop swallows the failure after 4 attempts, the parent's dlbc_roster_contrib:<uid> row is never updated. The manager therefore only sees the child change via the shared dlbc_players blob (which mergePlayersForSync's new LWW handles for the owner row, but as noted above orphan child rows survive). No persistent outbound queue exists, so if the browser is closed before Supabase becomes reachable, the delete is lost forever from the remote contribution row.",
+        "selector": "n/a",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Parent deletes child → Manager Members list should reflect deletion",
+        "issue": "Manager Members page continues to list the deleted child ('john') because applySyncedPlayersValue doesn't purge child roster rows when the parent's own row (winning by LWW) no longer references them. parentRegChildren=['amu'] but the standalone john child-Player row survives in the manager's local dlbc_players.",
+        "affected_selectors": ["Members table rows for children of cooler74.ea@gmail.com"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/it6_baseline.png",
+    "/app/test_reports/it6_prep_filled.png",
+    "/app/test_reports/it6_after_remove_click.png",
+    "/app/test_reports/it6_test_c_final_parent.png",
+    "/app/test_reports/it6_manager_members.png",
+    "/app/test_reports/it6_notifications.png"
+  ],
+  "action_items": [
+    "P0 — In applySyncedPlayersValue (or in mergePlayersForSync's output post-processing), replicate the 'honour deletions' logic from mergeContributionIntoPlayers: for every player whose parentPlayerId is set, drop it if the corresponding owner's LWW-winning registeredChildren does NOT contain a matching child. Concretely: after merged = mergePlayersForSync(local, remote), for each owner row (no parentPlayerId), compute the set of live registered child ids, then filter merged to remove any p with p.parentPlayerId===owner.id whose p.id (or derived child id) isn't in that set. This closes the manager-side reload-resurrection path even when the contribution push fails.",
+    "P1 — Investigate and fix the persistent 'TypeError: Failed to fetch' on supabase.from('app_state').upsert from the preview browser. Add richer telemetry (distinguish 'network Failed to fetch' vs '{error} row-level-security-denied'), and consider persisting a pending push in localStorage (dlbc_pending_contrib_pushes) that is drained on next successful load — so a delete is never lost even if all 4 retries fail. This is also relevant to auth.updateUser, which uses the same transport.",
+    "P2 — After P0 lands: re-run TEST C from clean baseline. Expected: manager Members shows only amu within ~15s or after 1 reload.",
+    "P3 — src/pages/PlayerDashboard.tsx (2218 lines) and src/lib/clubData.ts (2537 lines) still exceed the 700-line guideline. Split ProfileTab and the sync layer for maintainability and unit-testability of these merge functions."
+  ],
+  "critical_code_review_comments": [
+    "The LWW fix in mergePlayersForSync (clubData.ts:806-849) is correctly implemented: primaryTs/secondaryTs are compared and the newer side's registeredChildren/childName/childDob are taken verbatim. Verified end-to-end on the parent side — 'john' delete now survives 4 reloads. However the fix is INCOMPLETE for the manager view because applySyncedPlayersValue does not sweep orphan child-roster rows out of the merged result, and the shared dlbc_players blob still contains them.",
+    "mergeContributionIntoPlayers (clubData.ts:951-1001) correctly honours deletions via `base = local.filter(p => !(p.parentPlayerId === ownerId && !contribIds.has(p.id)))` and then overwrites the owner's registeredChildren from the contribution row verbatim. This is precisely the pattern that must be replicated in applySyncedPlayersValue for the shared blob path.",
+    "syncRegisteredChildrenFromAuthMetadata (clubData.ts:1011-1030+) is correctly LWW-guarded on childrenUpdatedAt — verified: local ts=1784677306872 stayed intact across 4 reloads while john stayed deleted.",
+    "pushMemberRosterContribution's 4x retry with 600ms backoff (clubData.ts:920-928) still fails silently in this environment. Warn logged, but state becomes permanently divergent between local and remote contribution rows. Introduce a persistent outbound queue drained on next load and/or on 'online' event.",
+    "Notifications logic remains clean end-to-end: no banned strings ('Neptune BC', 'fundraising event 25 February', 'monthly membership €50', 'Tuesday training moved') found on /#/player/notifications."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only test)", "frontend": "80% — TEST A/B/C parent PASS, Notifications regression PASS; Manager-side propagation of TEST C FAIL (orphan john child row remains)"},
+  "test_credentials": "Parent cooler74.ea@gmail.com / test12 — post-run parent baseline is [amu] with childrenUpdatedAt=1784677623307 (TEST B removed the AddY session artefact). Manager manager@dublinlions.ie / lions2025.",
+  "seed_data_creation": "Created and removed 'AddY1784677600' during TEST A/B. Restored 'john' during PREP (childrenUpdatedAt=1784677291646) then deleted during TEST C (childrenUpdatedAt=1784677306872). Final parent roster: [amu] only. Manager's manager-side dlbc_players STILL contains an orphan child row for 'john' — a P0 to clean via the applySyncedPlayersValue fix (deleting it from the shared blob will require the manager to re-flush after the code fix, or fresh-computing dlbc_players from contributions).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "PARENT SIDE IS NOW GREEN — mergePlayersForSync LWW fix works. Focus next iteration on MANAGER SIDE ONLY. The fix required is in applySyncedPlayersValue in src/lib/clubData.ts (~lines 862-871): after mergePlayersForSync, drop orphan child-roster rows. Recipe (mirroring mergeContributionIntoPlayers:973-977): const owners = merged.filter(p => !p.parentPlayerId); for each owner, compute liveChildIds = new Set((owner.registeredChildren||[]).map(c=>c.id)); then merged = merged.filter(p => !(p.parentPlayerId === owner.id && !liveChildIds.has(<the child id derived from p.id>))). Note child roster row ids are usually 'child-p-<parentId>-<childId>' — check makeChildRosterRow (~line 1134) for the exact id convention. Once fixed, re-run TEST C and verify manager's Members page shrinks to 1 within ~15s or after one reload. Also address P1: the persistent 'Failed to fetch' on the app_state upsert — consider a localStorage queue.",
+  "rca_of_the_issue": "REPRODUCTION (manager-side, confirmed): 1) Parent cooler74.ea@gmail.com with baseline [amu,john] deletes 'john' + Save. Parent local: registeredChildren=[amu], childrenUpdatedAt=1784677306872. Parent reloads 4x — stays [amu] (mergePlayersForSync LWW works). Console warns '[app_state] member contribution sync failed TypeError: Failed to fetch' — contribution push failed after 4 retries. 2) Manager logs in fresh. Manager's local dlbc_players is populated from Supabase. Merged parent row: registeredChildren=['amu'], childrenUpdatedAt=1784677306872 (LWW picks the newer local push if any survived; in practice the shared blob was rewritten with parent's ts via some path — likely manager aggregator picked it up from either the parent's local blob push retry that eventually succeeded, or from the intermittent contribution row). BUT the standalone player row {id:'child-p-<parent>-<johnId>', name:'john', parentPlayerId:parent.id} still exists in the merged result because applySyncedPlayersValue does NOT prune orphan child rows. Members page reads players.filter(p => role==='child') and thus renders both amu and john. ROOT CAUSE: applySyncedPlayersValue (clubData.ts:862-871) only calls mergePlayersForSync and setPlayers — it lacks the 'honour deletions' post-processing that mergeContributionIntoPlayers already has (clubData.ts:973-977). MITIGATION: after `const merged = mergePlayersForSync(local, remote)`, add a filter that removes any p with p.parentPlayerId set whose corresponding owner's winning registeredChildren does not include a child with a matching id. Use the same child-id derivation as makeChildRosterRow."
+}

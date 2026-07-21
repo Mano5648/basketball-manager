@@ -817,15 +817,26 @@ export function mergePlayersForSync(local: Player[], remote: Player[]): Player[]
     const secondary = preferIncoming ? existing : incoming
     const primaryChildren = getRegisteredChildren(primary)
     const secondaryChildren = getRegisteredChildren(secondary)
+    // Children are reconciled by LAST-WRITE-WINS (childrenUpdatedAt), NOT by
+    // "largest set wins" — otherwise a stale row with more children would
+    // resurrect a child the member just deleted (the reload-revert bug).
+    const primaryTs = primary.childrenUpdatedAt ?? 0
+    const secondaryTs = secondary.childrenUpdatedAt ?? 0
+    const childrenSource =
+      primaryTs !== secondaryTs
+        ? primaryTs > secondaryTs
+          ? primary
+          : secondary
+        : primaryChildren.length >= secondaryChildren.length
+          ? primary
+          : secondary
     merged.set(incoming.id, {
       ...secondary,
       ...primary,
-      registeredChildren:
-        primaryChildren.length >= secondaryChildren.length
-          ? primary.registeredChildren ?? secondary.registeredChildren
-          : secondary.registeredChildren ?? primary.registeredChildren,
-      childName: primary.childName ?? secondary.childName,
-      childDob: primary.childDob ?? secondary.childDob,
+      registeredChildren: childrenSource.registeredChildren,
+      childName: childrenSource.childName,
+      childDob: childrenSource.childDob,
+      childrenUpdatedAt: Math.max(primaryTs, secondaryTs) || undefined,
       onboardingCompletedAt: primary.onboardingCompletedAt ?? secondary.onboardingCompletedAt,
       memberType: primary.memberType ?? secondary.memberType,
       alsoPlays: primary.alsoPlays ?? secondary.alsoPlays,
