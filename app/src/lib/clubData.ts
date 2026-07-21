@@ -1495,10 +1495,15 @@ function syncKeyToRemote(key: string, value: unknown) {
     })
     return
   }
-  // Members never overwrite the shared roster blob — they publish only the rows
-  // they own to their private contribution row instead (see P2 hardening).
+  // Members never overwrite the shared roster/team blobs — they publish only the
+  // rows they own to their private contribution row instead (see P2 hardening).
   if (key === KEYS.players && !currentUserIsManager()) {
     void pushMemberRosterContribution()
+    return
+  }
+  if (key === KEYS.teams && !currentUserIsManager()) {
+    // Team roster membership is rebuilt manager-side from the contribution; a
+    // member write here is rejected by RLS and only spams the console.
     return
   }
   supabase
@@ -1518,6 +1523,7 @@ export async function ensureAppStateKeySynced(key: string): Promise<void> {
     await pushMemberRosterContribution()
     return
   }
+  if (key === KEYS.teams && !currentUserIsManager()) return
   const raw = localStorage.getItem(key)
   if (!raw) return
   try {

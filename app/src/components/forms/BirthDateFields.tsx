@@ -135,12 +135,13 @@ export function ChildDobPicker({
     : 31
 
   const patch = (next: Partial<typeof parts>) => {
-    setParts((prev) => {
-      const merged = { ...prev, ...next }
-      const iso = composeIsoDate(merged.day, merged.month, merged.year)
-      onChange(iso)
-      return merged
-    })
+    const merged = { ...parts, ...next }
+    setParts(merged)
+    // Notify the parent OUTSIDE the state updater — calling onChange (a parent
+    // setState) from inside setParts' updater schedules a cross-component update
+    // during render, which React drops/warns on and caused the child's DOB to be
+    // lost before the roster save read it.
+    onChange(composeIsoDate(merged.day, merged.month, merged.year))
   }
 
   const ageHint =
