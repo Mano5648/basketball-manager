@@ -33,6 +33,7 @@ import {
   updateRegisteredChildren,
   getTeamIdsForMember,
   calcAge,
+  reconcileClubRoster,
   ensureClubRosterSynced,
   whenClubDataReady,
   syncPlayerProfileFromAuthMetadata,
@@ -1404,6 +1405,7 @@ function ProfileTab({
         })
       }
 
+      reconcileClubRoster()
       await ensureClubRosterSynced()
       onClubPlayerUpdate(updated)
       setChildren(

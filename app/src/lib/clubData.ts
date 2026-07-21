@@ -790,10 +790,114 @@ function parseAuthRegisteredChildren(raw: unknown): RegisteredChild[] | undefine
     .filter((c) => c.name && c.dob)
 }
 
+function playerRecordScore(player: Player): number {
+  let score = 0
+  if (player.onboardingCompletedAt) score += 4
+  score += getRegisteredChildren(player).length * 10
+  if (player.parentPlayerId) score += 8
+  if (player.memberType) score += 2
+  if (player.email?.trim()) score += 1
+  return score
+}
+
+/** Merge local + remote player rows so sign-ups and child records are not wiped on sync. */
+export function mergePlayersForSync(local: Player[], remote: Player[]): Player[] {
+  const merged = new Map<string, Player>()
+
+  const upsert = (incoming: Player) => {
+    const existing = merged.get(incoming.id)
+    if (!existing) {
+      merged.set(incoming.id, incoming)
+      return
+    }
+    const preferIncoming = playerRecordScore(incoming) > playerRecordScore(existing)
+    const primary = preferIncoming ? incoming : existing
+    const secondary = preferIncoming ? existing : incoming
+    const primaryChildren = getRegisteredChildren(primary)
+    const secondaryChildren = getRegisteredChildren(secondary)
+    merged.set(incoming.id, {
+      ...secondary,
+      ...primary,
+      registeredChildren:
+        primaryChildren.length >= secondaryChildren.length
+          ? primary.registeredChildren ?? secondary.registeredChildren
+          : secondary.registeredChildren ?? primary.registeredChildren,
+      childName: primary.childName ?? secondary.childName,
+      childDob: primary.childDob ?? secondary.childDob,
+      onboardingCompletedAt: primary.onboardingCompletedAt ?? secondary.onboardingCompletedAt,
+      memberType: primary.memberType ?? secondary.memberType,
+      alsoPlays: primary.alsoPlays ?? secondary.alsoPlays,
+      birthYear: primary.birthYear ?? secondary.birthYear,
+    })
+  }
+
+  for (const player of remote) upsert(player)
+  for (const player of local) upsert(player)
+  return Array.from(merged.values())
+}
+
+function readPlayersFromStorage(): Player[] {
+  const raw = localStorage.getItem(KEYS.players)
+  if (!raw) return []
+  try {
+    return JSON.parse(raw) as Player[]
+  } catch {
+    return []
+  }
+}
+
+function applySyncedPlayersValue(value: unknown): Player[] {
+  const remote = Array.isArray(value) ? (value as Player[]) : []
+  const local = readPlayersFromStorage()
+  if (local.length === 0 && remote.length === 0) return remote
+  const merged = mergePlayersForSync(local, remote)
+  if (JSON.stringify(merged) !== JSON.stringify(local)) {
+    setPlayers(merged)
+  }
+  return merged
+}
+
 /**
  * Re-applies saved onboarding answers from Supabase Auth user_metadata when the
  * local roster row was reset (e.g. after syncing from another device).
  */
+/**
+ * Ensures registered children from auth metadata exist as roster members (manager view).
+ * Safe to call after onboarding whenever a parent updates children.
+ */
+export function syncRegisteredChildrenFromAuthMetadata(
+  email: string,
+  metadata: Record<string, unknown> | undefined,
+): Player | null {
+  const player = findPlayerByEmail(email)
+  if (!player) return null
+
+  const authChildren = parseAuthRegisteredChildren(metadata?.registeredChildren)
+  const localChildren = getRegisteredChildren(player)
+  const children = authChildren?.length ? authChildren : localChildren
+
+  if (children.length === 0) return player
+
+  const childrenMatch =
+    localChildren.length === children.length &&
+    children.every((child) =>
+      localChildren.some(
+        (local) => local.id === child.id && local.name === child.name && local.dob === child.dob,
+      ),
+    )
+
+  if (!childrenMatch && authChildren?.length) {
+    return updateRegisteredChildren(player.id, authChildren)
+  }
+
+  if (hasUnsyncedParentChildren()) {
+    reconcileClubRoster()
+    return findPlayerByEmail(email) ?? null
+  }
+
+  return syncChildrenRosterForParent(player.id) ?? player
+}
+
 export function syncPlayerProfileFromAuthMetadata(
   email: string,
   metadata: Record<string, unknown> | undefined,
@@ -804,7 +908,9 @@ export function syncPlayerProfileFromAuthMetadata(
 
   const player = findPlayerByEmail(email)
   if (!player) return null
-  if (!needsPlayerOnboarding(player)) return player
+  if (!needsPlayerOnboarding(player)) {
+    return syncRegisteredChildrenFromAuthMetadata(email, metadata) ?? player
+  }
 
   const birthYear =
     typeof metadata.birthYear === 'number' && isValidBirthYear(metadata.birthYear)
@@ -1369,6 +1475,11 @@ export async function initAppStateSync(): Promise<void> {
   appStateSyncPromise = (async () => {
   const applyRemoteRow = (key: string, value: unknown) => {
     if (!SYNCED_KEYS.has(key)) return
+    if (key === KEYS.players) {
+      applySyncedPlayersValue(value)
+      window.dispatchEvent(new StorageEvent('storage', { key }))
+      return
+    }
     localStorage.setItem(key, JSON.stringify(value))
     window.dispatchEvent(new StorageEvent('storage', { key }))
   }
@@ -1388,6 +1499,10 @@ export async function initAppStateSync(): Promise<void> {
     /* offline or unreachable — keep working from localStorage */
   }
 
+  reconcileClubRoster()
+  void ensureAppStateKeySynced(KEYS.players)
+  void ensureAppStateKeySynced(KEYS.teams)
+
   supabase
     .channel('app_state-changes')
     .on(
@@ -1401,6 +1516,11 @@ export async function initAppStateSync(): Promise<void> {
           window.dispatchEvent(new StorageEvent('storage', { key: row.key }))
         } else {
           applyRemoteRow(row.key, row.value)
+          if (row.key === KEYS.players) {
+            reconcileClubRosterIfNeeded()
+            void ensureAppStateKeySynced(KEYS.players)
+            void ensureAppStateKeySynced(KEYS.teams)
+          }
         }
       },
     )

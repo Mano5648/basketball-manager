@@ -149,6 +149,7 @@ import {
   reconcileClubRoster,
   reconcileClubRosterIfNeeded,
   whenClubDataReady,
+  ensureClubRosterSynced,
   getRosterListedMembers,
   getUnassignedRosterMembers,
   assignPlayerToTeam,
@@ -1507,6 +1508,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
       if (cancelled) return
       reconcileClubRoster()
       data.refresh()
+      void ensureClubRosterSynced()
     })
     return () => { cancelled = true }
   }, [data.refresh])
