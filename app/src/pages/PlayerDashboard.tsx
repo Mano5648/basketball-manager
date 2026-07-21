@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { easeOut } from '@/components/motion/presets'
@@ -424,6 +424,7 @@ function OnboardingScreen({
                   <div>
                     <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Date of birth</label>
                     <ChildDobPicker
+                      key={child.id}
                       id={`child-dob-${child.id}`}
                       value={child.dob}
                       onChange={(dob) => setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, dob } : c)))}
@@ -1319,13 +1320,10 @@ function ProfileTab({
   const [childrenError, setChildrenError] = useState('')
   const [childrenSaved, setChildrenSaved] = useState(false)
   const [childrenSaving, setChildrenSaving] = useState(false)
+  const childrenDirtyRef = useRef(false)
 
-  useEffect(() => {
-    if (!clubPlayer) {
-      setChildren([])
-      return
-    }
-    const registered = getRegisteredChildren(clubPlayer)
+  const loadChildrenFromPlayer = useCallback((player: ClubPlayer) => {
+    const registered = getRegisteredChildren(player)
     setChildren(
       registered.length > 0
         ? registered.map((c) => ({
@@ -1336,7 +1334,21 @@ function ProfileTab({
           }))
         : [],
     )
-  }, [clubPlayer])
+  }, [])
+
+  const markChildrenDirty = () => {
+    childrenDirtyRef.current = true
+  }
+
+  useEffect(() => {
+    if (!clubPlayer) {
+      setChildren([])
+      childrenDirtyRef.current = false
+      return
+    }
+    if (childrenDirtyRef.current) return
+    loadChildrenFromPlayer(clubPlayer)
+  }, [clubPlayer, loadChildrenFromPlayer])
 
   const handleChange = (field: string, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }))
@@ -1408,14 +1420,8 @@ function ProfileTab({
       reconcileClubRoster()
       await ensureClubRosterSynced()
       onClubPlayerUpdate(updated)
-      setChildren(
-        getRegisteredChildren(updated).map((c) => ({
-          id: c.id,
-          name: c.name,
-          dob: c.dob,
-          gender: c.gender || 'Male',
-        })),
-      )
+      childrenDirtyRef.current = false
+      loadChildrenFromPlayer(updated)
       setChildrenSaved(true)
       setTimeout(() => setChildrenSaved(false), 3000)
     } finally {
@@ -1535,7 +1541,7 @@ function ProfileTab({
                       </p>
                       <button
                         type="button"
-                        onClick={() => setChildren((prev) => prev.filter((c) => c.id !== child.id))}
+                        onClick={() => { markChildrenDirty(); setChildren((prev) => prev.filter((c) => c.id !== child.id)) }}
                         className="font-inter text-xs text-red-600 hover:text-red-700 flex items-center gap-1"
                       >
                         <Trash2 size={12} /> Remove
@@ -1547,23 +1553,24 @@ function ProfileTab({
                         <input
                           type="text"
                           value={child.name}
-                          onChange={(e) => setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, name: e.target.value } : c)))}
+                          onChange={(e) => { markChildrenDirty(); setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, name: e.target.value } : c))) }}
                           className="dash-input w-full"
                         />
                       </div>
                       <div className="md:col-span-2">
                         <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Date of birth</label>
                         <ChildDobPicker
+                          key={child.id}
                           id={`profile-child-dob-${child.id}`}
                           value={child.dob}
-                          onChange={(dob) => setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, dob } : c)))}
+                          onChange={(dob) => { markChildrenDirty(); setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, dob } : c))) }}
                         />
                       </div>
                       <div>
                         <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Gender</label>
                         <select
                           value={child.gender}
-                          onChange={(e) => setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, gender: e.target.value as 'Male' | 'Female' } : c)))}
+                          onChange={(e) => { markChildrenDirty(); setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, gender: e.target.value as 'Male' | 'Female' } : c))) }}
                           className="dash-input w-full"
                         >
                           <option value="Male">Male</option>
@@ -1575,7 +1582,7 @@ function ProfileTab({
                 ))}
                 <button
                   type="button"
-                  onClick={() => setChildren((prev) => [...prev, newChildDraft()])}
+                  onClick={() => { markChildrenDirty(); setChildren((prev) => [...prev, newChildDraft()]) }}
                   className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-slate-300 text-slate-600 hover:border-lions-400 hover:text-lions-700 font-inter text-sm transition-colors"
                 >
                   <Plus size={16} /> {children.length === 0 ? 'Add a child' : 'Add another child'}

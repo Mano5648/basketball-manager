@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 const MONTHS = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -118,7 +118,7 @@ export function ChildDobPicker({
   onChange: (value: string) => void
   id?: string
 }) {
-  const parsed = parseIsoDate(value)
+  const [parts, setParts] = useState(() => parseIsoDate(value))
   const currentYear = new Date().getFullYear()
   const years = useMemo(() => {
     const newest = currentYear - MIN_CHILD_AGE
@@ -126,13 +126,21 @@ export function ChildDobPicker({
     return Array.from({ length: newest - oldest + 1 }, (_, i) => newest - i)
   }, [currentYear])
 
-  const maxDay = parsed.month && parsed.year
-    ? daysInMonth(parseInt(parsed.month, 10), parseInt(parsed.year, 10))
+  useEffect(() => {
+    setParts(parseIsoDate(value))
+  }, [value])
+
+  const maxDay = parts.month && parts.year
+    ? daysInMonth(parseInt(parts.month, 10), parseInt(parts.year, 10))
     : 31
 
-  const patch = (next: Partial<typeof parsed>) => {
-    const merged = { ...parsed, ...next }
-    onChange(composeIsoDate(merged.day, merged.month, merged.year))
+  const patch = (next: Partial<typeof parts>) => {
+    setParts((prev) => {
+      const merged = { ...prev, ...next }
+      const iso = composeIsoDate(merged.day, merged.month, merged.year)
+      onChange(iso)
+      return merged
+    })
   }
 
   const ageHint =
@@ -152,7 +160,7 @@ export function ChildDobPicker({
     <div className="dob-picker space-y-4" id={id}>
       <YearChipStrip
         years={years}
-        value={parsed.year}
+        value={parts.year}
         onChange={(year) => patch({ year })}
         id={id ? `${id}-year` : undefined}
       />
@@ -162,7 +170,7 @@ export function ChildDobPicker({
         <div className="dob-month-grid" role="listbox" aria-label="Month">
           {MONTHS.map((label, index) => {
             const month = String(index + 1)
-            const active = parsed.month === month
+            const active = parts.month === month
             return (
               <button
                 key={label}
@@ -190,7 +198,7 @@ export function ChildDobPicker({
           min={1}
           max={maxDay}
           placeholder="DD"
-          value={parsed.day}
+          value={parts.day}
           onChange={(e) => {
             const raw = e.target.value.replace(/\D/g, '').slice(0, 2)
             patch({ day: raw })
