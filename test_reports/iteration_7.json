@@ -1,0 +1,43 @@
+{
+  "summary": "PRIMARY TEST C — PASS end-to-end (parent + manager). The stripOrphanChildRosterRows() fix in src/lib/clubData.ts (applied inside applySyncedPlayersValue AND mergeContributionIntoPlayers) closes the manager-side orphan-child regression from iteration_6. Parent cooler74.ea@gmail.com deleted 'john' → parent registeredChildren=['amu'], childrenUpdatedAt=1784678072840 stayed stable across 3 consecutive reloads over ~20s. Manager @dublinlions.ie then logged in and, after ~22s + 1 reload + a 2nd reload, Members list showed 'Showing 1 of 1 members' with only amu (CHILD) — NO orphan 'john' row. Manager Dashboard Total Members dropped from 2 to 1. TEST B (delete just-added AddZ*) PASS on reload — session artefact cleared. TEST D (re-add 'john' DOB 2012-07-16 Male) PASS — parent kids=[amu,john] survived reload; manager Members correctly showed both amu (age 10) and john (age 14) as CHILD rows after aggregator + reload ('Showing 2 of 2 members'). NOTIFICATIONS REGRESSION PASS — no banned strings ('Neptune BC', 'fundraising event 25 February', 'monthly membership €50', 'Tuesday training moved') anywhere on parent Dashboard/Notifications/CLUB NEWS. Final roster: parent + amu + john (as required baseline). Only residual noise: intermittent 'TypeError: Failed to fetch' on supabase.from('app_state').upsert during member contribution push (still logged as warning). The stripOrphan fix compensates by recovering on next merge, but a persistent outbound queue is still a P1 for robustness.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "pushMemberRosterContribution (src/lib/clubData.ts ~line 902-930)",
+        "issue": "Still logs '[app_state] member contribution sync failed TypeError: Failed to fetch' during almost every parent Save (seen during TEST C delete, TEST D add). The 4x retry with 600ms backoff sometimes exhausts. State converges anyway thanks to stripOrphanChildRosterRows + the shared dlbc_players blob path, but a persistent outbound queue in localStorage would eliminate any risk of a delete/add being lost if the tab is closed before Supabase becomes reachable.",
+        "selector": "n/a (sync layer; console warning)",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/it7_baseline.png",
+    "/app/test_reports/it7_parent_final.png",
+    "/app/test_reports/it7_manager_members.png",
+    "/app/test_reports/it7_manager_final.png",
+    "/app/test_reports/it7_add_john_form.png",
+    "/app/test_reports/it7_manager_after_D.png"
+  ],
+  "action_items": [
+    "P1 — Investigate and fix intermittent 'TypeError: Failed to fetch' on supabase.from('app_state').upsert from the preview browser. Consider a persistent outbound-push queue (dlbc_pending_contrib_pushes) in localStorage drained on next successful load / 'online' event, so a delete/add is never lost if all 4 retries fail. Same applies to supabase.auth.updateUser calls.",
+    "P3 (refactor) — src/pages/PlayerDashboard.tsx (2219 lines) and src/lib/clubData.ts (2554 lines) still exceed the 700-line guideline. Split ProfileTab + the sync layer (mergePlayersForSync, applySyncedPlayersValue, mergeContributionIntoPlayers, stripOrphanChildRosterRows, syncRegisteredChildrenFromAuthMetadata) into smaller modules with unit tests."
+  ],
+  "critical_code_review_comments": [
+    "stripOrphanChildRosterRows() (clubData.ts:868-876) is correctly written: it drops any row where p.parentPlayerId && p.registeredChildId are set AND the resolved parent no longer lists that childId in registeredChildren. Applied in BOTH applySyncedPlayersValue (line 882) AND after mergePlayersForSync in mergeContributionIntoPlayers (via setPlayers(stripOrphanChildRosterRows(merged)) at line 1015). This closes the union-merge orphan path that plagued iterations 5-6.",
+    "mergePlayersForSync's LWW on childrenUpdatedAt from iteration_6 remains intact and correct — verified locally that ts survives reload.",
+    "syncRegisteredChildrenFromAuthMetadata is still guarded on ts comparison; auth metadata does not resurrect deleted children.",
+    "The 4x retry in pushMemberRosterContribution against supabase.app_state.upsert continues to hit intermittent 'Failed to fetch' from the preview environment. The convergent design (stripOrphan + LWW) papers over the failure across sessions, but a persistent localStorage outbound queue would harden this further.",
+    "Notifications logic is clean end-to-end: no banned placeholder strings appear; real items ('Welcome to the new season!', membership/payment items) render correctly."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only test)", "frontend": "100% on the requested flows — TEST C (primary) PASS on parent AND manager, TEST B PASS, TEST D PASS (also validates ADD), Notifications regression PASS"},
+  "test_credentials": "Parent cooler74.ea@gmail.com / test12; Manager manager@dublinlions.ie / lions2025. Final baseline: parent has [amu (2016-07-21 F), john (2012-07-16 M)] with childrenUpdatedAt=1784678455066.",
+  "seed_data_creation": "Test data created and torn down: none permanent — the session AddZ<epoch> child from TEST A attempt was never persisted (save was blocked). 'john' was deleted in TEST C and RE-ADDED in TEST D so the final roster matches the required baseline of [amu, john].",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iteration_7 confirms all 4 flows required in the review request now pass. The core sync-layer fix (stripOrphanChildRosterRows) is landed and effective. Only cleanup/hardening items remain: (a) the intermittent Supabase 'Failed to fetch' — consider a persistent outbound queue; (b) the file-size refactor of PlayerDashboard.tsx and clubData.ts. Testing methodology tip for future iterations: 'Manage children' is a button (not link) that calls onNavigate('profile') INTERNAL state — the URL stays /#/player/dashboard even when the profile page renders (there is no /player/profile route). Direct hash-URL navigation to /player/profile 404s; always click the button or use `page.get_by_role('button', name='Manage children').click()`.",
+  "rca_of_the_issue": "N/A — the primary bug from iteration_6 (manager-side orphan 'john' child-roster row surviving union-merge in applySyncedPlayersValue) is FIXED. Verification: 1) parent deleted 'john' → local parent.registeredChildren=['amu']; 2) 3 reloads over ~20s kept parent.registeredChildren=['amu'] with childrenUpdatedAt=1784678072840 unchanged (LWW works); 3) manager logged in fresh, waited 22s, reloaded twice, and dlbc_players contained only 2 rows: [parent, amu] — no john row; 4) Members table rendered 'Showing 1 of 1 members' (amu CHILD). The fix path in clubData.ts:868-876 + :882 + :1015 correctly removes orphan child roster rows whose parent no longer references them."
+}

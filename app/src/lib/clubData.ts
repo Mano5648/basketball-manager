@@ -859,11 +859,27 @@ function readPlayersFromStorage(): Player[] {
   }
 }
 
+/**
+ * Removes orphan child-roster rows — a `child-<parent>-<child>` player whose
+ * parent no longer lists that child in registeredChildren. Union-merges (which
+ * never drop rows) would otherwise leave a deleted child alive on the manager
+ * roster forever. Rows whose parent isn't present are kept (can't decide).
+ */
+function stripOrphanChildRosterRows(players: Player[]): Player[] {
+  return players.filter((p) => {
+    if (!p.parentPlayerId || !p.registeredChildId) return true
+    const parent = players.find((x) => x.id === p.parentPlayerId)
+    if (!parent) return true
+    const childIds = new Set(getRegisteredChildren(parent).map((c) => c.id))
+    return childIds.has(p.registeredChildId)
+  })
+}
+
 function applySyncedPlayersValue(value: unknown): Player[] {
   const remote = Array.isArray(value) ? (value as Player[]) : []
   const local = readPlayersFromStorage()
   if (local.length === 0 && remote.length === 0) return remote
-  const merged = mergePlayersForSync(local, remote)
+  const merged = stripOrphanChildRosterRows(mergePlayersForSync(local, remote))
   if (JSON.stringify(merged) !== JSON.stringify(local)) {
     setPlayers(merged)
   }
@@ -996,7 +1012,7 @@ function mergeContributionIntoPlayers(value: unknown): void {
   }
 
   if (JSON.stringify(merged) !== JSON.stringify(local)) {
-    setPlayers(merged)
+    setPlayers(stripOrphanChildRosterRows(merged))
   }
 }
 
