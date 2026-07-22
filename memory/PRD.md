@@ -83,6 +83,17 @@ env in `/app/app/.env.local`.
 - Verified visually — initial frame on `/#/manager/login` is a clean dark canvas,
   video fades in smoothly when ready.
 
+### 6. Dark "OR" chip on white portal card + agent handoff (Jan 2026)
+- **Cause**: `ManagerLogin.tsx` divider used `bg-[#151f30]` (dark navy) text chip
+  and `border-white/10` hairline — both are dark-theme values, but the surrounding
+  card is `rgba(255,255,255,0.97)` (white). Result: the "or" looked like a floating
+  dark blob on the card.
+- **Fix**: chip now `bg-white`, uppercase `OR` in `text-slate-400` with
+  `tracking-[0.18em]`; hairline switched to `border-slate-200`. Reads as a proper
+  form divider now.
+- Added `/app/memory/AGENT_HANDOFF.md` — full onboarding brief for the next agent
+  (stack, file map, auth rules, data model, known pitfalls, deploy flow).
+
 ## Open / Next action items
 - P0 (OPEN, needs user input): "two login panels" report is ambiguous — could not reproduce a
   duplication on desktop (standard split-screen brand + form). Awaiting a user screenshot.

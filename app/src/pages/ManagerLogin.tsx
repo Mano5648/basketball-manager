@@ -182,10 +182,10 @@ export default function ManagerLogin() {
 
       <div className="relative mt-8">
         <div className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-white/10" />
+          <div className="w-full border-t border-slate-200" />
         </div>
         <div className="relative flex justify-center">
-          <span className="bg-[#151f30] px-3 font-inter text-sm text-slate-500">or</span>
+          <span className="bg-white px-3 font-inter text-xs uppercase tracking-[0.18em] text-slate-400">or</span>
         </div>
       </div>
 
