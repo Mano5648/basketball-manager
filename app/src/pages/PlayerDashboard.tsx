@@ -1594,43 +1594,69 @@ function ProfileTab({
           </div>
 
           {canManageChildren && clubPlayer && (
-            <div className="dash-card p-6 md:p-8">
-              <h3 className="font-inter font-semibold text-xl text-slate-900 mb-2">Registered children</h3>
-              <p className="font-inter text-sm text-slate-600 mb-5">
-                Register a child at any time, or update existing children linked to your account.
-              </p>
-              <div className="space-y-3">
-                {children.length === 0 && (
-                  <p className="font-inter text-sm text-slate-500 rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-5 text-center">
-                    No children registered yet. Add a child below when you are ready.
+            <div className="dash-card p-6 md:p-8 kids-card">
+              <div className="kids-card__header">
+                <div className="kids-card__icon" aria-hidden="true">
+                  <Users size={18} strokeWidth={2.4} />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="kids-card__title">Registered children</h3>
+                  <p className="kids-card__subtitle">
+                    Register a child at any time, or update existing children linked to your account.
                   </p>
+                </div>
+              </div>
+
+              <div className="mt-6 space-y-4">
+                {children.length === 0 && (
+                  <div className="kids-empty">
+                    <div className="kids-empty__icon"><Users size={20} /></div>
+                    <p className="kids-empty__title">No children registered yet</p>
+                    <p className="kids-empty__subtitle">Tap the button below to add your first player — you can add more later.</p>
+                  </div>
                 )}
-                {children.map((child, index) => (
-                  <div key={child.id} className="player-onboarding__child-row rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="font-inter text-xs font-semibold uppercase tracking-wider text-slate-500">
-                        Child {index + 1}
-                      </p>
+                {children.map((child, index) => {
+                  const initial = (child.name || '?').trim().charAt(0).toUpperCase() || '?'
+                  const namePreview = child.name?.trim() || `Child ${index + 1}`
+                  return (
+                  <div key={child.id} className="kid-card" data-testid={`child-card-${index}`}>
+                    <div className="kid-card__band" aria-hidden="true" />
+                    <div className="kid-card__head">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="kid-card__avatar" data-child-index={index}>{initial}</div>
+                        <div className="min-w-0">
+                          <p className="kid-card__badge">Child {index + 1}</p>
+                          <p className="kid-card__name" title={namePreview}>{namePreview}</p>
+                        </div>
+                      </div>
                       <button
                         type="button"
                         onClick={() => { markChildrenDirty(); setChildren((prev) => prev.filter((c) => c.id !== child.id)) }}
-                        className="font-inter text-xs text-red-600 hover:text-red-700 flex items-center gap-1"
+                        className="kid-card__remove"
+                        aria-label={`Remove ${namePreview}`}
+                        data-testid={`remove-child-${index}`}
                       >
-                        <Trash2 size={12} /> Remove
+                        <Trash2 size={13} strokeWidth={2.3} />
+                        <span>Remove</span>
                       </button>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Name</label>
+
+                    <div className="kid-card__body">
+                      <div className="kid-field">
+                        <label className="kid-field__label" htmlFor={`kid-name-${child.id}`}>Player name</label>
                         <input
+                          id={`kid-name-${child.id}`}
                           type="text"
                           value={child.name}
+                          placeholder="First and last name"
                           onChange={(e) => { markChildrenDirty(); setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, name: e.target.value } : c))) }}
-                          className="dash-input w-full"
+                          className="kid-input"
+                          data-testid={`child-name-${index}`}
                         />
                       </div>
-                      <div className="md:col-span-2">
-                        <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Date of birth</label>
+
+                      <div className="kid-field">
+                        <p className="kid-field__label">Date of birth</p>
                         <ChildDobPicker
                           key={child.id}
                           id={`profile-child-dob-${child.id}`}
@@ -1638,42 +1664,55 @@ function ProfileTab({
                           onChange={(dob) => { markChildrenDirty(); setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, dob } : c))) }}
                         />
                       </div>
-                      <div>
-                        <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Gender</label>
-                        <select
-                          value={child.gender}
-                          onChange={(e) => { markChildrenDirty(); setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, gender: e.target.value as 'Male' | 'Female' } : c))) }}
-                          className="dash-input w-full"
-                        >
-                          <option value="Male">Male</option>
-                          <option value="Female">Female</option>
-                        </select>
+
+                      <div className="kid-field">
+                        <p className="kid-field__label">Gender</p>
+                        <div className="kid-gender" role="radiogroup" aria-label="Gender">
+                          {(['Male', 'Female'] as const).map((g) => (
+                            <button
+                              key={g}
+                              type="button"
+                              role="radio"
+                              aria-checked={child.gender === g}
+                              onClick={() => { markChildrenDirty(); setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, gender: g } : c))) }}
+                              className={`kid-gender__opt${child.gender === g ? ' kid-gender__opt--active' : ''}`}
+                              data-testid={`child-gender-${g.toLowerCase()}-${index}`}
+                            >
+                              {g}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
                   </div>
-                ))}
+                )})}
+
                 <button
                   type="button"
                   onClick={() => { markChildrenDirty(); setChildren((prev) => [...prev, newChildDraft()]) }}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-slate-300 text-slate-600 hover:border-lions-400 hover:text-lions-700 font-inter text-sm transition-colors"
+                  className="kids-add"
+                  data-testid="add-child-btn"
                 >
-                  <Plus size={16} /> {children.length === 0 ? 'Add a child' : 'Add another child'}
+                  <span className="kids-add__plus"><Plus size={16} strokeWidth={2.6} /></span>
+                  <span>{children.length === 0 ? 'Add a child' : 'Add another child'}</span>
                 </button>
               </div>
+
               {childrenError && (
-                <p className="mt-4 font-inter text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{childrenError}</p>
+                <p className="kids-error" role="alert">{childrenError}</p>
               )}
-              <div className="mt-5 flex items-center gap-4">
+              <div className="mt-6 flex flex-wrap items-center gap-4">
                 <button
                   type="button"
                   onClick={() => void handleSaveChildren()}
                   disabled={childrenSaving}
-                  className="btn-accent font-inter font-semibold text-sm uppercase tracking-wider px-8 py-3 rounded-xl disabled:opacity-60"
+                  className="kids-save"
+                  data-testid="save-children-btn"
                 >
                   {childrenSaving ? 'Saving…' : 'Save children'}
                 </button>
                 {childrenSaved && (
-                  <span className="flex items-center gap-1 text-emerald-600 font-inter text-sm">
+                  <span className="kids-saved">
                     <CheckCircle size={16} /> Saved
                   </span>
                 )}
@@ -1981,15 +2020,12 @@ export default function PlayerDashboard() {
   const needsOnboarding = clubPlayer ? needsPlayerOnboarding(clubPlayer) : false
   const paymentFocus = clubPlayer ? getMemberPaymentFocus(clubPlayer) : null
   const feePaid = clubPlayer ? isMemberFeePaid(clubPlayer) : false
-  const hasSchedule = clubPlayer ? hasTeamAssignment(clubPlayer) : false
 
-  useEffect(() => {
-    if (!hasSchedule && activeTab === 'schedule') {
-      setActiveTab('overview')
-    }
-  }, [hasSchedule, activeTab])
-
-  const sidebarTabs = TAB_CONFIG.filter((tab) => tab.key !== 'schedule' || hasSchedule)
+  // Players should always see the Schedule tab — the ScheduleTab component
+  // shows a friendly "waiting for team assignment" message when a coach has
+  // not yet placed the player on a team, so hiding it left members wondering
+  // where the tab went.
+  const sidebarTabs = TAB_CONFIG
 
   const handleUpdateUser = useCallback((updated: PlayerUser) => {
     const synced = syncUserFromRoster(updated)

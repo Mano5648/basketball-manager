@@ -1917,6 +1917,304 @@
     color: #94a3b8;
     font-weight: 500;
   }
+
+  /* ─────────────── Registered children card (redesigned) ───────────────
+     Clean, modern, sporty. Each child sits in its own card with an avatar
+     initial, sporty top band, name preview, and a segmented gender picker. */
+  .kids-card { position: relative; }
+  .kids-card__header {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .kids-card__icon {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, rgba(46, 107, 255, 0.16), rgba(245, 158, 11, 0.14));
+    color: #1b52e6;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: inset 0 0 0 1px rgba(46, 107, 255, 0.18);
+  }
+  .kids-card__title {
+    font-family: 'Oswald', 'Inter', system-ui, sans-serif;
+    font-weight: 700;
+    font-size: 1.35rem;
+    line-height: 1.15;
+    color: #0f172a;
+    letter-spacing: -0.005em;
+    margin: 0;
+  }
+  .kids-card__subtitle {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13px;
+    color: #64748b;
+    margin: 4px 0 0;
+    line-height: 1.5;
+  }
+
+  .kids-empty {
+    padding: 26px 20px;
+    border-radius: 16px;
+    border: 1.5px dashed #cbd5e1;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    text-align: center;
+  }
+  .kids-empty__icon {
+    margin: 0 auto 8px;
+    width: 40px; height: 40px;
+    border-radius: 999px;
+    background: rgba(46, 107, 255, 0.08);
+    color: #2e6bff;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .kids-empty__title {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-weight: 600;
+    color: #0f172a;
+    margin: 0;
+  }
+  .kids-empty__subtitle {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13px;
+    color: #64748b;
+    margin: 4px 0 0;
+  }
+
+  .kid-card {
+    position: relative;
+    border-radius: 18px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    overflow: hidden;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset, 0 4px 20px -12px rgba(15, 23, 42, 0.14);
+    transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+  }
+  .kid-card:hover {
+    border-color: rgba(46, 107, 255, 0.28);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset, 0 10px 28px -14px rgba(46, 107, 255, 0.28);
+  }
+  .kid-card__band {
+    height: 4px;
+    background: linear-gradient(90deg, #2e6bff 0%, #1b52e6 45%, #f59e0b 100%);
+  }
+  .kid-card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 18px 12px;
+    border-bottom: 1px solid #f1f5f9;
+  }
+  .kid-card__avatar {
+    flex-shrink: 0;
+    width: 40px; height: 40px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #0f1b33 0%, #1a2f56 100%);
+    color: #ffffff;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Oswald', 'Inter', system-ui, sans-serif;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: 0.02em;
+    box-shadow: 0 6px 16px -6px rgba(15, 30, 58, 0.4);
+    border: 1px solid rgba(255,255,255,0.05);
+  }
+  .kid-card__avatar[data-child-index="1"] {
+    background: linear-gradient(135deg, #b45309 0%, #f59e0b 100%);
+  }
+  .kid-card__avatar[data-child-index="2"] {
+    background: linear-gradient(135deg, #1b52e6 0%, #2e6bff 100%);
+  }
+  .kid-card__avatar[data-child-index="3"] {
+    background: linear-gradient(135deg, #047857 0%, #10b981 100%);
+  }
+  .kid-card__badge {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #94a3b8;
+    margin: 0;
+  }
+  .kid-card__name {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 15px;
+    font-weight: 600;
+    color: #0f172a;
+    margin: 2px 0 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 220px;
+  }
+  .kid-card__remove {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(239, 68, 68, 0.08);
+    color: #b91c1c;
+    border: 1px solid rgba(239, 68, 68, 0.18);
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+  }
+  .kid-card__remove:hover {
+    background: rgba(239, 68, 68, 0.14);
+    color: #991b1b;
+    border-color: rgba(239, 68, 68, 0.32);
+  }
+
+  .kid-card__body {
+    padding: 18px;
+    display: grid;
+    gap: 18px;
+  }
+  .kid-field { display: block; }
+  .kid-field__label {
+    display: block;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #64748b;
+    margin: 0 0 8px;
+  }
+
+  .kid-input {
+    width: 100%;
+    padding: 11px 14px;
+    border-radius: 12px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 14px;
+    color: #0f172a;
+    transition: border-color 200ms ease, background 200ms ease, box-shadow 200ms ease;
+  }
+  .kid-input::placeholder { color: #94a3b8; }
+  .kid-input:focus {
+    outline: none;
+    background: #ffffff;
+    border-color: rgba(46, 107, 255, 0.55);
+    box-shadow: 0 0 0 4px rgba(46, 107, 255, 0.12);
+  }
+
+  .kid-gender {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 4px;
+    border-radius: 12px;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    max-width: 320px;
+  }
+  .kid-gender__opt {
+    padding: 10px 12px;
+    border-radius: 9px;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    color: #64748b;
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 200ms ease;
+  }
+  .kid-gender__opt:hover:not(.kid-gender__opt--active) {
+    color: #0f172a;
+    background: rgba(255,255,255,0.6);
+  }
+  .kid-gender__opt--active {
+    background: #ffffff;
+    color: #0f172a;
+    border-color: rgba(46, 107, 255, 0.3);
+    box-shadow: 0 4px 12px -4px rgba(15, 23, 42, 0.14);
+  }
+
+  .kids-add {
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 14px;
+    border-radius: 14px;
+    border: 1.5px dashed #cbd5e1;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    color: #334155;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 200ms ease, color 200ms ease, background 200ms ease, transform 200ms ease;
+  }
+  .kids-add:hover {
+    border-color: #2e6bff;
+    color: #1b52e6;
+    background: #ffffff;
+    transform: translateY(-1px);
+  }
+  .kids-add__plus {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px; height: 26px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #2e6bff 0%, #1b52e6 100%);
+    color: #ffffff;
+    box-shadow: 0 4px 10px -3px rgba(46, 107, 255, 0.5);
+  }
+
+  .kids-error {
+    margin-top: 16px;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #b91c1c;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13px;
+  }
+
+  .kids-save {
+    padding: 12px 26px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #f59e0b 0%, #ea580c 100%);
+    color: #ffffff;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    box-shadow: 0 10px 24px -10px rgba(245, 158, 11, 0.55), inset 0 1px 0 rgba(255,255,255,0.25);
+    transition: transform 200ms ease, filter 200ms ease, box-shadow 200ms ease;
+  }
+  .kids-save:hover:not(:disabled) {
+    transform: translateY(-1px);
+    filter: brightness(1.05);
+    box-shadow: 0 14px 28px -10px rgba(245, 158, 11, 0.65);
+  }
+  .kids-save:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .kids-saved {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #047857;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+  }
 }
 
 /* ── Club video background (hero + auth) ── */
