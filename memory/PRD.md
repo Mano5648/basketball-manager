@@ -66,6 +66,17 @@ env in `/app/app/.env.local`.
   bust downstream memos.
 - Verified with `tsc -b` (clean build); behavioural verification pending user test.
 
+### 5. Image flash on Sign In / Register / Manager Login refresh (Jan 2026)
+- **Cause**: `PortalLoginLayout` rendered `ClubVideoBackground`, which shows the poster
+  image (`about-team-huddle.jpg`) as a fallback until the hero video loads (and again
+  whenever `prefers-reduced-motion` is set). On refresh, the poster flashed visibly
+  behind the login card before the video swapped in.
+- **Fix**: `PortalLoginLayout.tsx` now uses a purely CSS backdrop — a two-tone dark
+  navy gradient with soft blue/warn radial glows and a lightweight SVG grain overlay.
+  No `<img>`, no `<video>`, no network fetch → zero flash on refresh. Applies to
+  Sign In, Register (same layout), and Manager Login.
+- Verified via screenshot at both `/#/manager/login` and `/#/player/login`.
+
 ## Open / Next action items
 - P0 (OPEN, needs user input): "two login panels" report is ambiguous — could not reproduce a
   duplication on desktop (standard split-screen brand + form). Awaiting a user screenshot.

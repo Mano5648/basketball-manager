@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { ArrowLeft, ShieldCheck, Trophy, Users } from 'lucide-react'
-import ClubVideoBackground from '@/components/ClubVideoBackground'
 import { easeOut } from '@/components/motion/presets'
 
 type PortalKind = 'manager' | 'player'
@@ -56,7 +55,27 @@ export function PortalLoginLayout({
 
   return (
     <div className="portal-shell-v2 min-h-[100dvh] relative flex flex-col lg:flex-row overflow-hidden">
-      <ClubVideoBackground overlay="portal" className="!fixed inset-0" />
+      {/* Solid gradient backdrop — no image, no video, so nothing flashes on refresh
+          across Sign In / Register / Manager Login. Matches the site's dark theme. */}
+      <div
+        aria-hidden="true"
+        className="fixed inset-0 -z-0"
+        style={{
+          background:
+            'radial-gradient(1200px 700px at 15% 20%, rgba(37,99,235,0.18), transparent 60%),' +
+            'radial-gradient(1000px 600px at 85% 80%, rgba(234,179,8,0.10), transparent 65%),' +
+            'linear-gradient(180deg, #0A1628 0%, #0A1628 55%, #060F1E 100%)',
+        }}
+      />
+      {/* Subtle grain for depth without any photographic imagery */}
+      <div
+        aria-hidden="true"
+        className="fixed inset-0 -z-0 opacity-[0.08] pointer-events-none mix-blend-overlay"
+        style={{
+          backgroundImage:
+            "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.6'/></svg>\")",
+        }}
+      />
 
       <Link
         to="/"
