@@ -111,6 +111,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(null)
     setUser(null)
     clearLocalAuth()
+    // Clear dashboard-tab persistence so the next signed-in user starts on
+    // their Overview / Dashboard, not the previous user's last tab.
+    try {
+      sessionStorage.removeItem('dlbc_player_tab')
+      sessionStorage.removeItem('dlbc_manager_view')
+    } catch { /* ignore */ }
   }, [])
 
   useEffect(() => {
@@ -125,11 +131,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.dispatchEvent(new Event('dlbc-cart-change'))
       setLoading(false)
     })
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, newSession) => {
+      // Supabase fires this callback for many events — INITIAL_SESSION,
+      // SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED, USER_UPDATED, PASSWORD_RECOVERY.
+      // On TOKEN_REFRESHED (~every ~55 min) it hands us a NEW User object with
+      // the SAME identity — if we blindly setUser(newUser) every time, downstream
+      // memos that depend on user.user_metadata get a new reference, effects
+      // re-run, and in the worst case ProtectedRoute briefly renders <Navigate>
+      // → the whole dashboard remounts → activeTab resets to Overview → the user
+      // "gets bounced back to Dashboard while working on Schedule".
+      //
+      // Defense: only propagate a user change when the identity actually changed
+      // (SIGNED_IN, SIGNED_OUT, PASSWORD_RECOVERY, or a different user.id). For
+      // TOKEN_REFRESHED / USER_UPDATED with the same user, only update the
+      // session (needed for API calls) and refresh the local mirror — but do NOT
+      // replace the user reference or emit dlbc-auth-change.
       setSession(newSession)
-      setUser(newSession?.user ?? null)
-      mirrorUser(newSession?.user ?? null, roleForUser(newSession?.user ?? null))
-      window.dispatchEvent(new Event('dlbc-cart-change'))
+      const nextUser = newSession?.user ?? null
+      setUser((prev) => {
+        if (prev?.id === nextUser?.id && prev?.email === nextUser?.email) {
+          return prev
+        }
+        return nextUser
+      })
+      const identityChanged =
+        event === 'SIGNED_IN' ||
+        event === 'SIGNED_OUT' ||
+        event === 'PASSWORD_RECOVERY' ||
+        event === 'INITIAL_SESSION'
+      if (identityChanged) {
+        mirrorUser(nextUser, roleForUser(nextUser))
+        window.dispatchEvent(new Event('dlbc-cart-change'))
+      }
     })
     return () => sub.subscription.unsubscribe()
   }, [])

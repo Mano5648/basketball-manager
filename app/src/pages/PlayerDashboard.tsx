@@ -1963,7 +1963,20 @@ export default function PlayerDashboard() {
   const logoUrl = useSiteImage('logo')
   const [user, setUser] = useState<PlayerUser | null>(null)
   const [clubPlayer, setClubPlayer] = useState<ClubPlayer | null>(null)
-  const [activeTab, setActiveTab] = useState<TabKey>('overview')
+  // Persist activeTab across the session so any incidental remount (e.g. a
+  // brief auth flicker on token refresh) doesn't bounce the user back to the
+  // Overview tab while they were mid-flow on Schedule / Payments / Chat.
+  const [activeTab, setActiveTabState] = useState<TabKey>(() => {
+    const saved = sessionStorage.getItem('dlbc_player_tab') as TabKey | null
+    if (saved && ['overview', 'payments', 'schedule', 'profile', 'notifications', 'chat'].includes(saved)) {
+      return saved
+    }
+    return 'overview'
+  })
+  const setActiveTab = useCallback((tab: TabKey) => {
+    sessionStorage.setItem('dlbc_player_tab', tab)
+    setActiveTabState(tab)
+  }, [])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
 
@@ -2003,7 +2016,14 @@ export default function PlayerDashboard() {
       refreshClubPlayer(synced.email, synced.name)
     })
     return () => { cancelled = true }
-  }, [navigate, refreshClubPlayer])
+    // Run ONCE per mount. Depending on `refreshClubPlayer` here caused this
+    // effect to re-run every time Supabase issued a new user_metadata reference
+    // (~every token refresh), which in turn called navigate('/player/login') if
+    // any race made `dlbc_user` briefly empty — that's the "screen goes white
+    // and dumps me back on the Dashboard" bug the user reported. Metadata-sync
+    // is already handled by the separate effect below (deps include authUser).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigate])
 
   useEffect(() => {
     if (!user || !dataReady) return

@@ -4649,7 +4649,16 @@ function AccessDenied() {
 /* ─────────────────────── Main Dashboard ─────────────────────── */
 
 export default function ManagerDashboard() {
-  const [activeView, setActiveView] = useState('dashboard')
+  // Persist activeView across the session so any incidental remount (e.g. a
+  // brief auth flicker on token refresh) doesn't bounce the manager back to
+  // Dashboard while they were mid-flow on Schedule / Payments / Teams.
+  const [activeView, setActiveViewState] = useState(() => {
+    return sessionStorage.getItem('dlbc_manager_view') || 'dashboard'
+  })
+  const setActiveView = useCallback((view: string) => {
+    sessionStorage.setItem('dlbc_manager_view', view)
+    setActiveViewState(view)
+  }, [])
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('dlbc_sidebar_collapsed') === '1')
   const [paletteOpen, setPaletteOpen] = useState(false)
