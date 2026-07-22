@@ -1524,7 +1524,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
 
   const rosterMembers = useMemo(() => players.filter(isRosterListedMember), [players])
   const unassignedMembers = useMemo(
-    () => players.filter(isRosterListedMember).filter((p) => p.teamIds.length === 0),
+    () => players.filter(isRosterListedMember).filter((p) => (p.teamIds ?? []).length === 0),
     [players],
   )
 
@@ -1536,23 +1536,25 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
 
   const filtered = useMemo(() => {
     return rosterMembers.filter((p) => {
+      const q = search.toLowerCase()
+      const teamIds = p.teamIds ?? []
       const matchesSearch =
-        p.name.toLowerCase().includes(search.toLowerCase()) ||
-        p.email.toLowerCase().includes(search.toLowerCase()) ||
-        (isChildRosterPlayer(p) && (getParentForChildRosterPlayer(p.id)?.name.toLowerCase().includes(search.toLowerCase()) ?? false))
+        (p.name ?? '').toLowerCase().includes(q) ||
+        (p.email ?? '').toLowerCase().includes(q) ||
+        (isChildRosterPlayer(p) && (getParentForChildRosterPlayer(p.id)?.name?.toLowerCase().includes(q) ?? false))
       const matchesStatus = statusFilter === 'All' || p.status === statusFilter
-      const matchesAge = ageGroupFilter === 'All' || p.teamIds.some((tid) => {
+      const matchesAge = ageGroupFilter === 'All' || teamIds.some((tid) => {
         const t = teams.find((tm) => tm.id === tid)
         return t?.ageGroupId === ageGroupFilter
       }) || (
         ageGroupFilter !== 'All' &&
-        p.teamIds.length === 0 &&
+        teamIds.length === 0 &&
         getFeeAgeGroupIdForPlayer(p) === ageGroupFilter
       )
       const matchesTeam =
         teamFilter === 'All' ||
-        (teamFilter === 'unassigned' && p.teamIds.length === 0) ||
-        p.teamIds.includes(teamFilter)
+        (teamFilter === 'unassigned' && teamIds.length === 0) ||
+        teamIds.includes(teamFilter)
       return matchesSearch && matchesStatus && matchesAge && matchesTeam
     })
   }, [search, teamFilter, statusFilter, ageGroupFilter, rosterMembers, teams])
@@ -1736,11 +1738,11 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-wrap gap-1">
-                      {member.teamIds.map((tid) => {
+                      {(member.teamIds ?? []).map((tid) => {
                         const t = teams.find((tm) => tm.id === tid)
                         return t ? <span key={tid} className="text-xs font-inter text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">{t.name}</span> : null
                       })}
-                      {member.teamIds.length === 0 && <span className="text-xs font-inter text-slate-500">Unassigned</span>}
+                      {(member.teamIds ?? []).length === 0 && <span className="text-xs font-inter text-slate-500">Unassigned</span>}
                     </div>
                   </td>
                   <td className="px-6 py-4"><StatusBadge status={member.status} /></td>

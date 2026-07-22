@@ -9,3 +9,10 @@ app/node_modules/
 
 # Broken local test artifact — use hero-basketball.mp4 instead
 app/public/hero-basketball-youth-test.mp4
+.env
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
