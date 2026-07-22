@@ -128,6 +128,34 @@ env in `/app/app/.env.local`.
   device and never propagated. Now they mirror to Supabase `app_state` like every
   other shared key.
 
+### 8. White-flash / app_state amplification loop fix (Jan 2026)
+- **Cause**: the Supabase `app_state` realtime handler in `clubData.ts` was calling
+  `ensureAppStateKeySynced(KEYS.players)` and `ensureAppStateKeySynced(KEYS.teams)`
+  **unconditionally on every incoming realtime event**. With N open clients each
+  doing the same, every write echoed back as a realtime event triggered another
+  write on every client → **ping-pong amplification storm** → browser socket pool
+  exhaustion (hundreds of `ERR_INSUFFICIENT_RESOURCES`) → React starved of paint
+  slots → **periodic all-white frame** as the browser's default background painted
+  through the gaps.
+- **Fix**:
+  - **A. Per-key byte dedup in `syncKeyToRemote`** (`lastPushedSnapshot` Map). If
+    the value we're about to push is `JSON.stringify`-identical to the last value
+    we pushed *or* received via realtime, skip the network write. Snapshot cleared
+    on delete AND on upsert error so retries after transient loss still fire.
+  - **B. `applyRemoteAppStateRow` now calls `markKeyInSyncWithRemote` BEFORE
+    dispatching the storage event**, so any listener that reacts to the storage
+    event and calls `setStore(sameValue)` gets deduped out.
+  - **C. Removed the two unconditional `ensureAppStateKeySynced` calls** from the
+    realtime channel handler. Only `reconcileClubRosterIfNeeded` still runs, and
+    it only pushes via `setStore` → deduped path.
+  - **D. Defensive `#root { background-color: #0A1628 }`** so any transient paint
+    gap paints dark navy instead of the browser's default white.
+- Verified end-to-end by testing agent (iteration_13): 60–70 s sit-still on both
+  player and manager dashboards — 0 pending network requests, 0
+  `[app_state] sync failed`, 0 `ERR_INSUFFICIENT_RESOURCES`, no white frames at
+  any t=0/30/60 sample. Legitimate writes still reach Supabase (child-name edit
+  round-trip verified via `app_state.dlbc_roster_contrib:*.updated_at` bump).
+
 ## Open / Next action items
 - P0 (OPEN, needs user input): "two login panels" report is ambiguous — could not reproduce a
   duplication on desktop (standard split-screen brand + form). Awaiting a user screenshot.
