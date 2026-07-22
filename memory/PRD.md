@@ -43,6 +43,29 @@ env in `/app/app/.env.local`.
   error boundary never triggered.
 
 
+### 4. Random logouts + screen stutter while executing tasks (Jan 2026)
+- **Logout root cause** (`AuthContext.tsx`): `validate()` ran every 20s AND on every
+  same-window storage event (including `e.key === null`, and `dlbc_players` /
+  `dlbc_revoked_member_emails` writes fired synthetically by `setStore`). It called
+  `supabase.auth.getUser()` (a network call) and — critically — signed the user out
+  on ANY error, including transient network hiccups / 5xx / offline blips. Every
+  task the user executed touched localStorage via `setStore`, which dispatched a
+  storage event, which triggered a network validate, which occasionally errored →
+  instant, seemingly random logout.
+- **Fix**: `validate()` now only force-signs-out on definitive auth errors
+  (`AuthSessionMissingError`, 401/403, invalid JWT/token, "user not found"). All
+  other errors (network, 5xx, thrown fetch) leave the session intact. The storage
+  handler is debounced (1.5s) and no longer reacts to `e.key === null`. Periodic
+  revalidation moved 20s → 60s to reduce network chatter.
+- **Stutter root cause** (`ManagerDashboard.tsx` `useLiveData.refresh`): fired every
+  3s + every storage event, and unconditionally replaced 11 state slices with brand-new
+  array/object references from `JSON.parse` (via `getStore`). Every task cascaded a full
+  re-render through a 4,788-line component tree.
+- **Fix**: `refresh()` now `JSON.stringify`-compares each slice against previous
+  state and skips the setState if unchanged, so unchanged intervals no longer
+  bust downstream memos.
+- Verified with `tsc -b` (clean build); behavioural verification pending user test.
+
 ## Open / Next action items
 - P0 (OPEN, needs user input): "two login panels" report is ambiguous — could not reproduce a
   duplication on desktop (standard split-screen brand + form). Awaiting a user screenshot.

@@ -139,10 +139,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!supabase || !user) return
     const role = roleForUser(user)
 
+    // Only sign out on definitive auth failures. Transient network errors
+    // (offline, DNS blip, CORS preflight failure, 5xx) previously caused
+    // random logouts while the user was executing a task.
+    const isDefinitiveAuthError = (err: unknown): boolean => {
+      if (!err || typeof err !== 'object') return false
+      const anyErr = err as { name?: string; status?: number; message?: string }
+      if (anyErr.name === 'AuthSessionMissingError') return true
+      if (anyErr.status === 401 || anyErr.status === 403) return true
+      const msg = (anyErr.message ?? '').toLowerCase()
+      if (msg.includes('session') && msg.includes('missing')) return true
+      if (msg.includes('invalid') && (msg.includes('jwt') || msg.includes('token'))) return true
+      if (msg.includes('user not found')) return true
+      return false
+    }
+
     const validate = async () => {
-      const { error } = await supabase!.auth.getUser()
-      if (error) {
-        await forceSignOut()
+      try {
+        const { error } = await supabase!.auth.getUser()
+        if (error && isDefinitiveAuthError(error)) {
+          await forceSignOut()
+          return
+        }
+        // Network/transient error: keep the session, try again later.
+        if (error) return
+      } catch {
+        // Fetch threw (offline etc.) — do NOT log the user out.
         return
       }
       if (role === 'player' && !isPlayerAccountActive(user.email)) {
@@ -151,20 +173,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     void validate()
-    const onDataChange = (e: StorageEvent) => {
-      if (
-        e.key === 'dlbc_players' ||
-        e.key === 'dlbc_revoked_member_emails' ||
-        e.key === null
-      ) {
+    // Debounce so a burst of storage events from a single task doesn't
+    // fire multiple network validations (which also caused stutter).
+    let debounceTimer: number | null = null
+    const scheduleValidate = () => {
+      if (debounceTimer !== null) window.clearTimeout(debounceTimer)
+      debounceTimer = window.setTimeout(() => {
+        debounceTimer = null
         void validate()
+      }, 1500)
+    }
+    const onDataChange = (e: StorageEvent) => {
+      // Only react to the roster/revocation lists — other dlbc_* writes
+      // (players' UI state, chat, images…) must not trigger auth checks.
+      if (e.key === 'dlbc_players' || e.key === 'dlbc_revoked_member_emails') {
+        scheduleValidate()
       }
     }
     window.addEventListener('storage', onDataChange)
-    const interval = window.setInterval(() => void validate(), 20_000)
+    // Periodic revalidation kept, but at a calmer cadence.
+    const interval = window.setInterval(() => void validate(), 60_000)
     return () => {
       window.removeEventListener('storage', onDataChange)
       window.clearInterval(interval)
+      if (debounceTimer !== null) window.clearTimeout(debounceTimer)
     }
   }, [user?.id, user?.email, forceSignOut])
 

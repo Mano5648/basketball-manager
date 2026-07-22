@@ -223,17 +223,35 @@ function useLiveData() {
   const [pendingTeamAssignments, setPendingTeamAssignmentsState] = useState<PendingTeamAssignment[]>(getPendingTeamAssignments)
 
   const refresh = useCallback(() => {
-    setPlayersState(getPlayers())
-    setTeamsState(getTeams())
-    setSessionsState(getSessions())
-    setAnnouncementsState(getAnnouncements())
-    setPaymentsState(getPayments())
-    setAgeGroupsState(getAgeGroups())
-    setSeasonState(getSeason())
-    setSeasonHistoryState(getSeasonHistory())
-    setDefaultTicketPriceState(getDefaultTicketPrice())
-    setPendingSeniorPlayerIdsState(getPendingSeniorPlayers())
-    setPendingTeamAssignmentsState(getPendingTeamAssignments())
+    // Only trigger a re-render for slices whose serialized value actually
+    // changed. Without this, refresh() (called every 3s + every storage
+    // event) replaced every state slice with a brand-new array reference
+    // from JSON.parse, cascading a re-render through the whole 4k-line
+    // dashboard tree and causing visible stutter while executing tasks.
+    const setIfChanged = <T,>(
+      next: T,
+      setter: (updater: (prev: T) => T) => void,
+    ) => {
+      setter((prev) => {
+        try {
+          if (JSON.stringify(prev) === JSON.stringify(next)) return prev
+        } catch {
+          /* fall through: replace */
+        }
+        return next
+      })
+    }
+    setIfChanged(getPlayers(), setPlayersState)
+    setIfChanged(getTeams(), setTeamsState)
+    setIfChanged(getSessions(), setSessionsState)
+    setIfChanged(getAnnouncements(), setAnnouncementsState)
+    setIfChanged(getPayments(), setPaymentsState)
+    setIfChanged(getAgeGroups(), setAgeGroupsState)
+    setIfChanged(getSeason(), setSeasonState)
+    setIfChanged(getSeasonHistory(), setSeasonHistoryState)
+    setIfChanged(getDefaultTicketPrice(), setDefaultTicketPriceState)
+    setIfChanged(getPendingSeniorPlayers(), setPendingSeniorPlayerIdsState)
+    setIfChanged(getPendingTeamAssignments(), setPendingTeamAssignmentsState)
   }, [])
 
   useEffect(() => {
