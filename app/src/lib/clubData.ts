@@ -301,6 +301,10 @@ const KEYS = {
   pendingSeniorPlayers: 'dlbc_pending_senior_players',
   pendingTeamAssignments: 'dlbc_pending_team_assignments',
   revokedMemberEmails: 'dlbc_revoked_member_emails',
+  // Store — must sync so parents see products the manager adds on another
+  // device, and so managers see orders placed from any device.
+  products: 'dlbc_products',
+  orders: 'dlbc_orders',
 }
 
 // Every key EXCEPT `images` is mirrored to Supabase (`images` is superseded

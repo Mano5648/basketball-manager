@@ -40,12 +40,17 @@
     -moz-osx-font-smoothing: grayscale;
     overflow-x: hidden;
     max-width: 100%;
+    /* Dark canvas behind everything so page transitions / remounts never
+       flash the underlying white body through. Individual pages paint their
+       own background on top; this only shows in transient gaps. */
+    background-color: #0A1628;
   }
 
   html {
     scroll-behavior: smooth;
     overflow-x: hidden;
     max-width: 100%;
+    background-color: #0A1628;
   }
 }
 
@@ -1141,32 +1146,76 @@
     pointer-events: none;
   }
 
-  /* ── Player dashboard — light Dublin Lions (white / blue / orange) ── */
+  /* ── Player dashboard — REDESIGN (Jan 2026): clean · modern · sporty
+     Dark navy sidebar with amber accents on light content surface.
+     Overrides the earlier light-sidebar aesthetic. ── */
   .player-dash.dashboard-shell {
-    background-color: #f1f5f9;
+    background-color: #eef2f8;
     background-image:
-      radial-gradient(ellipse 80% 55% at 0% 0%, rgba(46, 107, 255, 0.1), transparent 52%),
-      radial-gradient(ellipse 65% 45% at 100% 0%, rgba(245, 158, 11, 0.14), transparent 48%),
-      linear-gradient(180deg, #ffffff 0%, #f8fafc 42%, #eef4ff 100%);
+      radial-gradient(ellipse 60% 40% at 12% 0%, rgba(46, 107, 255, 0.10), transparent 55%),
+      radial-gradient(ellipse 55% 40% at 88% 100%, rgba(245, 158, 11, 0.09), transparent 55%),
+      linear-gradient(180deg, #f8fafc 0%, #eef2f8 60%, #e6ecf5 100%);
     background-size: auto;
     background-attachment: scroll;
     color: #0f172a;
   }
+  /* Fine crosshatch texture for depth — no photograph, no image download */
+  .player-dash.dashboard-shell::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(15, 23, 42, 0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(15, 23, 42, 0.025) 1px, transparent 1px);
+    background-size: 32px 32px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 40%, transparent 100%);
+    -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 40%, transparent 100%);
+  }
+  .player-dash > * { position: relative; z-index: 1; }
 
   .player-dash .dash-sidebar {
-    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-    border-right: 1px solid #e2e8f0;
-    box-shadow: 4px 0 28px -10px rgba(15, 23, 42, 0.1);
+    background:
+      radial-gradient(ellipse 90% 40% at 0% 0%, rgba(46, 107, 255, 0.22), transparent 60%),
+      linear-gradient(180deg, #0f1b33 0%, #0b1526 55%, #071021 100%);
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow:
+      8px 0 32px -12px rgba(4, 8, 20, 0.55),
+      inset -1px 0 0 rgba(255, 255, 255, 0.04);
     backdrop-filter: none;
+    color: #e2e8f0;
   }
   .player-dash .dash-sidebar::before {
     height: 3px;
     opacity: 1;
-    background: linear-gradient(90deg, #f59e0b 0%, #2e6bff 45%, #f59e0b 100%);
+    background: linear-gradient(90deg, #f59e0b 0%, #f97316 40%, #2e6bff 70%, #5b87ff 100%);
+  }
+  .player-dash aside a[title="Back to Dublin Lions home"] > div:first-child {
+    background: linear-gradient(135deg, rgba(46, 107, 255, 0.25), rgba(245, 158, 11, 0.15));
+    box-shadow: 0 8px 20px -8px rgba(46, 107, 255, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .player-dash aside a[title="Back to Dublin Lions home"] p:first-child {
+    color: #ffffff;
+    letter-spacing: 0.06em;
+  }
+  .player-dash aside a[title="Back to Dublin Lions home"] p:last-child {
+    color: #f59e0b;
+  }
+  /* "Back to Site" pill — dark chip on dark sidebar */
+  .player-dash aside > a[href="/"]:not([title]) {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border-color: rgba(255, 255, 255, 0.08) !important;
+    color: #cbd5e1 !important;
+  }
+  .player-dash aside > a[href="/"]:not([title]):hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+    color: #ffffff !important;
   }
 
   .player-dash .dash-topbar {
-    background: rgba(255, 255, 255, 0.94);
+    background: rgba(255, 255, 255, 0.92);
     border-bottom: 1px solid #e2e8f0;
     box-shadow: 0 4px 20px -12px rgba(15, 23, 42, 0.12);
     backdrop-filter: blur(14px);
@@ -1175,18 +1224,20 @@
   .player-dash .dash-card {
     background: #ffffff;
     border: 1px solid #e2e8f0;
-    box-shadow: 0 4px 24px -10px rgba(30, 58, 95, 0.1);
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.6) inset,
+      0 6px 24px -12px rgba(30, 58, 95, 0.12);
     backdrop-filter: none;
   }
   .player-dash .dash-card-hover:hover {
     border-color: rgba(46, 107, 255, 0.35);
-    box-shadow: 0 12px 32px -12px rgba(46, 107, 255, 0.18);
+    box-shadow: 0 14px 32px -12px rgba(46, 107, 255, 0.20);
   }
 
   .player-dash .hero-band-v2 {
-    background: linear-gradient(125deg, #1b52e6 0%, #2e6bff 52%, #163fb4 100%);
+    background: linear-gradient(125deg, #0f1b33 0%, #163fb4 45%, #1b52e6 100%);
     border: 1px solid rgba(46, 107, 255, 0.25);
-    box-shadow: 0 16px 40px -16px rgba(46, 107, 255, 0.35);
+    box-shadow: 0 16px 40px -16px rgba(15, 30, 58, 0.45);
   }
   .player-dash .hero-band-v2::after {
     background: radial-gradient(circle, rgba(245, 158, 11, 0.45), transparent 68%);
@@ -1200,15 +1251,9 @@
     border: 1px solid #e2e8f0;
     box-shadow: 0 2px 8px -4px rgba(15, 23, 42, 0.08);
   }
-  .player-dash .live-status-label {
-    color: #64748b;
-  }
-  .player-dash .live-status-value {
-    color: #0f172a;
-  }
-  .player-dash .live-status-value.text-amber-300 {
-    color: #d97706;
-  }
+  .player-dash .live-status-label { color: #64748b; }
+  .player-dash .live-status-value { color: #0f172a; }
+  .player-dash .live-status-value.text-amber-300 { color: #d97706; }
 
   .player-dash .quick-action-row {
     background: #f8fafc;
@@ -1223,27 +1268,55 @@
     border-color: rgba(46, 107, 255, 0.2);
     color: #2e6bff;
   }
-  .player-dash .quick-action-row span {
-    color: #334155;
-  }
-  .player-dash .quick-action-row:hover span {
-    color: #0f172a;
-  }
+  .player-dash .quick-action-row span { color: #334155; }
+  .player-dash .quick-action-row:hover span { color: #0f172a; }
 
+  /* Sidebar nav — dark theme */
   .player-dash .nav-section-label {
-    color: #94a3b8;
+    color: #64748b !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.14em !important;
+    font-size: 10px !important;
+    text-transform: uppercase;
   }
   .player-dash .nav-active {
-    background: linear-gradient(135deg, rgba(46, 107, 255, 0.12) 0%, rgba(245, 158, 11, 0.08) 100%);
-    box-shadow: inset 0 0 0 1px rgba(46, 107, 255, 0.18);
-    color: #0f172a;
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.16), rgba(46, 107, 255, 0.12));
+    box-shadow:
+      inset 0 0 0 1px rgba(245, 158, 11, 0.35),
+      0 4px 14px -8px rgba(245, 158, 11, 0.35);
+    color: #ffffff !important;
   }
   .player-dash .nav-active::before {
-    background: linear-gradient(180deg, #f59e0b, #ea580c);
+    background: linear-gradient(180deg, #fbbf24, #f97316);
+    box-shadow: 0 0 12px rgba(245, 158, 11, 0.6);
   }
+  .player-dash aside nav button:not(.nav-active) {
+    color: #cbd5e1 !important;
+  }
+  .player-dash aside nav button:not(.nav-active):hover {
+    color: #ffffff !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+  }
+  .player-dash aside nav button:not(.nav-active) svg { color: #7d94b8 !important; }
+  .player-dash aside nav button:not(.nav-active):hover svg { color: #fbbf24 !important; }
+
+  /* Sidebar user chip — dark on dark */
+  .player-dash aside > div.mt-auto { border-top-color: rgba(255, 255, 255, 0.06) !important; }
+  .player-dash aside .bg-slate-50 {
+    background: rgba(255, 255, 255, 0.06) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  }
+  .player-dash aside .bg-slate-50:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+    border-color: rgba(245, 158, 11, 0.3) !important;
+  }
+  .player-dash aside .bg-slate-50 p:first-child { color: #ffffff !important; }
+  .player-dash aside .bg-slate-50 p:last-child { color: #94a3b8 !important; }
+  .player-dash aside .bg-slate-50 svg { color: #cbd5e1 !important; }
 
   .player-dash .accent-bar {
-    background: linear-gradient(180deg, #f59e0b 0%, #2e6bff 100%);
+    background: linear-gradient(180deg, #fbbf24 0%, #f97316 100%);
+    box-shadow: 0 0 12px rgba(245, 158, 11, 0.5);
   }
 
   .player-dash .player-stat-card::after {
@@ -1270,39 +1343,16 @@
     box-shadow: inset 0 0 0 1px rgba(46, 107, 255, 0.2);
   }
 
-  /* Remap dark utility text inside player dashboard content */
-  .player-dash main :where(.text-white) {
-    color: #0f172a;
-  }
-  .player-dash main :where(.text-slate-300, .text-slate-400) {
-    color: #64748b;
-  }
-  .player-dash main :where(.text-slate-500) {
-    color: #94a3b8;
-  }
-  .player-dash main :where(.border-white\/\[0\.06\], .border-white\/\[0\.08\]) {
-    border-color: #e2e8f0;
-  }
-  .player-dash main :where(.bg-white\/\[0\.03\], .bg-white\/\[0\.04\], .bg-white\/\[0\.05\]) {
-    background-color: #f8fafc;
-  }
+  /* Remap dark utility text inside player dashboard content (light surface) */
+  .player-dash main :where(.text-white) { color: #0f172a; }
+  .player-dash main :where(.text-slate-300, .text-slate-400) { color: #64748b; }
+  .player-dash main :where(.text-slate-500) { color: #94a3b8; }
+  .player-dash main :where(.border-white\/\[0\.06\], .border-white\/\[0\.08\]) { border-color: #e2e8f0; }
+  .player-dash main :where(.bg-white\/\[0\.03\], .bg-white\/\[0\.04\], .bg-white\/\[0\.05\]) { background-color: #f8fafc; }
 
-  .player-dash aside :where(.text-white) {
-    color: #0f172a;
-  }
-  .player-dash aside :where(.text-slate-300, .text-slate-400, .text-slate-500) {
-    color: #64748b;
-  }
-  .player-dash aside button:not(.nav-active):hover {
-    color: #0f172a;
-    background: #f1f5f9;
-  }
-  .player-dash .dash-topbar :where(.text-white) {
-    color: #0f172a;
-  }
-  .player-dash .dash-topbar :where(.text-slate-400) {
-    color: #64748b;
-  }
+  /* Topbar text — dark on light */
+  .player-dash .dash-topbar :where(.text-white) { color: #0f172a; }
+  .player-dash .dash-topbar :where(.text-slate-400) { color: #64748b; }
 
   .player-dash .btn-gold {
     background-image: linear-gradient(135deg, #2e6bff 0%, #1b52e6 100%);

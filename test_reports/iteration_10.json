@@ -1,0 +1,39 @@
+{
+  "summary": "FRONTEND-ONLY iteration 10 — all 8 scenarios from the review request passed. (1) Player login (cooler74.ea@gmail.com/test12) redirected cleanly to /#/player/dashboard with no white flash — body bg stayed rgb(10,22,40) throughout the transition. (2) Player dashboard redesign is applied correctly: `.dashboard-shell.player-dash` root present, DARK NAVY sidebar with amber left-accent on active `My Dashboard` item, LIGHT off-white content area (rgb(238,242,248)) with subtle grid backdrop, dark text on white cards; all 5 sidebar tabs visible (My Dashboard, My Payments, Notifications with a `2` badge, Team Chat, Club Shop). Pay Membership + Pay Now CTAs are amber-orange gradient buttons (`linear-gradient(135deg, rgb(245,158,11) 0%, rgb(234,88,12) 100%)`) — NOT blue. (3) Tab navigation: clicking My Payments, Notifications, Team Chat swaps the main content and updates the topbar title (`My Payments`, `Notifications`, `Team Chat`); no crashes, no ErrorBoundary. Club Shop navigates to `/#/store` which is by design (it is a link to the public store, not an in-dashboard tab). (4) User chip at bottom-left opens a small menu with Profile + Logout; clicking Logout returns to `/#/player/login` and body bg remains rgb(10,22,40) — no white flash. (5) Manager login (manager@dublinlions.ie/lions2025) succeeds and `/#/manager/dashboard` still renders — 'Welcome back, Club', full sidebar (Public site, Dashboard, Members, Teams, Schedule, Team Chat, Payments, Store, Reports, Images, Settings) and the four KPI cards render. Manager dashboard NOT redesigned yet (as expected). (6) OR divider on Manager login card confirmed: horizontal rule uses `border-slate-200` (rgb(226,232,240)) — a light hairline; the `OR` chip is `bg-white` (rgb(255,255,255)) on the WHITE card (rgba(255,255,255,0.97)) — NOT a dark chip. (7) Store sync key: verified `SYNCED_KEYS` in `src/lib/clubData.ts` — the exported `KEYS` object now includes `products: 'dlbc_products'` and `orders: 'dlbc_orders'` (lines 306–307), and `SYNCED_KEYS` is built from every entry in KEYS except `images`, so both `dlbc_products` and `dlbc_orders` ARE mirrored to Supabase app_state. (8) Video resilience: `<video>` element exists on Home with src `https://assets.mixkit.co/videos/2291/2291-720.mp4`; in this preview pod the mp4 does NOT successfully load (readyState=0, networkState=3 NETWORK_NO_SOURCE) and video opacity stays 0, but page does NOT crash — the hero title/tagline still render on the dark navy background and no `[class*=poster]` fallback element remains visible. Confirmed no stuck loading state. (9) NO WHITE FLASH between routes: sampled body background every 80ms while hopping /#/, /#/teams, /#/fixtures, /#/store, /#/player/login and back — every single sample was rgb(10,22,40). No large white flash produced by any route transition.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Home hero video (soft-check per review)",
+        "issue": "Hero video src (https://assets.mixkit.co/videos/2291/2291-720.mp4) fails to load in this preview pod (video.networkState=3 NETWORK_NO_SOURCE, readyState=0, opacity=0). Page still renders correctly on the dark navy background (no crash, no stuck spinner) so the ClubVideoBackground fallback path is behaving. If assets.mixkit.co is intended to be the production source, consider self-hosting a small mp4 in /public or gating with a poster image to avoid the invisible/blank hero on networks where mixkit is blocked.",
+        "affected_selectors": ["video"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/it10_player_login.png",
+    "/app/test_reports/it10_player_dashboard.png",
+    "/app/test_reports/it10_team_chat.png",
+    "/app/test_reports/it10_user_menu.png",
+    "/app/test_reports/it10_manager_login.png",
+    "/app/test_reports/it10_manager_dashboard.png"
+  ],
+  "action_items": [
+    "OPTIONAL P3 — Home hero mp4 (assets.mixkit.co) does not load inside this preview pod. Page still renders because ClubVideoBackground degrades gracefully, but end users on networks that block mixkit will see a black hero with no motion. Consider self-hosting a short mp4 in /public and/or adding a still poster image so the hero never looks broken."
+  ],
+  "critical_code_review_comments": [
+    "src/lib/clubData.ts is still 2652 lines and src/pages/ManagerDashboard.tsx is still ~4.8k lines — both remain well above the 700-line guideline. Not blocking this iteration but should be split soon (MembersView, TeamsView, PaymentsView, sync layer).",
+    "SYNCED_KEYS in clubData.ts (line 312) now correctly derives from Object.entries(KEYS), so future KEYS additions automatically sync — good pattern.",
+    "Player dashboard redesign is entirely CSS (`.player-dash` block in src/index.css) — no JSX changes, so it degrades safely if the CSS scope changes. Sidebar aside itself uses transparent bg with the dark navy coming from the outer `.dashboard-shell.player-dash` grid; this works visually but means anyone toggling the shell class will lose the navy sidebar — worth an inline comment on the CSS block."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only per review)", "frontend": "9/9 checks pass (video is a soft-check and behaved as designed: no crash, no stuck loader)"},
+  "test_credentials": "Manager manager@dublinlions.ie / lions2025 (/#/manager/login). Parent cooler74.ea@gmail.com / test12 (/#/player/login).",
+  "seed_data_creation": "None — this iteration was read-only, no data was created or destroyed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The app is a Vite+React+TS SPA in /app/app (not /app/frontend). Preview URL: https://session-stability-11.preview.emergentagent.com. Vite dev server is already running on port 3000 as a `yarn dev` process (PID visible via `ps`), but NOT under supervisor — the `backend`/`frontend` supervisor entries are FATAL and should be ignored. All routes are HashRouter (`/#/…`). Use `window.location.hash = '#/teams'` (not `page.goto`) for in-app navigation to avoid full reloads. Player dashboard tabs are internal state (`My Dashboard`, `My Payments`, `Notifications`, `Team Chat`), but `Club Shop` is a link to `/#/store` — do NOT expect `My Dashboard` title to remain after clicking Club Shop. User chip button contains 'cooler74.ea@gmail.com'; opening it reveals Profile + Logout. On Home, the hero video src `https://assets.mixkit.co/videos/2291/2291-720.mp4` fails to load in this pod (networkState=3) — that is an asset/CDN issue, not a code bug.",
+  "rca_of_the_issue": "No bugs found this iteration. Redesign & regression items behaved as specified. The only observation worth flagging is the external mixkit mp4 not loading inside the preview environment; the ClubVideoBackground component fails silently (opacity=0, no crash), which is safe UX but leaves the hero without motion — a self-hosted asset is the mitigation."
+}

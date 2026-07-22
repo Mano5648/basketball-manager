@@ -94,6 +94,40 @@ env in `/app/app/.env.local`.
 - Added `/app/memory/AGENT_HANDOFF.md` — full onboarding brief for the next agent
   (stack, file map, auth rules, data model, known pitfalls, deploy flow).
 
+### 7. Player Dashboard redesign + video-freeze & white-flash bug fixes (Jan 2026)
+
+**A. Player Dashboard redesign (`src/index.css`, `.player-dash` block)**
+- Rewrote the `.player-dash` skin (JSX untouched, so all sub-components — OverviewTab,
+  PaymentsTab, ScheduleTab, ProfileTab, NotificationsTab, ChatTab, OnboardingScreen —
+  continue to work). Aesthetic: clean · modern · sporty.
+- Sidebar is now **dark navy** (`#0f1b33` → `#071021`) with an amber left-accent bar and
+  glowing amber underline on the active nav item. User chip and "Back to Site" pill
+  restyled for the dark background.
+- Content surface: light off-white (`#eef2f8`) with a **subtle 32px grid** masked to
+  fade at the edges — modern feel, no image download.
+- Topbar cleaner white/glass with dark text.
+- Buttons: amber-orange gradient for primary CTAs ("Pay Now", "Pay Membership")
+  reinforces the sporty pride vibe.
+
+**B. Video freeze fix (`src/components/ClubVideoBackground.tsx`)**
+- Added resilient playback: `visibilitychange`, `stalled`, `suspend`, `pause`, `waiting`
+  handlers, plus a 4s keep-alive tick that re-invokes `video.play()` if the browser
+  silently paused (backgrounded tab, mobile power-save, autoplay-policy re-arm).
+- `.catch(() => {})` swallows the harmless "still-suspended" rejection; the next tick
+  retries. Video also stops rendering the native `poster` attribute (kept from earlier
+  fix).
+
+**C. White-flash fix (`src/index.css`)**
+- Set `html, body { background-color: #0A1628; }` so any brief route transition /
+  component remount / mid-navigation gap paints the dark theme underneath instead of
+  the default white body.
+
+**D. Store & orders sync fix (`src/lib/clubData.ts`)**
+- `dlbc_products` and `dlbc_orders` are now in `KEYS` → included in `SYNCED_KEYS`.
+  Previously, manager-added store items and player orders stayed on the writing
+  device and never propagated. Now they mirror to Supabase `app_state` like every
+  other shared key.
+
 ## Open / Next action items
 - P0 (OPEN, needs user input): "two login panels" report is ambiguous — could not reproduce a
   duplication on desktop (standard split-screen brand + form). Awaiting a user screenshot.
