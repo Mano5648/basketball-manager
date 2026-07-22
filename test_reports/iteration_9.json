@@ -1,0 +1,51 @@
+{
+  "summary": "TEST 1 (count consistency) PASS: Manager Members list rendered EXACTLY 3 child rows — amu (DOB 21/7/2016, Age 10), john (DOB 16/7/2012, Age 14), jake (DOB 12/10/2010, Age 15) — each name appearing ONCE, no duplicates. 'Showing 3 of 3 members' and Dashboard 'TOTAL MEMBERS: 3'. Parent-side Manage children (before delete) shows the same set — no 5-vs-3 mismatch. Deduplication (dedupePlayersByEmail) is confirmed working. TEST 2 (manager delete of 'jake' sticks) PASS end-to-end: clicked trash on jake, Confirm Delete modal opened with data-testid=confirm-delete-text (text: 'Are you sure you want to remove jake? Their login access will be revoked. This action cannot be undone.'), clicked confirm-delete-confirm. Row disappeared immediately (Showing 2 of 2). Waited 25s (aggregator ran twice), then hard-reloaded the manager page + waited another 12s for aggregator: jake did NOT reappear — final state 'Showing 2 of 2 members' with only amu + john. Cross-verified on parent side: logged in cooler74.ea@gmail.com, opened Manage children → only CHILD 1 (amu) and CHILD 2 (john). Jake is fully gone. TEST 3 BLOCKED — cannot execute as written: the parent 'test' row (email cooler74.ea@gmail.com) is NOT rendered in the manager Members table, so there is no trash button to click on the parent row. Root cause (verified in code): src/lib/clubData.ts line 470 in isRosterListedMember() returns false for `player.memberType === 'parent' && !isChildRosterPlayer(player)` — parents are intentionally hidden from the manager Members list. The Modal's confirm-delete-text code (ManagerDashboard.tsx line 1911-1918) DOES contain the children-warning branch ('This will also remove their N children (name1, name2)'), but that branch is unreachable via the Members UI while parents are filtered out. REGRESSION: Members page renders reliably (no ErrorBoundary), parent Notifications tab shows only the two real items ('Membership payment due', 'Welcome to the new season!') — none of the banned placeholder strings.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "MembersView rosterMembers filter (src/lib/clubData.ts:467-476 isRosterListedMember)",
+        "issue": "TEST 3 of the review request expects the manager to click the delete (trash) button on the PARENT row 'test' (cooler74.ea@gmail.com) in the Members list, but parent-only members are filtered out by `if (player.memberType === 'parent' && !isChildRosterPlayer(player)) return false` (line 470). The manager therefore has no way to delete a parent from the Members page, and the children-warning path in the delete confirmation Modal (ManagerDashboard.tsx confirm-delete-text lines 1911-1918) is unreachable through the intended UI. Either (a) include parents in isRosterListedMember when they have registeredChildren, so managers can review/delete a family unit from Members, or (b) provide a separate 'Parents / Guardians' management surface with the same delete + children-warning affordance.",
+        "selector": "table tbody tr containing 'cooler74.ea@gmail.com' — currently NOT rendered",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Manager → Members Confirm Delete modal (for child rows)",
+        "issues": [
+          "For a child row like 'jake', the confirmation copy says 'Their login access will be revoked'. Children do not have their own login — the sentence is misleading when the target is a child. Consider branching the copy on isChildRosterPlayer(target)."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/it9_manager_members_initial.png",
+    "/app/test_reports/it9_manager_members_all.png",
+    "/app/test_reports/it9_confirm_delete_jake.png",
+    "/app/test_reports/it9_after_delete_jake.png",
+    "/app/test_reports/it9_manager_after_reload.png",
+    "/app/test_reports/it9_parent_manage_children.png",
+    "/app/test_reports/it9_parent_notifs.png"
+  ],
+  "action_items": [
+    "P1 — Make the manager Members page (or an equivalent surface) expose the PARENT row 'test' so the reviewer's TEST 3 flow (click trash on parent → confirm-delete-text mentions children by name → Cancel) becomes reachable. Simplest fix: in src/lib/clubData.ts isRosterListedMember, treat parents with registeredChildren as roster-listed; the existing Modal branch in ManagerDashboard.tsx already lists the child names.",
+    "P3 — Child delete confirmation copy: don't say 'their login access will be revoked' when target is a child roster player (they don't have a separate login). Branch on isChildRosterPlayer(target)."
+  ],
+  "critical_code_review_comments": [
+    "dedupePlayersByEmail (clubData.ts line 892) is correctly applied in BOTH applySyncedPlayersValue and mergeContributionIntoPlayers (setPlayers path line 1068) — confirmed no 2× amu / 2× john duplicate rows in the manager table, matching the deduped parent side (3 children).",
+    "removePlayerFromClub / deleteMemberContributionByEmail path successfully makes a single-child delete stick across the 12s aggregation window: after deleting jake and waiting 25s + hard reload + another 12s of aggregation, jake did not reappear on either manager or parent side. LWW childrenUpdatedAt is doing its job.",
+    "MembersView Modal (ManagerDashboard.tsx line 1906-1926) correctly wires data-testid=confirm-delete-text / confirm-delete-cancel / confirm-delete-confirm, and the closure at 1908-1917 already emits the 'This will also remove their N children (...)' phrase — but only when the target parent is present in `players.find(p => p.id === confirmDelete)`, which requires the parent to be in the visible table.",
+    "src/pages/ManagerDashboard.tsx is 4789 lines and src/lib/clubData.ts is 2648 lines — both remain well above the 700-line guideline; refactor MembersView, TeamsView, PaymentsView and the sync layer into modules.",
+    "Confirm Delete copy for child rows misleadingly claims 'their login access will be revoked' — children don't have a login."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only test)", "frontend": "TEST 1 PASS, TEST 2 PASS (delete jake sticks after 25s + reload + reflects on parent side), TEST 3 BLOCKED (parent row not present in Members list — cannot exercise the parent-delete confirmation), REGRESSION PASS (Members renders, parent Notifications clean)."},
+  "test_credentials": "Manager manager@dublinlions.ie / lions2025 (/#/manager/login). Parent cooler74.ea@gmail.com / test12 (/#/player/login).",
+  "seed_data_creation": "Destructive: deleted child 'jake' from manager side per TEST 2. Final parent baseline is now [amu, john]. If future iterations need jake again, re-add via parent Manage children (name=jake, DOB 2010-10-12).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Key gotchas: (1) the manager Members list currently hides parent-only members due to isRosterListedMember() filtering — the Unassigned toggle is a no-op for surfacing parents; (2) to reach the delete button on a row, use `document.querySelectorAll('table tbody tr')` and match by innerText because the row/button don't have data-testid attributes; (3) after ANY delete, wait ≥22s and reload before declaring stickiness because the aggregator polls every 12s; (4) 'Manage children' on the parent side is an internal-state button, not a route — the URL stays /#/player/dashboard even when the profile form renders. Console noise 'ERR_INSUFFICIENT_RESOURCES' / 'Failed to fetch' during aggregation is expected in the preview and does not affect functional behavior.",
+  "rca_of_the_issue": "The 5-vs-3 count bug and the delete-not-sticking bug are FIXED for the flows that are UI-reachable: dedupePlayersByEmail collapses duplicate parent rows sharing an email (so children aren't counted twice), and removePlayerFromClub + deleteMemberContributionByEmail + childrenUpdatedAt LWW keep a manager-side child delete from being resurrected by the next 12s aggregator cycle. However, the review request's TEST 3 assumes the parent 'test' is visible in the manager Members page; the code path that emits the children-warning confirmation copy exists (ManagerDashboard.tsx confirm-delete-text) but is unreachable because isRosterListedMember (clubData.ts:470) explicitly returns false for parent-only members. Recommendation: include parents that have registeredChildren in isRosterListedMember and retest — the Modal already handles the children-listing branch correctly."
+}

@@ -881,11 +881,54 @@ function stripOrphanChildRosterRows(players: Player[]): Player[] {
   })
 }
 
+/**
+ * Collapses duplicate member accounts that share the same email. A fresh device
+ * that logs in before the remote pull completes can mint a second parent row
+ * (new id) for an existing member; since merges key by id, both survive and the
+ * manager then sees each child twice (the "5 members but parent sees 3" bug).
+ * We keep the newest parent row per email (by childrenUpdatedAt, then #children)
+ * and drop the duplicates plus their child-roster rows.
+ */
+function dedupePlayersByEmail(players: Player[]): Player[] {
+  const groups = new Map<string, Player[]>()
+  const kept: Player[] = []
+  for (const p of players) {
+    const email = !p.parentPlayerId && p.email ? p.email.trim().toLowerCase() : ''
+    if (!email) continue
+    if (!groups.has(email)) groups.set(email, [])
+    groups.get(email)!.push(p)
+  }
+  const dropParentIds = new Set<string>()
+  const canonicalByEmail = new Map<string, Player>()
+  for (const [email, group] of groups) {
+    const canonical = group.slice().sort((a, b) => {
+      const ta = a.childrenUpdatedAt ?? 0
+      const tb = b.childrenUpdatedAt ?? 0
+      if (ta !== tb) return tb - ta
+      const ca = getRegisteredChildren(a).length
+      const cb = getRegisteredChildren(b).length
+      if (ca !== cb) return cb - ca
+      return (b.onboardingCompletedAt ? 1 : 0) - (a.onboardingCompletedAt ? 1 : 0)
+    })[0]
+    canonicalByEmail.set(email, canonical)
+    for (const p of group) if (p.id !== canonical.id) dropParentIds.add(p.id)
+  }
+  for (const p of players) {
+    if (!p.parentPlayerId && p.email) {
+      const email = p.email.trim().toLowerCase()
+      if (canonicalByEmail.get(email)?.id !== p.id) continue // drop duplicate parent
+    }
+    if (p.parentPlayerId && dropParentIds.has(p.parentPlayerId)) continue // drop its children
+    kept.push(p)
+  }
+  return kept
+}
+
 function applySyncedPlayersValue(value: unknown): Player[] {
   const remote = Array.isArray(value) ? (value as Player[]) : []
   const local = readPlayersFromStorage()
   if (local.length === 0 && remote.length === 0) return remote
-  const merged = stripOrphanChildRosterRows(mergePlayersForSync(local, remote))
+  const merged = dedupePlayersByEmail(stripOrphanChildRosterRows(mergePlayersForSync(local, remote)))
   if (JSON.stringify(merged) !== JSON.stringify(local)) {
     setPlayers(merged)
   }
@@ -982,6 +1025,10 @@ function mergeContributionIntoPlayers(value: unknown): void {
   const ownerRow = rows.find((r) => !r.parentPlayerId) ?? null
   const ownerId = ownerRow?.id
 
+  // A member the manager removed (access revoked) must not be re-added by their
+  // now-stale contribution row.
+  if (ownerRow?.email && isMemberAccessRevoked(ownerRow.email)) return
+
   // Ignore a stale contribution: if the manager already holds a newer edit for
   // this owner (larger childrenUpdatedAt), don't let an out-of-order/retried
   // push revert it.
@@ -1018,7 +1065,7 @@ function mergeContributionIntoPlayers(value: unknown): void {
   }
 
   if (JSON.stringify(merged) !== JSON.stringify(local)) {
-    setPlayers(stripOrphanChildRosterRows(merged))
+    setPlayers(dedupePlayersByEmail(stripOrphanChildRosterRows(merged)))
   }
 }
 
@@ -1309,6 +1356,19 @@ export function removePlayerFromClub(playerId: string): boolean {
   const player = players.find((p) => p.id === playerId)
   if (!player) return false
 
+  // Deleting a single child roster row: also drop that child from its parent's
+  // registeredChildren and bump the parent's childrenUpdatedAt, so the manager's
+  // removal wins under last-write-wins and the parent's stale contribution can't
+  // re-add the child.
+  if (player.parentPlayerId && player.registeredChildId) {
+    const parent = players.find((p) => p.id === player.parentPlayerId)
+    if (parent) {
+      const remaining = getRegisteredChildren(parent).filter((c) => c.id !== player.registeredChildId)
+      updateRegisteredChildren(parent.id, remaining, Date.now())
+      return true
+    }
+  }
+
   const childIds = players.filter((p) => p.parentPlayerId === playerId).map((p) => p.id)
   const removeIds = new Set([playerId, ...childIds])
 
@@ -1324,8 +1384,36 @@ export function removePlayerFromClub(playerId: string): boolean {
 
   if (player.email?.trim()) {
     revokeMemberAccess(player.email)
+    // Also delete the member's contribution row so aggregation can't re-add them.
+    void deleteMemberContributionByEmail(player.email)
   }
   return true
+}
+
+/**
+ * Best-effort deletion of a member's `dlbc_roster_contrib:<uid>` row, matched by
+ * the owner row's email (managers don't know the member's auth uid). Runs only
+ * for managers; a stale contribution would otherwise re-add a deleted member.
+ */
+export async function deleteMemberContributionByEmail(email: string): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return
+  const target = email.trim().toLowerCase()
+  try {
+    const { data, error } = await supabase
+      .from('app_state')
+      .select('key, value')
+      .like('key', `${CONTRIB_PREFIX}%`)
+    if (error || !data) return
+    for (const row of data as { key: string; value: unknown }[]) {
+      const rows = Array.isArray(row.value) ? (row.value as Player[]) : []
+      const owner = rows.find((r) => !r.parentPlayerId)
+      if (owner?.email && owner.email.trim().toLowerCase() === target) {
+        await supabase.from('app_state').delete().eq('key', row.key)
+      }
+    }
+  } catch {
+    /* offline — the revoked-email guard still blocks re-adds locally */
+  }
 }
 
 /** Team/position/jersey from roster — empty until a manager assigns them. */

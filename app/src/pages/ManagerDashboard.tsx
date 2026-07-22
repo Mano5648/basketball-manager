@@ -1595,6 +1595,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
   const handleDelete = (id: string) => {
     removePlayerFromClub(id)
     setConfirmDelete(null)
+    data.refresh()
   }
 
   const openEdit = (player: Player) => {
@@ -1903,10 +1904,22 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
       </Modal>
 
       <Modal open={!!confirmDelete} onClose={() => setConfirmDelete(null)} title="Confirm Delete">
-        <p className="font-inter text-sm text-slate-300">Are you sure you want to delete this member? This action cannot be undone.</p>
+        {(() => {
+          const target = players.find((p) => p.id === confirmDelete)
+          const kids = target ? players.filter((p) => p.parentPlayerId === target.id) : []
+          return (
+            <p className="font-inter text-sm text-slate-300" data-testid="confirm-delete-text">
+              Are you sure you want to remove <span className="text-white font-semibold">{target?.name ?? 'this member'}</span>?
+              {kids.length > 0 && (
+                <> This will also remove their {kids.length} {kids.length === 1 ? 'child' : 'children'} ({kids.map((k) => k.name).join(', ')}).</>
+              )}
+              {' '}Their login access will be revoked. This action cannot be undone.
+            </p>
+          )
+        })()}
         <div className="flex justify-end gap-3 pt-2">
-          <button onClick={() => setConfirmDelete(null)} className="px-4 py-2 font-inter text-sm text-slate-300 hover:text-white transition-colors">Cancel</button>
-          <button onClick={() => confirmDelete && handleDelete(confirmDelete)} className="bg-red-500 hover:bg-red-400 text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">
+          <button data-testid="confirm-delete-cancel" onClick={() => setConfirmDelete(null)} className="px-4 py-2 font-inter text-sm text-slate-300 hover:text-white transition-colors">Cancel</button>
+          <button data-testid="confirm-delete-confirm" onClick={() => confirmDelete && handleDelete(confirmDelete)} className="bg-red-500 hover:bg-red-400 text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">
             Delete
           </button>
         </div>
