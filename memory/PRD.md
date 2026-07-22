@@ -33,6 +33,16 @@ env in `/app/app/.env.local`.
   and manager announcements (`getAnnouncements` status 'Sent'). Read/delete state persisted in
   `dlbc_player_notif_read` / `dlbc_player_notif_deleted`. Empty state added. VERIFIED.
 
+### 3. Manager Members page went blank/white
+- Cause: a malformed leftover 'probe' roster row (email=null, no teamIds) crashed
+  `MembersView`'s search filter (`p.email.toLowerCase()`); no error boundary → whole app white.
+- Fixes: cleaned bad data; null-safe MembersView filter+render; `stripOrphanChildRosterRows`
+  drops child rows whose parent is absent (both merge paths); NEW `ErrorBoundary`
+  (`src/components/ErrorBoundary.tsx`) wraps routes in `App.tsx`.
+- VERIFIED (iteration_8, 100%): Members renders (amu, john), survives search/filters/navigation;
+  error boundary never triggered.
+
+
 ## Open / Next action items
 - P0 (OPEN, needs user input): "two login panels" report is ambiguous — could not reproduce a
   duplication on desktop (standard split-screen brand + form). Awaiting a user screenshot.
