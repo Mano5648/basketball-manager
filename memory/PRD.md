@@ -67,15 +67,21 @@ env in `/app/app/.env.local`.
 - Verified with `tsc -b` (clean build); behavioural verification pending user test.
 
 ### 5. Image flash on Sign In / Register / Manager Login refresh (Jan 2026)
-- **Cause**: `PortalLoginLayout` rendered `ClubVideoBackground`, which shows the poster
-  image (`about-team-huddle.jpg`) as a fallback until the hero video loads (and again
-  whenever `prefers-reduced-motion` is set). On refresh, the poster flashed visibly
-  behind the login card before the video swapped in.
-- **Fix**: `PortalLoginLayout.tsx` now uses a purely CSS backdrop — a two-tone dark
-  navy gradient with soft blue/warn radial glows and a lightweight SVG grain overlay.
-  No `<img>`, no `<video>`, no network fetch → zero flash on refresh. Applies to
-  Sign In, Register (same layout), and Manager Login.
-- Verified via screenshot at both `/#/manager/login` and `/#/player/login`.
+- **Cause**: `ClubVideoBackground` rendered an `<img>` fallback (poster
+  `about-team-huddle.jpg`) AND set the `<video poster=…>` attribute, so on every
+  refresh the poster painted first (both from the React `<img>` and the browser's
+  native video poster) and then was abruptly replaced when the video finished
+  buffering. Also applied on Home, but most visible on Sign In / Register /
+  Manager Login where the card sits over the background.
+- **Fix**: `ClubVideoBackground.tsx` now only renders the poster `<img>` when we
+  are NOT going to play the video (reduced-motion / image mode). When video is
+  the intended background, the container's own dark `#070c16` shows until the
+  video's opacity transition fades it in — no photograph ever pops in first.
+  Also removed the native `poster={poster}` on the `<video>` tag to stop the
+  browser painting it before `canplay`.
+- Video background itself preserved; behaviour on Home unchanged.
+- Verified visually — initial frame on `/#/manager/login` is a clean dark canvas,
+  video fades in smoothly when ready.
 
 ## Open / Next action items
 - P0 (OPEN, needs user input): "two login panels" report is ambiguous — could not reproduce a

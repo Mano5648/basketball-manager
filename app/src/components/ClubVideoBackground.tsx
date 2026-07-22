@@ -54,7 +54,6 @@ export default function ClubVideoBackground({
           loop
           playsInline
           preload="auto"
-          poster={poster}
           onLoadedData={() => setVideoReady(true)}
           onCanPlay={() => setVideoReady(true)}
           onError={onVideoError}
@@ -62,9 +61,10 @@ export default function ClubVideoBackground({
         >
           <source src={videoSrc} type="video/mp4" />
         </video>
-      ) : null}
-
-      {(!showVideo || !videoReady) && (
+      ) : (
+        // Only show the poster image when we're NOT trying to play the video
+        // (reduced motion / image mode). This avoids the "other image" flashing
+        // in for a beat on refresh before the video takes over.
         <img src={poster} alt="" className="club-video-fallback" />
       )}
 
