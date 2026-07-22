@@ -867,11 +867,17 @@ function readPlayersFromStorage(): Player[] {
  */
 function stripOrphanChildRosterRows(players: Player[]): Player[] {
   return players.filter((p) => {
-    if (!p.parentPlayerId || !p.registeredChildId) return true
+    if (!p.parentPlayerId) return true
     const parent = players.find((x) => x.id === p.parentPlayerId)
-    if (!parent) return true
-    const childIds = new Set(getRegisteredChildren(parent).map((c) => c.id))
-    return childIds.has(p.registeredChildId)
+    // A child roster row whose parent isn't in the roster at all is an orphan
+    // (stale/corrupt data) — drop it. Parents and children are always synced
+    // together, so a legit child row never lacks its parent.
+    if (!parent) return false
+    if (p.registeredChildId) {
+      const childIds = new Set(getRegisteredChildren(parent).map((c) => c.id))
+      return childIds.has(p.registeredChildId)
+    }
+    return true
   })
 }
 

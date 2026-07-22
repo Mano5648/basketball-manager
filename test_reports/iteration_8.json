@@ -1,0 +1,60 @@
+{
+  "summary": "PRIMARY BUG (Members page going blank/white) is FIXED. Manager @dublinlions.ie logs in, clicks 'Members' in the sidebar, and the Members view renders correctly (NOT blank). Header 'Members', description, filter chips (Unassigned/All Teams/All Age Groups/All Status), Export CSV, and the members table all render with real rows. data-testid='error-boundary' was NEVER present during any of the tested flows. All defensive interactions passed: search (mobile viewport) with 'amu'→2/5, 'john'→2/5, 'xyz'→0/5, ''→5/5; toggling the Unassigned filter twice; changing All Teams→Unassigned only, All Age Groups→U10, All Status→Paid (all resulted in eb=False, page stayed rendered); navigation Dashboard→Teams→Payments→Members all rendered content without any white screen. Parent regression PASS — cooler74.ea@gmail.com logged in, 'Manage children' opens the profile form with all children rendered (screenshot shows amu, john, jake), and the Notifications tab shows only real items ('Membership payment due', 'Welcome to the new season!') with none of the banned placeholder strings (Neptune BC, fundraising event 25 February, monthly membership €50, Tuesday training moved). The stripOrphanChildRosterRows() fix + null-safe render in MembersView + the new ErrorBoundary have jointly resolved the white-screen crash.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "MembersView search input (src/pages/ManagerDashboard.tsx line 1646)",
+        "issue": "The Members 'Search members...' input is wrapped in a `md:hidden` div, so it is INVISIBLE at md+ (desktop/tablet ≥768px) viewports. Managers on desktop have no way to search members — only the Unassigned toggle + 3 select filters are visible. Search only works on <768px (mobile) viewports. If desktop search was intended, this is a functional regression; if intentional, the review request 'type in the members Search box' still needs to be testable at desktop widths.",
+        "selector": "div.md\\:hidden > input[placeholder='Search members...']",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Supabase app_state upsert push (still open from iteration_7)",
+        "issue": "Very high-volume 'net::ERR_INSUFFICIENT_RESOURCES' and repeated '[app_state] ensure sync failed for dlbc_players/dlbc_teams TypeError: Failed to fetch' warnings during the manager Members view (aggregator polls every 12s + also pushes contributions). Doesn't break rendering (state converges), but the console is very noisy and browser tabs may throttle further fetches. Same category as iteration_7 finding.",
+        "affected_selectors": ["n/a (network layer)"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Manager → Members (data seed)",
+        "issues": [
+          "Members table now shows 5 rows: 2× 'amu' (both CHILD, DOB 21/7/2016), 2× 'john' (both CHILD, DOB 16/7/2012), and 1× 'jake' (CHILD, DOB 12/10/2010). The review request states manager should see 'exactly 1 parent test with 2 children amu, john' — instead the parent has 3 children in profile (amu, john, jake) and the manager Members roster has each amu and each john duplicated (rendered twice). This looks like an orphan/dup child-roster row scenario that stripOrphanChildRosterRows() is not catching (likely because both rows still have a valid parentPlayerId reference — they're not orphans, they're duplicates). Also 'jake' present suggests parent added a third child at some point since iteration_7. Investigate mergePlayersForSync to see why the same registeredChildId ends up as two roster rows.",
+          "Header/sidebar labels are fine, but the 'Members' page has a duplicated H1: the top bar shows 'Members' and the content area shows 'Members' again — minor visual noise."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/it8_manager_dashboard.png",
+    "/app/test_reports/it8_members_view.png",
+    "/app/test_reports/it8_members_final.png",
+    "/app/test_reports/it8_mobile_members.png",
+    "/app/test_reports/it8_parent_children.png",
+    "/app/test_reports/it8_parent_notifs.png"
+  ],
+  "action_items": [
+    "P2 (UX) — Restore a desktop-visible Members search input, or remove the `md:hidden` wrapper around the existing one so it appears on md+ widths as well. Currently desktop managers cannot search members.",
+    "P2 (data) — Investigate duplicate child roster rows in Manager Members table (2× amu, 2× john). Confirm whether mergePlayersForSync should dedupe by registeredChildId across sources (parent contribution vs supabase.app_state.dlbc_players blob). If duplicates exist because both entries have valid parentPlayerId, stripOrphanChildRosterRows won't catch them — add a dedupe step keyed on (parentPlayerId + registeredChildId) or (name + dob) after merge.",
+    "P3 (open from iteration_7) — Persistent outbound localStorage queue for supabase.app_state.upsert to eliminate 'TypeError: Failed to fetch' loss risk.",
+    "P4 (nit) — Remove the duplicated 'Members' heading in the Members view (top bar + content bar both say 'Members')."
+  ],
+  "critical_code_review_comments": [
+    "ErrorBoundary (src/components/ErrorBoundary.tsx) is correctly wired at App level and exposes data-testid='error-boundary' + a 'Reload page' button (data-testid='error-boundary-reload'). It never triggered across the entire manager+parent test session, which confirms MembersView is now render-safe.",
+    "MembersView null-guards at line 1540 area of ManagerDashboard.tsx look correct (name/email/teamIds all nullish-coalesced) — no crash on filter/search across 5 rows.",
+    "The Members 'Search members...' input inside the `md:hidden` wrapper (line 1646) is a functional gap on desktop — either intentional (in which case add a desktop-visible input elsewhere) or a UX bug.",
+    "src/pages/ManagerDashboard.tsx is 4776 lines — well over the 700-line guideline. Split MembersView, TeamsView, PaymentsView, etc. into their own files.",
+    "src/lib/clubData.ts remains 2500+ lines with mixed sync/merge/orphan-strip logic. Ripe for a dedupe helper (see action item P2).",
+    "Console flood of 'ERR_INSUFFICIENT_RESOURCES' during the Members view is worth throttling — the aggregator's 12s interval combined with per-row Supabase fetches can exhaust browser connection budget."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only)", "frontend": "100% on the requested render-safety flows — Members page NEVER went blank across search, all 3 dropdown filters, Unassigned toggle, and Dashboard/Teams/Payments/Members navigation. Parent flow (Manage children + Notifications) PASS."},
+  "test_credentials": "Manager manager@dublinlions.ie / lions2025 (/#/manager/login). Parent cooler74.ea@gmail.com / test12 (/#/player/login).",
+  "seed_data_creation": "No test data created. Existing seed observation: parent profile now has 3 children (amu, john, jake) — diverged from iteration_7 baseline of [amu, john]; manager Members table shows 5 rows (2× amu, 2× john, 1× jake).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Primary render-crash bug is confirmed resolved. The Members table renders reliably; error-boundary never appears. Key gotchas for follow-up: (a) the Members search input is `md:hidden`, so use viewport width <768px (390×844 in Playwright) to interact with it, or fix the responsive wrapper first; (b) the Manage children profile form takes 3-4s to hydrate after clicking the button, so wait longer before evaluating body.innerText; (c) manager aggregation polls every 12s and each cycle floods console with ERR_INSUFFICIENT_RESOURCES / Failed to fetch — this is expected in the preview env and not a rendering bug.",
+  "rca_of_the_issue": "Original bug (Members page blank/white on manager click): root cause was a corrupt child-roster row with email=null and no teamIds crashing MembersView's `filtered = players.filter(p => p.email.toLowerCase().includes(search))` because p.email was null. Two-part fix confirmed effective: (1) src/pages/ManagerDashboard.tsx MembersView search/filter now uses (p.email ?? ''), (p.name ?? ''), (p.teamIds ?? []) — so no crash even if a row has null fields; (2) src/lib/clubData.ts stripOrphanChildRosterRows() removes orphan child roster rows in both applySyncedPlayersValue and mergeContributionIntoPlayers, so the corrupt 'probe' row can no longer be re-introduced from the shared app_state blob. Additionally src/components/ErrorBoundary.tsx now wraps the app, so even if a future render throws, the user gets a recoverable 'Something went wrong / Reload page' UI (data-testid='error-boundary') instead of a blank screen. Verification: 4 separate flows across desktop and mobile viewports — none produced the error-boundary; body.innerText always contained the Members header + real member rows."
+}
