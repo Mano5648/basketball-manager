@@ -1687,10 +1687,29 @@ export function whenClubDataReady(): Promise<void> {
   return appStateSyncPromise ?? Promise.resolve()
 }
 
+// Per-key JSON snapshot of the last value we successfully pushed (or received
+// from remote). Prevents the realtime "amplification storm" where every open
+// client re-pushes identical data on every incoming realtime event → exhausting
+// the browser's socket pool (ERR_INSUFFICIENT_RESOURCES) → visible white
+// paint gaps while React starves for a paint slot.
+const lastPushedSnapshot = new Map<string, string>()
+
+/** Record that a given key/value is known to be in sync with remote. Called
+ *  from applyRemoteAppStateRow so we don't turn around and push what we
+ *  just received. */
+function markKeyInSyncWithRemote(key: string, value: unknown): void {
+  try {
+    lastPushedSnapshot.set(key, JSON.stringify(value))
+  } catch {
+    /* value not serialisable — leave the snapshot untouched */
+  }
+}
+
 function syncKeyToRemote(key: string, value: unknown) {
   if (!isSupabaseConfigured || !supabase) return
   if (!SYNCED_KEYS.has(key)) return
   if (value === null) {
+    lastPushedSnapshot.delete(key)
     supabase.from('app_state').delete().eq('key', key).then(({ error }) => {
       if (error) console.warn('[app_state] delete failed for', key, error.message)
     })
@@ -1707,11 +1726,28 @@ function syncKeyToRemote(key: string, value: unknown) {
     // member write here is rejected by RLS and only spams the console.
     return
   }
+  // Dedup: skip the network write if the value is byte-identical to what we
+  // most recently pushed OR received via realtime. This kills the ping-pong
+  // loop between clients (realtime event → local write → sync → realtime event
+  // → …) that used to saturate the fetch pool.
+  let serialised: string
+  try {
+    serialised = JSON.stringify(value)
+  } catch {
+    serialised = ''
+  }
+  if (serialised && lastPushedSnapshot.get(key) === serialised) return
+  if (serialised) lastPushedSnapshot.set(key, serialised)
   supabase
     .from('app_state')
     .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
     .then(({ error }) => {
-      if (error) console.warn('[app_state] sync failed for', key, error.message)
+      if (error) {
+        // Drop the snapshot so a legitimate retry (e.g. after reconnect) will
+        // actually go through instead of being deduped-out.
+        lastPushedSnapshot.delete(key)
+        console.warn('[app_state] sync failed for', key, error.message)
+      }
     })
 }
 
@@ -1752,6 +1788,10 @@ function applyRemoteAppStateRow(key: string, value: unknown) {
     return
   }
   if (!SYNCED_KEYS.has(key)) return
+  // Remember that we're in sync with the remote for this key BEFORE dispatching
+  // the storage event — this prevents any listener that responds by calling
+  // setStore() from turning around and pushing the identical value back.
+  markKeyInSyncWithRemote(key, value)
   if (key === KEYS.players) {
     applySyncedPlayersValue(value)
     window.dispatchEvent(new StorageEvent('storage', { key }))
@@ -1822,10 +1862,15 @@ export async function initAppStateSync(): Promise<void> {
           window.dispatchEvent(new StorageEvent('storage', { key: row.key }))
         } else {
           applyRemoteRow(row.key, row.value)
+          // Reconcile locally only. Do NOT unconditionally push players/teams
+          // back to Supabase here — that turned every realtime event into
+          // another realtime event and, with N open clients, exhausted the
+          // fetch pool (ERR_INSUFFICIENT_RESOURCES) and produced periodic
+          // blank-screen paint gaps. Reconciliation, if it actually mutates
+          // anything, will push naturally via setStore → syncKeyToRemote,
+          // which is now byte-deduped.
           if (row.key === KEYS.players || row.key.startsWith(CONTRIB_PREFIX)) {
             reconcileClubRosterIfNeeded()
-            void ensureAppStateKeySynced(KEYS.players)
-            void ensureAppStateKeySynced(KEYS.teams)
           }
         }
       },

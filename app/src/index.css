@@ -52,6 +52,15 @@
     max-width: 100%;
     background-color: #0A1628;
   }
+
+  /* Vite's root mount. Painting it dark navy too ensures that if a heavy
+     render (e.g. a burst of realtime sync writes) delays paint by a frame,
+     the browser NEVER shows the default white through — the user sees the
+     dark theme colour instead. */
+  #root {
+    min-height: 100dvh;
+    background-color: #0A1628;
+  }
 }
 
 @layer components {
