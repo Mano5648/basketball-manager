@@ -22,16 +22,13 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # Pin a Node that ships npm 10 (stable on GHA; local npm 11/12 script policy differs)
-          node-version: '22.14.0'
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
 
       - name: Install dependencies
         working-directory: app
-        run: |
-          set -euxo pipefail
-          node -v
-          npm -v
-          npm install --no-fund --no-audit 2>&1 | tee "$RUNNER_TEMP/npm-install.log"
+        run: npm ci --no-fund --no-audit
 
       - name: Build
         working-directory: app
@@ -41,17 +38,7 @@ jobs:
           VITE_MANAGER_EMAILS: ${{ secrets.VITE_MANAGER_EMAILS }}
           VITE_STRIPE_PUBLISHABLE_KEY: ${{ secrets.VITE_STRIPE_PUBLISHABLE_KEY }}
           VITE_TURNSTILE_SITE_KEY: ${{ secrets.VITE_TURNSTILE_SITE_KEY }}
-        run: |
-          set -euxo pipefail
-          npm run build 2>&1 | tee "$RUNNER_TEMP/npm-build.log"
-
-      - name: Upload install/build logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-logs
-          path: ${{ runner.temp }}/npm-*.log
-          if-no-files-found: ignore
+        run: npm run build
 
       - uses: actions/configure-pages@v5
 
