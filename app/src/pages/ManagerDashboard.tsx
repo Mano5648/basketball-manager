@@ -4022,7 +4022,7 @@ function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
     try { bc = new BroadcastChannel('dlbc_chat'); bc.onmessage = sync } catch {}
     const pullTimer = setInterval(() => {
       void pullMergedChatState().then(sync)
-    }, 1500)
+    }, 30000)
     void pullMergedChatState().then(sync)
     return () => {
       window.removeEventListener('storage', h)

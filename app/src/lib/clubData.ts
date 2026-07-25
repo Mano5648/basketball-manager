@@ -308,11 +308,14 @@ const KEYS = {
   orders: 'dlbc_orders',
 }
 
-// Every key EXCEPT `images` is mirrored to Supabase (`images` is superseded
-// by the dedicated site_images table/bucket in src/lib/siteImages.ts).
+// Every key EXCEPT `images`, `chatMessages`, `chatDeletedIds` is mirrored to
+// Supabase app_state. Chat now uses the dedicated `chat_messages` table (see
+// supabase/chat-messages-setup.sql), and `images` is superseded by the
+// dedicated site_images table/bucket in src/lib/siteImages.ts.
+const NON_SYNCED_KEY_NAMES = new Set(['images', 'chatMessages', 'chatDeletedIds'])
 const SYNCED_KEYS = new Set<string>(
   Object.entries(KEYS)
-    .filter(([name]) => name !== 'images')
+    .filter(([name]) => !NON_SYNCED_KEY_NAMES.has(name))
     .map(([, value]) => value),
 )
 
@@ -1726,12 +1729,9 @@ function markKeyInSyncWithRemote(key: string, value: unknown): void {
 }
 
 /** Merge local+remote chat blobs before upsert — prevents last-writer wiping the other side's messages. */
-let chatSyncTimer: ReturnType<typeof setTimeout> | null = null
-let chatSyncChain: Promise<void> = Promise.resolve()
 
 function notifyChatListeners() {
   window.dispatchEvent(new StorageEvent('storage', { key: KEYS.chatMessages }))
-  window.dispatchEvent(new StorageEvent('storage', { key: KEYS.chatDeletedIds }))
   try {
     const bc = new BroadcastChannel('dlbc_chat')
     bc.postMessage('sync')
@@ -1741,166 +1741,218 @@ function notifyChatListeners() {
   }
 }
 
-/** Pull shared chat into localStorage (merge, do not push). */
+/* ─────────────────── Per-row chat_messages table ───────────────────
+   Sends now go straight into the Supabase `chat_messages` table as
+   atomic INSERTs — no more last-writer-wins on a JSON blob. The local
+   localStorage[dlbc_chat_messages] is kept as an offline cache and as
+   the source that `getChatMessages()` reads synchronously. Realtime
+   INSERT/DELETE events keep every open client in sync without
+   polling. See supabase/chat-messages-setup.sql for the schema. */
+
+type ChatMessageRow = {
+  id: string
+  team_id: string
+  user_id: string | null
+  sender_name: string
+  sender_role: string
+  text: string
+  created_at: string
+}
+
+function rowToMessage(row: ChatMessageRow): ChatMessage {
+  return {
+    id: row.id,
+    teamId: row.team_id,
+    senderName: row.sender_name,
+    senderRole: row.sender_role,
+    text: row.text,
+    timestamp: row.created_at,
+  }
+}
+
+function upsertCachedMessage(msg: ChatMessage): void {
+  const raw = getRawChatMessages()
+  const next = [...raw.filter((m) => m.id !== msg.id), msg].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+  )
+  localStorage.setItem(KEYS.chatMessages, JSON.stringify(next))
+}
+
+function removeCachedMessage(messageId: string): void {
+  const raw = getRawChatMessages()
+  const next = raw.filter((m) => m.id !== messageId)
+  if (next.length !== raw.length) {
+    localStorage.setItem(KEYS.chatMessages, JSON.stringify(next))
+  }
+}
+
+function generateChatMessageId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID()
+    }
+  } catch {
+    /* fall through */
+  }
+  // RFC4122-ish fallback for very old browsers
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
+/** Pull the last N messages from Supabase into the local cache. Realtime
+ *  keeps things fresh after this initial load, so this is mainly used on
+ *  first mount + as an occasional safety net. */
 export async function pullMergedChatState(): Promise<void> {
   if (!isSupabaseConfigured || !supabase) return
   try {
     const { data, error } = await supabase
-      .from('app_state')
-      .select('key, value')
-      .in('key', [KEYS.chatMessages, KEYS.chatDeletedIds, KEYS.chatMembers])
+      .from('chat_messages')
+      .select('id, team_id, user_id, sender_name, sender_role, text, created_at')
+      .order('created_at', { ascending: false })
+      .limit(1000)
     if (error || !data) return
-    for (const row of data as { key: string; value: unknown }[]) {
-      applyRemoteAppStateRow(row.key, row.value)
+    const remote = (data as ChatMessageRow[]).map(rowToMessage)
+    const remoteById = new Map(remote.map((m) => [m.id, m]))
+
+    // Keep locally-pending sends (not yet confirmed by server) so the sender
+    // still sees their own message with a pending/failed indicator.
+    const statusMap = readChatStatusMap()
+    const localPending = getRawChatMessages().filter(
+      (m) => !remoteById.has(m.id) && (statusMap[m.id] === 'pending' || statusMap[m.id] === 'failed'),
+    )
+
+    const merged = [...remote, ...localPending].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+    )
+    localStorage.setItem(KEYS.chatMessages, JSON.stringify(merged))
+
+    // Any locally pending id that is now present remotely is confirmed sent.
+    for (const [id, s] of Object.entries(statusMap)) {
+      if ((s === 'pending' || s === 'failed') && remoteById.has(id)) {
+        setChatSendStatus(id, null)
+      }
     }
+    notifyChatListeners()
   } catch {
     /* offline — keep local */
   }
 }
 
-export async function pushMergedChatState(): Promise<void> {
-  if (!isSupabaseConfigured || !supabase) return
-  chatSyncChain = chatSyncChain.then(async () => {
-    try {
-      // Always start from latest remote when readable; if pull fails, still push local
-      // so other members receive this device's new messages.
-      let remoteMessages: unknown = getRawChatMessages()
-      let remoteDeleted: unknown = getStore<string[]>(KEYS.chatDeletedIds, [])
-      const { data, error } = await supabase!
-        .from('app_state')
-        .select('key, value')
-        .in('key', [KEYS.chatMessages, KEYS.chatDeletedIds])
-      if (!error && data) {
-        remoteMessages = []
-        remoteDeleted = []
-        for (const row of data as { key: string; value: unknown }[]) {
-          if (row.key === KEYS.chatMessages) remoteMessages = row.value
-          if (row.key === KEYS.chatDeletedIds) remoteDeleted = row.value
-        }
-      } else if (error) {
-        console.warn('[app_state] chat pull before push failed — pushing local copy', error.message)
-      }
-
-      const localDeleted = getStore<string[]>(KEYS.chatDeletedIds, [])
-      const remoteDeletedList = Array.isArray(remoteDeleted)
-        ? remoteDeleted.filter((id): id is string => typeof id === 'string')
-        : []
-      const mergedDeleted = [...new Set([...localDeleted, ...remoteDeletedList])]
-      localStorage.setItem(KEYS.chatDeletedIds, JSON.stringify(mergedDeleted))
-
-      const mergedMessages = mergeChatMessages(getRawChatMessages(), remoteMessages)
-      localStorage.setItem(KEYS.chatMessages, JSON.stringify(mergedMessages))
-
-      markKeyInSyncWithRemote(KEYS.chatDeletedIds, mergedDeleted)
-      markKeyInSyncWithRemote(KEYS.chatMessages, mergedMessages)
-
-      const now = new Date().toISOString()
-      const { error: upsertError } = await supabase!.from('app_state').upsert(
-        [
-          { key: KEYS.chatDeletedIds, value: mergedDeleted, updated_at: now },
-          { key: KEYS.chatMessages, value: mergedMessages, updated_at: now },
-        ],
-        { onConflict: 'key' },
-      )
-      if (upsertError) {
-        lastPushedSnapshot.delete(KEYS.chatMessages)
-        lastPushedSnapshot.delete(KEYS.chatDeletedIds)
-        console.warn('[app_state] chat merge push failed', upsertError.message)
-        return
-      }
-
-      markAllPendingChatAsSent()
-      notifyChatListeners()
-    } catch (e) {
-      lastPushedSnapshot.delete(KEYS.chatMessages)
-      lastPushedSnapshot.delete(KEYS.chatDeletedIds)
-      console.warn('[app_state] chat merge push threw', e)
-    }
+/** Attempt to INSERT a single locally-pending message into the chat_messages
+ *  table. Returns true on success, false if the insert failed (network / RLS).
+ *  On failure the message is flagged 'failed' so the UI shows the red retry. */
+async function sendChatMessageById(messageId: string): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) {
+    // Local-only mode: treat as sent so the UI doesn't hang on pending.
+    setChatSendStatus(messageId, null)
+    notifyChatListeners()
+    return true
+  }
+  const msg = getRawChatMessages().find((m) => m.id === messageId)
+  if (!msg) {
+    // Nothing to send (was deleted between add + retry).
+    setChatSendStatus(messageId, null)
+    return true
+  }
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser()
+  if (authError || !user) {
+    console.warn('[chat_messages] no auth user, cannot send', authError?.message)
+    setChatSendStatus(messageId, 'failed')
+    notifyChatListeners()
+    return false
+  }
+  const { error } = await supabase.from('chat_messages').insert({
+    id: msg.id,
+    team_id: msg.teamId,
+    user_id: user.id,
+    sender_name: msg.senderName,
+    sender_role: msg.senderRole,
+    text: msg.text,
+    created_at: msg.timestamp,
   })
-  await chatSyncChain
+  if (error) {
+    // Duplicate key = already on server (e.g. realtime raced us) → treat as sent.
+    if (error.code === '23505') {
+      setChatSendStatus(messageId, null)
+      notifyChatListeners()
+      return true
+    }
+    console.warn('[chat_messages] insert failed', error.message)
+    setChatSendStatus(messageId, 'failed')
+    notifyChatListeners()
+    return false
+  }
+  setChatSendStatus(messageId, null)
+  notifyChatListeners()
+  return true
 }
 
-function scheduleChatSync() {
-  if (chatSyncTimer) clearTimeout(chatSyncTimer)
-  chatSyncTimer = setTimeout(() => {
-    chatSyncTimer = null
-    void pushMergedChatState()
-  }, 150)
-}
-
-/** Fast publish for sends: upsert immediately using last-known remote snapshot, then reconcile in background.
- * Resolves to `true` if the fast upsert succeeded, `false` otherwise. Callers can use this to
- * flip pending → sent (double-check) or pending → failed (red warning) in the UI. */
+/** Publish every locally pending (or previously failed) message. Returns
+ *  true if all of them made it to the server. Callers use this both after
+ *  a new addChatMessage() and when the user clicks the retry button. */
 export async function publishChatNow(): Promise<boolean> {
   if (!isSupabaseConfigured || !supabase) {
-    // Local-only mode: treat as sent immediately so UI doesn't get stuck on pending.
     markAllPendingChatAsSent()
     notifyChatListeners()
     return true
   }
-  if (chatSyncTimer) {
-    clearTimeout(chatSyncTimer)
-    chatSyncTimer = null
-  }
+  const statusMap = readChatStatusMap()
+  const pendingIds = Object.entries(statusMap)
+    .filter(([, s]) => s === 'pending' || s === 'failed')
+    .map(([id]) => id)
+  if (pendingIds.length === 0) return true
 
-  const runFast = async (): Promise<boolean> => {
-    let cachedMessages: unknown = []
-    let cachedDeleted: unknown = []
-    try {
-      const ms = lastPushedSnapshot.get(KEYS.chatMessages)
-      const ds = lastPushedSnapshot.get(KEYS.chatDeletedIds)
-      if (ms) cachedMessages = JSON.parse(ms)
-      if (ds) cachedDeleted = JSON.parse(ds)
-    } catch {
-      /* ignore bad snapshot */
-    }
+  // Send in parallel; each call independently updates its own status.
+  const results = await Promise.all(pendingIds.map((id) => sendChatMessageById(id)))
+  return results.every(Boolean)
+}
 
-    const localDeleted = getStore<string[]>(KEYS.chatDeletedIds, [])
-    const remoteDeletedList = Array.isArray(cachedDeleted)
-      ? cachedDeleted.filter((id): id is string => typeof id === 'string')
-      : []
-    const mergedDeleted = [...new Set([...localDeleted, ...remoteDeletedList])]
-    const mergedMessages = mergeChatMessages(getRawChatMessages(), cachedMessages)
+// ---- Realtime subscription for chat_messages ---------------------------------
+let chatChannelInitialised = false
 
-    localStorage.setItem(KEYS.chatDeletedIds, JSON.stringify(mergedDeleted))
-    localStorage.setItem(KEYS.chatMessages, JSON.stringify(mergedMessages))
+function initChatMessagesRealtime(): void {
+  if (chatChannelInitialised) return
+  if (!isSupabaseConfigured || !supabase) return
+  chatChannelInitialised = true
 
-    const now = new Date().toISOString()
-    const { error } = await supabase!.from('app_state').upsert(
-      [
-        { key: KEYS.chatDeletedIds, value: mergedDeleted, updated_at: now },
-        { key: KEYS.chatMessages, value: mergedMessages, updated_at: now },
-      ],
-      { onConflict: 'key' },
+  supabase
+    .channel('chat_messages-changes')
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'chat_messages' },
+      (payload) => {
+        const row = payload.new as ChatMessageRow | null
+        if (!row?.id) return
+        upsertCachedMessage(rowToMessage(row))
+        // If this INSERT is our own message coming back from the server,
+        // clear any pending/failed status.
+        setChatSendStatus(row.id, null)
+        notifyChatListeners()
+      },
     )
-    if (error) {
-      lastPushedSnapshot.delete(KEYS.chatMessages)
-      lastPushedSnapshot.delete(KEYS.chatDeletedIds)
-      console.warn('[app_state] chat fast publish failed', error.message)
-      return false
-    }
-    markKeyInSyncWithRemote(KEYS.chatDeletedIds, mergedDeleted)
-    markKeyInSyncWithRemote(KEYS.chatMessages, mergedMessages)
-    // Any locally-pending message is now on the server — flip them all to sent.
-    markAllPendingChatAsSent()
-    notifyChatListeners()
-    return true
-  }
+    .on(
+      'postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'chat_messages' },
+      (payload) => {
+        const oldRow = payload.old as { id?: string } | null
+        if (!oldRow?.id) return
+        removeCachedMessage(oldRow.id)
+        setChatSendStatus(oldRow.id, null)
+        notifyChatListeners()
+      },
+    )
+    .subscribe()
+}
 
-  const fastPromise = runFast()
-  chatSyncChain = chatSyncChain
-    .then(() => fastPromise)
-    .then(async (ok) => {
-      // Even if the fast path failed, the background merged push may recover
-      // (network hiccup, transient RLS retry). If it recovers, flip pending → sent.
-      try {
-        await pushMergedChatState()
-        if (!ok) markAllPendingChatAsSent()
-      } catch {
-        /* handled in pushMergedChatState */
-      }
-    })
-  return await fastPromise
+export async function pushMergedChatState(): Promise<void> {
+  // Deprecated: chat now uses per-row inserts into `chat_messages`.
+  // This shim exists so any lingering callers don't crash.
 }
 
 function syncKeyToRemote(key: string, value: unknown) {
@@ -1911,11 +1963,6 @@ function syncKeyToRemote(key: string, value: unknown) {
     supabase.from('app_state').delete().eq('key', key).then(({ error }) => {
       if (error) console.warn('[app_state] delete failed for', key, error.message)
     })
-    return
-  }
-  // Chat must merge-before-push so player/manager writes don't clobber each other.
-  if (key === KEYS.chatMessages || key === KEYS.chatDeletedIds) {
-    scheduleChatSync()
     return
   }
   // Members never overwrite the shared roster/team blobs — they publish only the
@@ -1965,7 +2012,7 @@ export async function ensureAppStateKeySynced(key: string): Promise<void> {
   }
   if (key === KEYS.teams && !currentUserIsManager()) return
   if (key === KEYS.chatMessages || key === KEYS.chatDeletedIds) {
-    await pushMergedChatState()
+    // Chat now uses the per-row chat_messages table — nothing to sync here.
     return
   }
   const raw = localStorage.getItem(key)
@@ -1988,45 +2035,7 @@ export async function ensureAppStateKeySynced(key: string): Promise<void> {
  * every open tab/device stays in sync without a refresh. No-ops when
  * Supabase isn't configured (the app keeps working purely from localStorage).
  */
-type StoredChatMessage = {
-  id: string
-  teamId: string
-  senderName: string
-  senderRole: string
-  text: string
-  timestamp: string
-}
-
-function getDeletedChatMessageIds(): Set<string> {
-  return new Set(getStore<string[]>(KEYS.chatDeletedIds, []))
-}
-
-function mergeChatMessages(local: StoredChatMessage[], remote: unknown): StoredChatMessage[] {
-  const deleted = getDeletedChatMessageIds()
-  const remoteList = Array.isArray(remote)
-    ? remote.filter(
-        (m): m is StoredChatMessage =>
-          !!m &&
-          typeof m === 'object' &&
-          typeof (m as StoredChatMessage).id === 'string' &&
-          typeof (m as StoredChatMessage).teamId === 'string',
-      )
-    : []
-  const byId = new Map<string, StoredChatMessage>()
-  for (const m of remoteList) {
-    if (!deleted.has(m.id)) byId.set(m.id, m)
-  }
-  for (const m of local) {
-    if (deleted.has(m.id)) continue
-    const existing = byId.get(m.id)
-    if (!existing || new Date(m.timestamp).getTime() >= new Date(existing.timestamp).getTime()) {
-      byId.set(m.id, m)
-    }
-  }
-  return [...byId.values()].sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-  )
-}
+/* StoredChatMessage type was used by the old blob-merge helper. */
 
 type StoredChatMembersMap = Record<string, { memberIds: string[]; adminIds: string[] }>
 
@@ -2058,10 +2067,7 @@ function applyRemoteAppStateRow(key: string, value: unknown) {
   }
   if (!SYNCED_KEYS.has(key)) return
   if (key === KEYS.chatMessages) {
-    const merged = mergeChatMessages(getRawChatMessages(), value)
-    markKeyInSyncWithRemote(key, merged)
-    localStorage.setItem(key, JSON.stringify(merged))
-    window.dispatchEvent(new StorageEvent('storage', { key }))
+    // Legacy blob — ignore. Chat is now the per-row `chat_messages` table.
     return
   }
   if (key === KEYS.chatMembers) {
@@ -2072,20 +2078,7 @@ function applyRemoteAppStateRow(key: string, value: unknown) {
     return
   }
   if (key === KEYS.chatDeletedIds) {
-    const local = getStore<string[]>(KEYS.chatDeletedIds, [])
-    const remoteList = Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []
-    const merged = [...new Set([...local, ...remoteList])]
-    markKeyInSyncWithRemote(key, merged)
-    localStorage.setItem(key, JSON.stringify(merged))
-    const deletedSet = new Set(merged)
-    const rawMsgs = getStore<StoredChatMessage[]>(KEYS.chatMessages, [])
-    const pruned = rawMsgs.filter((m) => !deletedSet.has(m.id))
-    if (pruned.length !== rawMsgs.length) {
-      markKeyInSyncWithRemote(KEYS.chatMessages, pruned)
-      localStorage.setItem(KEYS.chatMessages, JSON.stringify(pruned))
-      window.dispatchEvent(new StorageEvent('storage', { key: KEYS.chatMessages }))
-    }
-    window.dispatchEvent(new StorageEvent('storage', { key }))
+    // Legacy tombstones — ignore. Deletions now go through table DELETE.
     return
   }
   // Remember that we're in sync with the remote for this key BEFORE dispatching
@@ -2176,6 +2169,12 @@ export async function initAppStateSync(): Promise<void> {
       },
     )
     .subscribe()
+
+  // Chat now lives in its own table with per-row realtime — set that up too.
+  initChatMessagesRealtime()
+  // Pull the recent chat history once so the local cache is populated for the
+  // first render (subsequent updates arrive via the realtime subscription).
+  void pullMergedChatState()
   })()
 
   return appStateSyncPromise
@@ -2709,8 +2708,7 @@ export function markAllPendingChatAsSent(): void {
 }
 
 export function getChatMessages(): ChatMessage[] {
-  const deleted = new Set(getStore<string[]>(KEYS.chatDeletedIds, []))
-  return getStore<ChatMessage[]>(KEYS.chatMessages, []).filter((m) => !deleted.has(m.id))
+  return getStore<ChatMessage[]>(KEYS.chatMessages, [])
 }
 
 /** Raw message list including tombstoned entries — used when merging remote state. */
@@ -2854,19 +2852,17 @@ export function addChatMessage(
   text: string,
 ): ChatMessage {
   const message: ChatMessage = {
-    id: `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    id: generateChatMessageId(),
     teamId,
     senderName,
     senderRole,
     text,
     timestamp: new Date().toISOString(),
   }
-  // Mark as pending until publishChatNow() confirms remote write.
+  // Mark as pending until publishChatNow() confirms the server INSERT.
   setChatSendStatus(message.id, 'pending')
-  // Local-only write — caller publishes with publishChatNow() so we don't double pull+push.
-  setChatMessages([...getRawChatMessages().filter((m) => m.id !== message.id), message], {
-    syncRemote: false,
-  })
+  // Optimistic local cache write so the message appears instantly.
+  upsertCachedMessage(message)
   try {
     const bc = new BroadcastChannel('dlbc_chat')
     bc.postMessage('sync')
@@ -2888,23 +2884,26 @@ export function isOwnChatMessage(
   )
 }
 
-/** Remove a message only if it was sent by the same person (name + role). */
+/** Remove a message only if it was sent by the same person (name + role).
+ *  Fires-and-forgets the DELETE against Supabase — realtime will drop it
+ *  from every other open client automatically. */
 export function deleteOwnChatMessage(
   messageId: string,
   senderName: string,
   senderRole: string,
 ): boolean {
-  const raw = getStore<ChatMessage[]>(KEYS.chatMessages, [])
+  const raw = getRawChatMessages()
   const target = raw.find((m) => m.id === messageId)
   if (!target || !isOwnChatMessage(target, senderName, senderRole)) return false
 
-  const deleted = getStore<string[]>(KEYS.chatDeletedIds, [])
-  if (!deleted.includes(messageId)) {
-    localStorage.setItem(KEYS.chatDeletedIds, JSON.stringify([...deleted, messageId]))
-    window.dispatchEvent(new StorageEvent('storage', { key: KEYS.chatDeletedIds }))
-  }
-  setChatMessages(raw.filter((m) => m.id !== messageId), { syncRemote: false })
+  removeCachedMessage(messageId)
   setChatSendStatus(messageId, null)
+
+  if (isSupabaseConfigured && supabase) {
+    supabase.from('chat_messages').delete().eq('id', messageId).then(({ error }) => {
+      if (error) console.warn('[chat_messages] delete failed', error.message)
+    })
+  }
 
   try {
     const bc = new BroadcastChannel('dlbc_chat')
@@ -2916,9 +2915,10 @@ export function deleteOwnChatMessage(
   return true
 }
 
-/** Push tombstone + pruned messages to Supabase so other clients drop the message. */
+/** Deprecated shim — kept for backwards-compat with callers. Deletions are now
+ *  atomic table DELETEs performed inside `deleteOwnChatMessage`. */
 export async function syncChatDeletionToRemote(): Promise<void> {
-  await publishChatNow()
+  /* no-op */
 }
 
 /* ─────────────────── Store / Products / Cart ─────────────────── */

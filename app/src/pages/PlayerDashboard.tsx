@@ -1868,7 +1868,7 @@ function ChatTab({ user }: { user: PlayerUser | null }) {
     } catch { /* unavailable */ }
     const pullTimer = setInterval(() => {
       void pullMergedChatState().then(refreshChatState)
-    }, 1500)
+    }, 30000)
     return () => {
       window.removeEventListener('storage', onStorage)
       bc?.close()
