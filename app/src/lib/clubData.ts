@@ -1809,6 +1809,7 @@ export async function pushMergedChatState(): Promise<void> {
         return
       }
 
+      markAllPendingChatAsSent()
       notifyChatListeners()
     } catch (e) {
       lastPushedSnapshot.delete(KEYS.chatMessages)
@@ -1827,15 +1828,22 @@ function scheduleChatSync() {
   }, 150)
 }
 
-/** Fast publish for sends: upsert immediately using last-known remote snapshot, then reconcile in background. */
-export async function publishChatNow(): Promise<void> {
-  if (!isSupabaseConfigured || !supabase) return
+/** Fast publish for sends: upsert immediately using last-known remote snapshot, then reconcile in background.
+ * Resolves to `true` if the fast upsert succeeded, `false` otherwise. Callers can use this to
+ * flip pending → sent (double-check) or pending → failed (red warning) in the UI. */
+export async function publishChatNow(): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) {
+    // Local-only mode: treat as sent immediately so UI doesn't get stuck on pending.
+    markAllPendingChatAsSent()
+    notifyChatListeners()
+    return true
+  }
   if (chatSyncTimer) {
     clearTimeout(chatSyncTimer)
     chatSyncTimer = null
   }
 
-  const runFast = async () => {
+  const runFast = async (): Promise<boolean> => {
     let cachedMessages: unknown = []
     let cachedDeleted: unknown = []
     try {
@@ -1869,16 +1877,30 @@ export async function publishChatNow(): Promise<void> {
       lastPushedSnapshot.delete(KEYS.chatMessages)
       lastPushedSnapshot.delete(KEYS.chatDeletedIds)
       console.warn('[app_state] chat fast publish failed', error.message)
-      return
+      return false
     }
     markKeyInSyncWithRemote(KEYS.chatDeletedIds, mergedDeleted)
     markKeyInSyncWithRemote(KEYS.chatMessages, mergedMessages)
+    // Any locally-pending message is now on the server — flip them all to sent.
+    markAllPendingChatAsSent()
     notifyChatListeners()
+    return true
   }
 
   const fastPromise = runFast()
-  chatSyncChain = chatSyncChain.then(() => fastPromise).then(() => pushMergedChatState())
-  await fastPromise
+  chatSyncChain = chatSyncChain
+    .then(() => fastPromise)
+    .then(async (ok) => {
+      // Even if the fast path failed, the background merged push may recover
+      // (network hiccup, transient RLS retry). If it recovers, flip pending → sent.
+      try {
+        await pushMergedChatState()
+        if (!ok) markAllPendingChatAsSent()
+      } catch {
+        /* handled in pushMergedChatState */
+      }
+    })
+  return await fastPromise
 }
 
 function syncKeyToRemote(key: string, value: unknown) {
@@ -2621,6 +2643,71 @@ export function getTeamAgeDivisionLabel(team: Team): string {
 
 /* ─────────────────── Chat Messages ─────────────────── */
 
+/* --- Send-status tracking (local-only, never synced) ---
+ * WhatsApp-style delivery indicators:
+ *   pending → single grey check
+ *   sent    → double check (default if id not in map)
+ *   failed  → red warning + retry
+ * Stored per-message-id in localStorage so state survives refresh. */
+export type ChatSendStatus = 'pending' | 'sent' | 'failed'
+const CHAT_STATUS_KEY = 'dlbc_chat_status'
+
+function readChatStatusMap(): Record<string, ChatSendStatus> {
+  try {
+    const raw = localStorage.getItem(CHAT_STATUS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, ChatSendStatus>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeChatStatusMap(map: Record<string, ChatSendStatus>) {
+  try {
+    localStorage.setItem(CHAT_STATUS_KEY, JSON.stringify(map))
+  } catch {
+    /* quota / private-mode — ignore */
+  }
+  window.dispatchEvent(new StorageEvent('storage', { key: CHAT_STATUS_KEY }))
+  try {
+    const bc = new BroadcastChannel('dlbc_chat')
+    bc.postMessage('sync')
+    bc.close()
+  } catch {
+    /* BroadcastChannel unavailable */
+  }
+}
+
+export function getChatSendStatus(messageId: string): ChatSendStatus {
+  return readChatStatusMap()[messageId] ?? 'sent'
+}
+
+export function getChatSendStatusMap(): Record<string, ChatSendStatus> {
+  return readChatStatusMap()
+}
+
+export function setChatSendStatus(messageId: string, status: ChatSendStatus | null): void {
+  const map = readChatStatusMap()
+  if (status === null || status === 'sent') {
+    if (!(messageId in map)) return
+    delete map[messageId]
+  } else {
+    if (map[messageId] === status) return
+    map[messageId] = status
+  }
+  writeChatStatusMap(map)
+}
+
+/** Any local message currently marked pending/failed becomes sent — used when
+ *  any successful upsert confirms the whole array made it to Supabase. */
+export function markAllPendingChatAsSent(): void {
+  const map = readChatStatusMap()
+  const ids = Object.keys(map)
+  if (ids.length === 0) return
+  writeChatStatusMap({})
+}
+
 export function getChatMessages(): ChatMessage[] {
   const deleted = new Set(getStore<string[]>(KEYS.chatDeletedIds, []))
   return getStore<ChatMessage[]>(KEYS.chatMessages, []).filter((m) => !deleted.has(m.id))
@@ -2774,6 +2861,8 @@ export function addChatMessage(
     text,
     timestamp: new Date().toISOString(),
   }
+  // Mark as pending until publishChatNow() confirms remote write.
+  setChatSendStatus(message.id, 'pending')
   // Local-only write — caller publishes with publishChatNow() so we don't double pull+push.
   setChatMessages([...getRawChatMessages().filter((m) => m.id !== message.id), message], {
     syncRemote: false,
@@ -2815,6 +2904,7 @@ export function deleteOwnChatMessage(
     window.dispatchEvent(new StorageEvent('storage', { key: KEYS.chatDeletedIds }))
   }
   setChatMessages(raw.filter((m) => m.id !== messageId), { syncRemote: false })
+  setChatSendStatus(messageId, null)
 
   try {
     const bc = new BroadcastChannel('dlbc_chat')

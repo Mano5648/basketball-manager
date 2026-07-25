@@ -113,6 +113,9 @@ import {
   getChatMessages,
   addChatMessage,
   deleteOwnChatMessage,
+  getChatSendStatusMap,
+  setChatSendStatus,
+  type ChatSendStatus,
   getChatRoom,
   addChatMember,
   resolveChatMemberId,
@@ -3991,6 +3994,7 @@ function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
   const { teams, players } = data
   const [activeTeamId, setActiveTeamId] = useState<string>(teams[0]?.id || '')
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [statuses, setStatuses] = useState<Record<string, ChatSendStatus>>(() => getChatSendStatusMap())
   const [room, setRoom] = useState<ChatRoomMembership>({ memberIds: [], adminIds: [] })
   const [showMembers, setShowMembers] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
@@ -4002,19 +4006,23 @@ function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
   useEffect(() => { refreshRoom() }, [refreshRoom])
 
   useEffect(() => {
-    const sync = () => setMessages(getChatMessages())
+    const sync = () => {
+      setMessages(getChatMessages())
+      setStatuses(getChatSendStatusMap())
+    }
     sync()
     const h = (e: StorageEvent) => {
       if (e.key === 'dlbc_chat_messages') sync()
       if (e.key === 'dlbc_chat_members') refreshRoom()
       if (e.key === 'dlbc_chat_deleted_ids') sync()
+      if (e.key === 'dlbc_chat_status') sync()
     }
     window.addEventListener('storage', h)
     let bc: BroadcastChannel | null = null
     try { bc = new BroadcastChannel('dlbc_chat'); bc.onmessage = sync } catch {}
     const pullTimer = setInterval(() => {
       void pullMergedChatState().then(sync)
-    }, 3000)
+    }, 1500)
     void pullMergedChatState().then(sync)
     return () => {
       window.removeEventListener('storage', h)
@@ -4047,6 +4055,19 @@ function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
     preview: lastPreview(team.id),
   }))
 
+  const publishWithTimeout = async (messageId: string) => {
+    const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8000))
+    let ok = false
+    try {
+      ok = await Promise.race([publishChatNow(), timeout])
+    } catch {
+      ok = false
+    }
+    if (!ok) setChatSendStatus(messageId, 'failed')
+    setStatuses(getChatSendStatusMap())
+    setMessages(getChatMessages())
+  }
+
   const handleSend = (body: string) => {
     if (!body.trim() || !activeTeamId) return
     const message = addChatMessage(activeTeamId, 'Manager', 'manager', body.trim())
@@ -4057,12 +4078,20 @@ function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
         (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
       )
     })
-    void publishChatNow()
+    setStatuses(getChatSendStatusMap())
+    void publishWithTimeout(message.id)
+  }
+
+  const handleRetry = (messageId: string) => {
+    setChatSendStatus(messageId, 'pending')
+    setStatuses(getChatSendStatusMap())
+    void publishWithTimeout(messageId)
   }
 
   const handleDelete = (messageId: string) => {
     if (!deleteOwnChatMessage(messageId, 'Manager', 'manager')) return
     setMessages(getChatMessages())
+    setStatuses(getChatSendStatusMap())
     void publishChatNow()
   }
 
@@ -4079,6 +4108,8 @@ function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
         canSend={!!activeTeamId}
         onSend={handleSend}
         onDeleteMessage={handleDelete}
+        onRetryMessage={handleRetry}
+        messageStatuses={statuses}
         emptyTeamsMessage="Create a team first, then start chatting with members."
         headerExtra={
           activeTeamId ? (

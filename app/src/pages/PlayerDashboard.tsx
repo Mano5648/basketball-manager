@@ -9,6 +9,9 @@ import {
   getChatMessages,
   addChatMessage,
   deleteOwnChatMessage,
+  getChatSendStatusMap,
+  setChatSendStatus,
+  type ChatSendStatus,
   getAnnouncements as getClubAnnouncements,
   getPayments,
   getOrders,
@@ -1825,6 +1828,7 @@ function ChatTab({ user }: { user: PlayerUser | null }) {
   const [myTeams, setMyTeams] = useState(() => (clubPlayer ? getAccessibleChatTeams(clubPlayer) : []))
   const [teamId, setTeamId] = useState<string>(() => (clubPlayer ? getAccessibleChatTeams(clubPlayer)[0]?.id ?? '' : ''))
   const [messages, setMessages] = useState<ChatMessage[]>(getChatMessages())
+  const [statuses, setStatuses] = useState<Record<string, ChatSendStatus>>(() => getChatSendStatusMap())
 
   const refreshChatState = useCallback(() => {
     if (!clubPlayer) {
@@ -1835,6 +1839,7 @@ function ChatTab({ user }: { user: PlayerUser | null }) {
     setMyTeams(teams)
     setTeamId((prev) => (prev && teams.some((t) => t.id === prev) ? prev : teams[0]?.id ?? ''))
     setMessages(getChatMessages())
+    setStatuses(getChatSendStatusMap())
   }, [clubPlayer])
 
   useEffect(() => {
@@ -1848,6 +1853,7 @@ function ChatTab({ user }: { user: PlayerUser | null }) {
         e.key === 'dlbc_chat_messages' ||
         e.key === 'dlbc_chat_members' ||
         e.key === 'dlbc_chat_deleted_ids' ||
+        e.key === 'dlbc_chat_status' ||
         e.key === 'dlbc_players' ||
         e.key === 'dlbc_teams'
       ) {
@@ -1862,7 +1868,7 @@ function ChatTab({ user }: { user: PlayerUser | null }) {
     } catch { /* unavailable */ }
     const pullTimer = setInterval(() => {
       void pullMergedChatState().then(refreshChatState)
-    }, 3000)
+    }, 1500)
     return () => {
       window.removeEventListener('storage', onStorage)
       bc?.close()
@@ -1916,6 +1922,23 @@ function ChatTab({ user }: { user: PlayerUser | null }) {
     preview: lastPreview(t.id),
   }))
 
+  const publishWithTimeout = async (messageId: string) => {
+    // Watchdog: if publishChatNow doesn't resolve in 8s, mark as failed so the
+    // user isn't stuck staring at a "sending…" tick forever.
+    const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8000))
+    let ok = false
+    try {
+      ok = await Promise.race([publishChatNow(), timeout])
+    } catch {
+      ok = false
+    }
+    if (!ok) {
+      setChatSendStatus(messageId, 'failed')
+    }
+    setStatuses(getChatSendStatusMap())
+    setMessages(getChatMessages())
+  }
+
   const handleSend = (body: string) => {
     if (!body.trim() || !canSend || !activeTeamId) return
     ensureChatMembership(activeTeamId, clubPlayer.id)
@@ -1927,12 +1950,20 @@ function ChatTab({ user }: { user: PlayerUser | null }) {
         (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
       )
     })
-    void publishChatNow()
+    setStatuses(getChatSendStatusMap())
+    void publishWithTimeout(message.id)
+  }
+
+  const handleRetry = (messageId: string) => {
+    setChatSendStatus(messageId, 'pending')
+    setStatuses(getChatSendStatusMap())
+    void publishWithTimeout(messageId)
   }
 
   const handleDelete = (messageId: string) => {
     if (!deleteOwnChatMessage(messageId, clubPlayer.name, 'player')) return
     setMessages(getChatMessages())
+    setStatuses(getChatSendStatusMap())
     void publishChatNow()
   }
 
@@ -1950,6 +1981,8 @@ function ChatTab({ user }: { user: PlayerUser | null }) {
         sendBlockedReason="Ask your manager to add you to this team chat"
         onSend={handleSend}
         onDeleteMessage={handleDelete}
+        onRetryMessage={handleRetry}
+        messageStatuses={statuses}
         emptyTeamsMessage="Ask your manager to add you to a team or invite you to the chat."
       />
     </div>

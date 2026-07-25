@@ -953,6 +953,37 @@
   .team-chat-msg--mine .team-chat-bubble__time {
     text-align: right;
   }
+  /* WhatsApp-style delivery indicators (own messages only) */
+  .team-chat-bubble__status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.15rem;
+    padding: 0.05rem 0.15rem;
+    border: none;
+    background: transparent;
+    border-radius: 0.35rem;
+    line-height: 0;
+    transition: color 0.15s ease, background 0.15s ease;
+  }
+  .team-chat-bubble__status--pending {
+    color: #94a3b8;
+  }
+  .team-chat-bubble__status--sent {
+    color: #2563eb;
+  }
+  .team-chat-bubble__status--failed {
+    color: #dc2626;
+    background: rgba(220, 38, 38, 0.1);
+    cursor: pointer;
+  }
+  .team-chat-bubble__status--failed:hover {
+    background: rgba(220, 38, 38, 0.18);
+  }
+  .team-chat-msg--failed .team-chat-bubble {
+    border-color: rgba(220, 38, 38, 0.55);
+    box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.15) inset;
+  }
   .team-chat-composer {
     display: flex;
     align-items: center;

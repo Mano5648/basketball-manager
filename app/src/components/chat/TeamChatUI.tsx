@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquare, Plus, Search, Trash2 } from 'lucide-react'
+import { AlertCircle, Check, CheckCheck, MessageSquare, Plus, RotateCw, Search, Trash2 } from 'lucide-react'
 import type { ChatMessage } from '@/lib/clubData'
+import type { ChatSendStatus } from '@/lib/clubData'
 
 export function ChatAvatar({ name, size = 36 }: { name: string; size?: number }) {
   const initials = name
@@ -53,6 +54,52 @@ function formatTime(ts: string): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+function StatusIndicator({
+  status,
+  onRetry,
+}: {
+  status: ChatSendStatus
+  onRetry?: () => void
+}) {
+  if (status === 'pending') {
+    return (
+      <span
+        className="team-chat-bubble__status team-chat-bubble__status--pending"
+        title="Sending…"
+        aria-label="Sending"
+        data-testid="chat-status-pending"
+      >
+        <Check size={13} />
+      </span>
+    )
+  }
+  if (status === 'failed') {
+    return (
+      <button
+        type="button"
+        onClick={onRetry}
+        className="team-chat-bubble__status team-chat-bubble__status--failed"
+        title="Not delivered — click to retry"
+        aria-label="Message failed, retry"
+        data-testid="chat-status-failed"
+      >
+        <AlertCircle size={13} />
+        <RotateCw size={11} />
+      </button>
+    )
+  }
+  return (
+    <span
+      className="team-chat-bubble__status team-chat-bubble__status--sent"
+      title="Sent"
+      aria-label="Sent"
+      data-testid="chat-status-sent"
+    >
+      <CheckCheck size={14} />
+    </span>
+  )
+}
+
 export type TeamChatTeam = {
   id: string
   name: string
@@ -72,6 +119,8 @@ export function TeamChatUI({
   sendBlockedReason,
   onSend,
   onDeleteMessage,
+  onRetryMessage,
+  messageStatuses,
   headerExtra,
   emptyTeamsMessage = 'No team chats yet',
 }: {
@@ -86,6 +135,8 @@ export function TeamChatUI({
   sendBlockedReason?: string
   onSend: (text: string) => void
   onDeleteMessage?: (messageId: string) => void
+  onRetryMessage?: (messageId: string) => void
+  messageStatuses?: Record<string, ChatSendStatus>
   headerExtra?: React.ReactNode
   emptyTeamsMessage?: string
 }) {
@@ -151,6 +202,7 @@ export function TeamChatUI({
               type="button"
               onClick={() => onTeamChange(team.id)}
               className={`team-chat-thread${activeTeamId === team.id ? ' team-chat-thread--active' : ''}`}
+              data-testid={`chat-thread-${team.id}`}
             >
               <ChatAvatar name={team.name} size={40} />
               <div className="team-chat-thread__body">
@@ -195,10 +247,13 @@ export function TeamChatUI({
               const mine =
                 msg.senderRole === currentSenderRole &&
                 msg.senderName.toLowerCase() === currentSenderName.toLowerCase()
+              const status: ChatSendStatus = messageStatuses?.[msg.id] ?? 'sent'
+              const failed = mine && status === 'failed'
               return (
                 <div
                   key={msg.id}
-                  className={`team-chat-msg${mine ? ' team-chat-msg--mine' : ' team-chat-msg--theirs'}`}
+                  className={`team-chat-msg${mine ? ' team-chat-msg--mine' : ' team-chat-msg--theirs'}${failed ? ' team-chat-msg--failed' : ''}`}
+                  data-testid={`chat-msg-${msg.id}`}
                 >
                   {!mine && (
                     <div className="team-chat-msg__head">
@@ -213,6 +268,16 @@ export function TeamChatUI({
                     <p className="team-chat-bubble__text">{msg.text}</p>
                     <div className="team-chat-bubble__footer">
                       <p className="team-chat-bubble__time">{formatTime(msg.timestamp)}</p>
+                      {mine && (
+                        <StatusIndicator
+                          status={status}
+                          onRetry={
+                            status === 'failed' && onRetryMessage
+                              ? () => onRetryMessage(msg.id)
+                              : undefined
+                          }
+                        />
+                      )}
                       {mine && onDeleteMessage && (
                         <button
                           type="button"
@@ -220,6 +285,7 @@ export function TeamChatUI({
                           className="team-chat-bubble__delete"
                           aria-label="Delete message"
                           title="Delete message"
+                          data-testid={`chat-delete-${msg.id}`}
                         >
                           <Trash2 size={13} />
                         </button>
@@ -254,12 +320,14 @@ export function TeamChatUI({
                   : sendBlockedReason ?? "You can't send messages in this chat"
             }
             className="team-chat-composer__input"
+            data-testid="chat-composer-input"
           />
           <button
             type="button"
             onClick={handleSend}
             disabled={!canSend || !text.trim() || !activeTeamId}
             className="team-chat-composer__send"
+            data-testid="chat-composer-send"
           >
             Send
           </button>
