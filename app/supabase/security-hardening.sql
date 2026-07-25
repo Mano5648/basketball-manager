@@ -39,6 +39,13 @@ create policy "app_state_public_read_safe"
     )
   );
 
+-- Any authenticated member can read team chat (required for player/parent dashboards).
+drop policy if exists "app_state_member_read_chat" on public.app_state;
+create policy "app_state_member_read_chat"
+  on public.app_state for select
+  to authenticated
+  using (key in ('dlbc_chat_messages', 'dlbc_chat_members', 'dlbc_chat_deleted_ids'));
+
 create policy "app_state_manager_read_sensitive"
   on public.app_state for select
   to authenticated

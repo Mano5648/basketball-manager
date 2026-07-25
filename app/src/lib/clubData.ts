@@ -292,6 +292,7 @@ const KEYS = {
   ticketPurchases: 'dlbc_ticket_purchases',
   chatMessages: 'dlbc_chat_messages',
   chatMembers: 'dlbc_chat_members',
+  chatDeletedIds: 'dlbc_chat_deleted_ids',
   stripeLink: 'dlbc_stripe_payment_link',
   fixtures: 'dlbc_fixtures',
   membershipFees: 'dlbc_membership_fees',
@@ -534,6 +535,25 @@ export function getTeamIdsForMember(player: Player): string[] {
     }
   }
   return [...ids]
+}
+
+/** Teams a member can open in Team Chat (roster assignment or explicit chat invite). */
+export function getAccessibleChatTeams(player: Player): Team[] {
+  const rosterTeamIds = new Set(getTeamIdsForMember(player))
+  const memberId = resolveChatMemberId(player.id)
+  return getTeams().filter((t) => {
+    if (rosterTeamIds.has(t.id)) return true
+    return getChatRoom(t.id).memberIds.includes(memberId)
+  })
+}
+
+/** Chat membership is always the parent account for child roster rows. */
+export function resolveChatMemberId(playerId: string): string {
+  const player = getPlayers().find((p) => p.id === playerId)
+  if (player && isChildRosterPlayer(player) && player.parentPlayerId) {
+    return player.parentPlayerId
+  }
+  return playerId
 }
 
 /**
@@ -1705,6 +1725,162 @@ function markKeyInSyncWithRemote(key: string, value: unknown): void {
   }
 }
 
+/** Merge local+remote chat blobs before upsert — prevents last-writer wiping the other side's messages. */
+let chatSyncTimer: ReturnType<typeof setTimeout> | null = null
+let chatSyncChain: Promise<void> = Promise.resolve()
+
+function notifyChatListeners() {
+  window.dispatchEvent(new StorageEvent('storage', { key: KEYS.chatMessages }))
+  window.dispatchEvent(new StorageEvent('storage', { key: KEYS.chatDeletedIds }))
+  try {
+    const bc = new BroadcastChannel('dlbc_chat')
+    bc.postMessage('sync')
+    bc.close()
+  } catch {
+    /* BroadcastChannel unavailable */
+  }
+}
+
+/** Pull shared chat into localStorage (merge, do not push). */
+export async function pullMergedChatState(): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return
+  try {
+    const { data, error } = await supabase
+      .from('app_state')
+      .select('key, value')
+      .in('key', [KEYS.chatMessages, KEYS.chatDeletedIds, KEYS.chatMembers])
+    if (error || !data) return
+    for (const row of data as { key: string; value: unknown }[]) {
+      applyRemoteAppStateRow(row.key, row.value)
+    }
+  } catch {
+    /* offline — keep local */
+  }
+}
+
+export async function pushMergedChatState(): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return
+  chatSyncChain = chatSyncChain.then(async () => {
+    try {
+      // Always start from latest remote when readable; if pull fails, still push local
+      // so other members receive this device's new messages.
+      let remoteMessages: unknown = getRawChatMessages()
+      let remoteDeleted: unknown = getStore<string[]>(KEYS.chatDeletedIds, [])
+      const { data, error } = await supabase!
+        .from('app_state')
+        .select('key, value')
+        .in('key', [KEYS.chatMessages, KEYS.chatDeletedIds])
+      if (!error && data) {
+        remoteMessages = []
+        remoteDeleted = []
+        for (const row of data as { key: string; value: unknown }[]) {
+          if (row.key === KEYS.chatMessages) remoteMessages = row.value
+          if (row.key === KEYS.chatDeletedIds) remoteDeleted = row.value
+        }
+      } else if (error) {
+        console.warn('[app_state] chat pull before push failed — pushing local copy', error.message)
+      }
+
+      const localDeleted = getStore<string[]>(KEYS.chatDeletedIds, [])
+      const remoteDeletedList = Array.isArray(remoteDeleted)
+        ? remoteDeleted.filter((id): id is string => typeof id === 'string')
+        : []
+      const mergedDeleted = [...new Set([...localDeleted, ...remoteDeletedList])]
+      localStorage.setItem(KEYS.chatDeletedIds, JSON.stringify(mergedDeleted))
+
+      const mergedMessages = mergeChatMessages(getRawChatMessages(), remoteMessages)
+      localStorage.setItem(KEYS.chatMessages, JSON.stringify(mergedMessages))
+
+      markKeyInSyncWithRemote(KEYS.chatDeletedIds, mergedDeleted)
+      markKeyInSyncWithRemote(KEYS.chatMessages, mergedMessages)
+
+      const now = new Date().toISOString()
+      const { error: upsertError } = await supabase!.from('app_state').upsert(
+        [
+          { key: KEYS.chatDeletedIds, value: mergedDeleted, updated_at: now },
+          { key: KEYS.chatMessages, value: mergedMessages, updated_at: now },
+        ],
+        { onConflict: 'key' },
+      )
+      if (upsertError) {
+        lastPushedSnapshot.delete(KEYS.chatMessages)
+        lastPushedSnapshot.delete(KEYS.chatDeletedIds)
+        console.warn('[app_state] chat merge push failed', upsertError.message)
+        return
+      }
+
+      notifyChatListeners()
+    } catch (e) {
+      lastPushedSnapshot.delete(KEYS.chatMessages)
+      lastPushedSnapshot.delete(KEYS.chatDeletedIds)
+      console.warn('[app_state] chat merge push threw', e)
+    }
+  })
+  await chatSyncChain
+}
+
+function scheduleChatSync() {
+  if (chatSyncTimer) clearTimeout(chatSyncTimer)
+  chatSyncTimer = setTimeout(() => {
+    chatSyncTimer = null
+    void pushMergedChatState()
+  }, 150)
+}
+
+/** Fast publish for sends: upsert immediately using last-known remote snapshot, then reconcile in background. */
+export async function publishChatNow(): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return
+  if (chatSyncTimer) {
+    clearTimeout(chatSyncTimer)
+    chatSyncTimer = null
+  }
+
+  const runFast = async () => {
+    let cachedMessages: unknown = []
+    let cachedDeleted: unknown = []
+    try {
+      const ms = lastPushedSnapshot.get(KEYS.chatMessages)
+      const ds = lastPushedSnapshot.get(KEYS.chatDeletedIds)
+      if (ms) cachedMessages = JSON.parse(ms)
+      if (ds) cachedDeleted = JSON.parse(ds)
+    } catch {
+      /* ignore bad snapshot */
+    }
+
+    const localDeleted = getStore<string[]>(KEYS.chatDeletedIds, [])
+    const remoteDeletedList = Array.isArray(cachedDeleted)
+      ? cachedDeleted.filter((id): id is string => typeof id === 'string')
+      : []
+    const mergedDeleted = [...new Set([...localDeleted, ...remoteDeletedList])]
+    const mergedMessages = mergeChatMessages(getRawChatMessages(), cachedMessages)
+
+    localStorage.setItem(KEYS.chatDeletedIds, JSON.stringify(mergedDeleted))
+    localStorage.setItem(KEYS.chatMessages, JSON.stringify(mergedMessages))
+
+    const now = new Date().toISOString()
+    const { error } = await supabase!.from('app_state').upsert(
+      [
+        { key: KEYS.chatDeletedIds, value: mergedDeleted, updated_at: now },
+        { key: KEYS.chatMessages, value: mergedMessages, updated_at: now },
+      ],
+      { onConflict: 'key' },
+    )
+    if (error) {
+      lastPushedSnapshot.delete(KEYS.chatMessages)
+      lastPushedSnapshot.delete(KEYS.chatDeletedIds)
+      console.warn('[app_state] chat fast publish failed', error.message)
+      return
+    }
+    markKeyInSyncWithRemote(KEYS.chatDeletedIds, mergedDeleted)
+    markKeyInSyncWithRemote(KEYS.chatMessages, mergedMessages)
+    notifyChatListeners()
+  }
+
+  const fastPromise = runFast()
+  chatSyncChain = chatSyncChain.then(() => fastPromise).then(() => pushMergedChatState())
+  await fastPromise
+}
+
 function syncKeyToRemote(key: string, value: unknown) {
   if (!isSupabaseConfigured || !supabase) return
   if (!SYNCED_KEYS.has(key)) return
@@ -1713,6 +1889,11 @@ function syncKeyToRemote(key: string, value: unknown) {
     supabase.from('app_state').delete().eq('key', key).then(({ error }) => {
       if (error) console.warn('[app_state] delete failed for', key, error.message)
     })
+    return
+  }
+  // Chat must merge-before-push so player/manager writes don't clobber each other.
+  if (key === KEYS.chatMessages || key === KEYS.chatDeletedIds) {
+    scheduleChatSync()
     return
   }
   // Members never overwrite the shared roster/team blobs — they publish only the
@@ -1761,6 +1942,10 @@ export async function ensureAppStateKeySynced(key: string): Promise<void> {
     return
   }
   if (key === KEYS.teams && !currentUserIsManager()) return
+  if (key === KEYS.chatMessages || key === KEYS.chatDeletedIds) {
+    await pushMergedChatState()
+    return
+  }
   const raw = localStorage.getItem(key)
   if (!raw) return
   try {
@@ -1781,6 +1966,68 @@ export async function ensureAppStateKeySynced(key: string): Promise<void> {
  * every open tab/device stays in sync without a refresh. No-ops when
  * Supabase isn't configured (the app keeps working purely from localStorage).
  */
+type StoredChatMessage = {
+  id: string
+  teamId: string
+  senderName: string
+  senderRole: string
+  text: string
+  timestamp: string
+}
+
+function getDeletedChatMessageIds(): Set<string> {
+  return new Set(getStore<string[]>(KEYS.chatDeletedIds, []))
+}
+
+function mergeChatMessages(local: StoredChatMessage[], remote: unknown): StoredChatMessage[] {
+  const deleted = getDeletedChatMessageIds()
+  const remoteList = Array.isArray(remote)
+    ? remote.filter(
+        (m): m is StoredChatMessage =>
+          !!m &&
+          typeof m === 'object' &&
+          typeof (m as StoredChatMessage).id === 'string' &&
+          typeof (m as StoredChatMessage).teamId === 'string',
+      )
+    : []
+  const byId = new Map<string, StoredChatMessage>()
+  for (const m of remoteList) {
+    if (!deleted.has(m.id)) byId.set(m.id, m)
+  }
+  for (const m of local) {
+    if (deleted.has(m.id)) continue
+    const existing = byId.get(m.id)
+    if (!existing || new Date(m.timestamp).getTime() >= new Date(existing.timestamp).getTime()) {
+      byId.set(m.id, m)
+    }
+  }
+  return [...byId.values()].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+  )
+}
+
+type StoredChatMembersMap = Record<string, { memberIds: string[]; adminIds: string[] }>
+
+function mergeChatMembersMap(local: StoredChatMembersMap, remote: unknown): StoredChatMembersMap {
+  const remoteMap =
+    remote && typeof remote === 'object' && !Array.isArray(remote)
+      ? (remote as StoredChatMembersMap)
+      : {}
+  const merged: StoredChatMembersMap = { ...local }
+  for (const [teamId, remoteRoom] of Object.entries(remoteMap)) {
+    const localRoom = merged[teamId]
+    if (!localRoom) {
+      merged[teamId] = remoteRoom
+      continue
+    }
+    merged[teamId] = {
+      memberIds: [...new Set([...localRoom.memberIds, ...remoteRoom.memberIds])],
+      adminIds: [...new Set([...localRoom.adminIds, ...remoteRoom.adminIds])],
+    }
+  }
+  return merged
+}
+
 function applyRemoteAppStateRow(key: string, value: unknown) {
   if (key.startsWith(CONTRIB_PREFIX)) {
     mergeContributionIntoPlayers(value)
@@ -1788,6 +2035,37 @@ function applyRemoteAppStateRow(key: string, value: unknown) {
     return
   }
   if (!SYNCED_KEYS.has(key)) return
+  if (key === KEYS.chatMessages) {
+    const merged = mergeChatMessages(getRawChatMessages(), value)
+    markKeyInSyncWithRemote(key, merged)
+    localStorage.setItem(key, JSON.stringify(merged))
+    window.dispatchEvent(new StorageEvent('storage', { key }))
+    return
+  }
+  if (key === KEYS.chatMembers) {
+    const merged = mergeChatMembersMap(getChatMembersMap(), value)
+    markKeyInSyncWithRemote(key, merged)
+    localStorage.setItem(key, JSON.stringify(merged))
+    window.dispatchEvent(new StorageEvent('storage', { key }))
+    return
+  }
+  if (key === KEYS.chatDeletedIds) {
+    const local = getStore<string[]>(KEYS.chatDeletedIds, [])
+    const remoteList = Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []
+    const merged = [...new Set([...local, ...remoteList])]
+    markKeyInSyncWithRemote(key, merged)
+    localStorage.setItem(key, JSON.stringify(merged))
+    const deletedSet = new Set(merged)
+    const rawMsgs = getStore<StoredChatMessage[]>(KEYS.chatMessages, [])
+    const pruned = rawMsgs.filter((m) => !deletedSet.has(m.id))
+    if (pruned.length !== rawMsgs.length) {
+      markKeyInSyncWithRemote(KEYS.chatMessages, pruned)
+      localStorage.setItem(KEYS.chatMessages, JSON.stringify(pruned))
+      window.dispatchEvent(new StorageEvent('storage', { key: KEYS.chatMessages }))
+    }
+    window.dispatchEvent(new StorageEvent('storage', { key }))
+    return
+  }
   // Remember that we're in sync with the remote for this key BEFORE dispatching
   // the storage event — this prevents any listener that responds by calling
   // setStore() from turning around and pushing the identical value back.
@@ -2344,10 +2622,21 @@ export function getTeamAgeDivisionLabel(team: Team): string {
 /* ─────────────────── Chat Messages ─────────────────── */
 
 export function getChatMessages(): ChatMessage[] {
+  const deleted = new Set(getStore<string[]>(KEYS.chatDeletedIds, []))
+  return getStore<ChatMessage[]>(KEYS.chatMessages, []).filter((m) => !deleted.has(m.id))
+}
+
+/** Raw message list including tombstoned entries — used when merging remote state. */
+function getRawChatMessages(): ChatMessage[] {
   return getStore<ChatMessage[]>(KEYS.chatMessages, [])
 }
 
-export function setChatMessages(v: ChatMessage[]) {
+export function setChatMessages(v: ChatMessage[], opts?: { syncRemote?: boolean }) {
+  if (opts?.syncRemote === false) {
+    localStorage.setItem(KEYS.chatMessages, JSON.stringify(v))
+    window.dispatchEvent(new StorageEvent('storage', { key: KEYS.chatMessages }))
+    return
+  }
   setStore(KEYS.chatMessages, v)
 }
 
@@ -2406,17 +2695,36 @@ export function pruneDemoSeedData() {
 }
 
 export function getChatRoom(teamId: string): ChatRoomMembership {
+  const eligible = getChatEligibleMemberIds(teamId)
   const map = getChatMembersMap()
   if (map[teamId]) {
     const room = map[teamId]
     const players = getPlayers()
-    const memberIds = room.memberIds.filter((id) => {
+    const explicit = room.memberIds.filter((id) => {
       const p = players.find((pl) => pl.id === id)
       return !p || !isChildRosterPlayer(p)
     })
+    const memberIds = [...new Set([...eligible, ...explicit])]
     return { memberIds, adminIds: room.adminIds }
   }
-  return { memberIds: getChatEligibleMemberIds(teamId), adminIds: [] }
+  return { memberIds: eligible, adminIds: [] }
+}
+
+/** Whether a roster member can view/send in a team chat room. */
+export function isChatMember(teamId: string, playerId: string): boolean {
+  const memberId = resolveChatMemberId(playerId)
+  return getChatRoom(teamId).memberIds.includes(memberId)
+}
+
+/** Persist chat membership when a roster-eligible member sends their first message. */
+export function ensureChatMembership(teamId: string, playerId: string): void {
+  const memberId = resolveChatMemberId(playerId)
+  if (!isChatMember(teamId, memberId)) return
+  const map = getChatMembersMap()
+  if (!map[teamId]) return
+  if (!map[teamId].memberIds.includes(memberId)) {
+    addChatMember(teamId, memberId)
+  }
 }
 
 export function setChatRoom(teamId: string, room: ChatRoomMembership) {
@@ -2426,9 +2734,10 @@ export function setChatRoom(teamId: string, room: ChatRoomMembership) {
 }
 
 export function addChatMember(teamId: string, playerId: string) {
+  const memberId = resolveChatMemberId(playerId)
   const room = getChatRoom(teamId)
-  if (!room.memberIds.includes(playerId)) {
-    room.memberIds = [...room.memberIds, playerId]
+  if (!room.memberIds.includes(memberId)) {
+    room.memberIds = [...room.memberIds, memberId]
     setChatRoom(teamId, room)
   }
 }
@@ -2451,17 +2760,75 @@ export function setChatAdmin(teamId: string, playerId: string, isAdmin: boolean)
   setChatRoom(teamId, room)
 }
 
-export function addChatMessage(teamId: string, senderName: string, senderRole: string, text: string) {
-  const messages = getChatMessages()
-  messages.push({
-    id: `msg-${Date.now().toString(36)}`,
+export function addChatMessage(
+  teamId: string,
+  senderName: string,
+  senderRole: string,
+  text: string,
+): ChatMessage {
+  const message: ChatMessage = {
+    id: `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
     teamId,
     senderName,
     senderRole,
     text,
     timestamp: new Date().toISOString(),
+  }
+  // Local-only write — caller publishes with publishChatNow() so we don't double pull+push.
+  setChatMessages([...getRawChatMessages().filter((m) => m.id !== message.id), message], {
+    syncRemote: false,
   })
-  setChatMessages(messages)
+  try {
+    const bc = new BroadcastChannel('dlbc_chat')
+    bc.postMessage('sync')
+    bc.close()
+  } catch {
+    /* BroadcastChannel unavailable */
+  }
+  return message
+}
+
+export function isOwnChatMessage(
+  message: ChatMessage,
+  senderName: string,
+  senderRole: string,
+): boolean {
+  return (
+    message.senderRole === senderRole &&
+    message.senderName.toLowerCase() === senderName.toLowerCase()
+  )
+}
+
+/** Remove a message only if it was sent by the same person (name + role). */
+export function deleteOwnChatMessage(
+  messageId: string,
+  senderName: string,
+  senderRole: string,
+): boolean {
+  const raw = getStore<ChatMessage[]>(KEYS.chatMessages, [])
+  const target = raw.find((m) => m.id === messageId)
+  if (!target || !isOwnChatMessage(target, senderName, senderRole)) return false
+
+  const deleted = getStore<string[]>(KEYS.chatDeletedIds, [])
+  if (!deleted.includes(messageId)) {
+    localStorage.setItem(KEYS.chatDeletedIds, JSON.stringify([...deleted, messageId]))
+    window.dispatchEvent(new StorageEvent('storage', { key: KEYS.chatDeletedIds }))
+  }
+  setChatMessages(raw.filter((m) => m.id !== messageId), { syncRemote: false })
+
+  try {
+    const bc = new BroadcastChannel('dlbc_chat')
+    bc.postMessage('sync')
+    bc.close()
+  } catch {
+    /* BroadcastChannel unavailable */
+  }
+  return true
+}
+
+/** Push tombstone + pruned messages to Supabase so other clients drop the message. */
+export async function syncChatDeletionToRemote(): Promise<void> {
+  await publishChatNow()
 }
 
 /* ─────────────────── Store / Products / Cart ─────────────────── */

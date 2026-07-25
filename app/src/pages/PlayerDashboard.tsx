@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion } from 'motion/react'
 import { easeOut } from '@/components/motion/presets'
@@ -8,9 +8,10 @@ import {
   getTeams as getClubTeams,
   getChatMessages,
   addChatMessage,
-  getChatRoom,
+  deleteOwnChatMessage,
   getAnnouncements as getClubAnnouncements,
   getPayments,
+  getOrders,
   findPlayerByEmail,
   getFeeConfigForPlayer,
   getSelfFeeConfigForPlayer,
@@ -32,7 +33,10 @@ import {
   getFeeConfigForBirthYear,
   getPlayerBirthYear,
   updateRegisteredChildren,
-  getTeamIdsForMember,
+  getAccessibleChatTeams,
+  ensureChatMembership,
+  publishChatNow,
+  pullMergedChatState,
   calcAge,
   reconcileClubRoster,
   ensureClubRosterSynced,
@@ -41,11 +45,14 @@ import {
   getChildRosterPlayersForParent,
   childRosterPlayerId,
   getTeamAgeDivisionLabel,
+  getTeamIdsForMember,
   type RegisteredChild,
   type Player as ClubPlayer,
   type ChatMessage,
   type Payment,
+  type Order,
   type Session,
+  type Team as ClubTeam,
 } from '@/lib/clubData'
 import { PaymentCheckout } from '@/components/PaymentCheckout'
 import { redirectToStripeCheckout, isStripeCheckoutConfigured } from '@/lib/stripeCheckout'
@@ -54,6 +61,9 @@ import { toAbsoluteImageUrl } from '@/lib/imageUrl'
 import { useAuth } from '@/lib/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { BirthYearPicker, ChildDobPicker } from '@/components/forms/BirthDateFields'
+import { TeamChatUI } from '@/components/chat/TeamChatUI'
+import { ScheduleTimeGrid } from '@/components/dashboard/ScheduleTimeGrid'
+import Store from '@/pages/Store'
 import {
   LayoutDashboard,
   CreditCard,
@@ -76,6 +86,9 @@ import {
   Menu,
   Users,
   Plus,
+  PanelLeftClose,
+  PanelLeftOpen,
+  X,
 } from 'lucide-react'
 
 interface PlayerUser {
@@ -96,6 +109,7 @@ interface PlayerUser {
 
 interface SessionEvent {
   id: string
+  teamId: string
   date: string
   time: string
   title: string
@@ -114,7 +128,7 @@ interface NotificationItem {
   type: 'payment' | 'session' | 'announcement'
 }
 
-type TabKey = 'overview' | 'payments' | 'schedule' | 'profile' | 'notifications' | 'chat'
+type TabKey = 'overview' | 'payments' | 'schedule' | 'children' | 'profile' | 'chat' | 'shop'
 
 function getUser(): PlayerUser | null {
   const raw = localStorage.getItem('dlbc_user')
@@ -168,12 +182,18 @@ function currentMonthLabel(now = new Date()) {
 function clubSessionToEvent(session: Session): SessionEvent {
   return {
     id: session.id,
+    teamId: session.teamId,
     date: session.date,
     time: session.time,
     title: session.title,
     venue: session.location,
     type: session.type === 'Event' ? 'Social' : session.type,
   }
+}
+
+/* ponytail: local date helper for attendance compare */
+function schedIso(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 function loadClubScheduleForPlayer(player: ClubPlayer | null): SessionEvent[] {
@@ -303,12 +323,14 @@ const TAB_CONFIG: { key: TabKey; label: string; icon: React.ElementType }[] = [
   { key: 'overview', label: 'My Dashboard', icon: LayoutDashboard },
   { key: 'payments', label: 'My Payments', icon: CreditCard },
   { key: 'schedule', label: 'My Schedule', icon: Calendar },
-  { key: 'notifications', label: 'Notifications', icon: Bell },
+  { key: 'children', label: 'My Children', icon: Users },
   { key: 'chat', label: 'Team Chat', icon: MessageSquare },
+  { key: 'shop', label: 'Club Shop', icon: ShoppingBag },
 ]
 
 function tabTitle(key: TabKey): string {
   if (key === 'profile') return 'My Profile'
+  if (key === 'children') return 'My Children'
   return TAB_CONFIG.find((t) => t.key === key)?.label ?? key
 }
 
@@ -506,7 +528,6 @@ function OnboardingScreen({
                       value={child.dob}
                       onChange={(dob) => setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, dob } : c)))}
                     />
-                    <p className="mt-1 font-inter text-xs text-slate-500">Must be at least {MIN_CHILD_AGE} years old.</p>
                   </div>
                   <div>
                     <label className="block font-inter text-sm font-medium text-slate-700 mb-1.5">Gender</label>
@@ -612,11 +633,9 @@ function getRegisteredChildrenSummary(parent: ClubPlayer) {
 
 /* ───────── Overview Tab ───────── */
 function OverviewTab({
-  user,
   clubPlayer,
   onNavigate,
 }: {
-  user: PlayerUser
   clubPlayer: ClubPlayer | null
   onNavigate: (tab: TabKey) => void
 }) {
@@ -628,9 +647,6 @@ function OverviewTab({
   const schedule = loadClubScheduleForPlayer(clubPlayer)
   const todayIso = new Date().toISOString().split('T')[0]
   const nextSession = hasSchedule ? schedule.find((s) => s.date >= todayIso) ?? schedule[0] : undefined
-  const hour = new Date().getHours()
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
-  const firstName = user.name.split(' ')[0]
   const registeredChildren = clubPlayer ? getRegisteredChildrenSummary(clubPlayer) : []
   const clubNews = getClubAnnouncements()
     .filter((a) => a.status === 'Sent')
@@ -648,17 +664,7 @@ function OverviewTab({
 
   return (
     <div className="player-overview space-y-6">
-      <motion.header className="player-welcome" {...fade(0)}>
-        <div className="player-welcome__copy">
-          <p className="player-welcome__eyebrow">Member hub</p>
-          <h2 className="player-welcome__title">
-            {greeting}, {firstName}
-          </h2>
-          <p className="player-welcome__sub">
-            Everything you need as a Dublin Lions member — fees, schedule, and club updates.
-          </p>
-        </div>
-        <div className="player-welcome__meta">
+      <motion.div className="player-welcome__meta flex flex-wrap items-center gap-3" {...fade(0)}>
           {paymentFocus ? (
             <span className={`player-membership-pill ${feePaid ? 'player-membership-pill--paid' : 'player-membership-pill--due'}`}>
               {feePaid
@@ -675,8 +681,7 @@ function OverviewTab({
           <time className="player-welcome__date">
             {new Date().toLocaleDateString('en-IE', { weekday: 'long', day: 'numeric', month: 'long' })}
           </time>
-        </div>
-      </motion.header>
+      </motion.div>
 
       <div className="player-bento">
         <motion.section className="player-bento__next dash-card" {...fade(0.06)}>
@@ -732,7 +737,7 @@ function OverviewTab({
                   <div className="player-child-card__body">
                     <p className="player-child-card__name">{child.name}</p>
                     <p className="player-child-card__meta">
-                      {child.age !== null ? `Age ${child.age}` : 'Age —'}
+                      {child.age !== null ? `Age ${child.age}` : 'Age pending'}
                       {' · '}
                       {formatChildDob(child.dob)}
                       {' · '}
@@ -758,7 +763,7 @@ function OverviewTab({
                 </li>
               ))}
             </ul>
-            <button type="button" onClick={() => onNavigate('profile')} className="player-text-btn mt-4">
+            <button type="button" onClick={() => onNavigate('children')} className="player-text-btn mt-4">
               Manage children <ArrowRight size={14} />
             </button>
           </motion.section>
@@ -782,7 +787,7 @@ function OverviewTab({
                   : 'Registration fee not paid yet.'}
           </p>
           {paymentFocus && !feePaid ? (
-            <button type="button" onClick={() => onNavigate('payments')} className="btn-accent w-full mt-4 font-inter font-semibold text-sm uppercase tracking-wider px-4 py-3 rounded-xl">
+            <button type="button" onClick={() => onNavigate('payments')} className="club-store-cta w-full mt-4 font-inter font-semibold text-sm px-4 py-3 rounded-xl active:scale-[0.98] transition-all">
               Pay now
             </button>
           ) : paymentFocus && feePaid ? (
@@ -798,27 +803,20 @@ function OverviewTab({
             {[
               { label: 'Make a payment', icon: CreditCard, tab: 'payments' as TabKey, primary: true },
               ...(hasSchedule ? [{ label: 'My schedule', icon: Calendar, tab: 'schedule' as TabKey, primary: false }] : []),
+              { label: 'My children', icon: Users, tab: 'children' as TabKey, primary: false },
               { label: 'Edit profile', icon: User, tab: 'profile' as TabKey, primary: false },
-              { label: 'Club shop', icon: ShoppingBag, tab: null, primary: false },
+              { label: 'Club shop', icon: ShoppingBag, tab: 'shop' as TabKey, primary: false },
             ].map((action) => (
-              action.tab ? (
-                <button
-                  key={action.label}
-                  type="button"
-                  onClick={() => onNavigate(action.tab!)}
-                  className={action.primary ? 'player-action-item player-action-item--primary' : 'player-action-item'}
-                >
-                  <action.icon size={18} />
-                  <span>{action.label}</span>
-                  <ArrowRight size={14} className="ml-auto opacity-50" />
-                </button>
-              ) : (
-                <Link key={action.label} to="/store" className="player-action-item">
-                  <action.icon size={18} />
-                  <span>{action.label}</span>
-                  <ArrowRight size={14} className="ml-auto opacity-50" />
-                </Link>
-              )
+              <button
+                key={action.label}
+                type="button"
+                onClick={() => onNavigate(action.tab)}
+                className={action.primary ? 'player-action-item player-action-item--primary' : 'player-action-item'}
+              >
+                <action.icon size={18} />
+                <span>{action.label}</span>
+                <ArrowRight size={14} className="ml-auto opacity-50" />
+              </button>
             ))}
           </div>
         </motion.section>
@@ -829,9 +827,6 @@ function OverviewTab({
               <Bell size={16} />
               Club news
             </div>
-            <button type="button" onClick={() => onNavigate('notifications')} className="player-text-btn text-xs">
-              View all
-            </button>
           </div>
           <ul className="player-news-list">
             {clubNews.length === 0 ? (
@@ -860,12 +855,15 @@ function OverviewTab({
           {registeredChildren.length > 0 ? (
             <>
               <strong className="text-slate-800 font-semibold">Your registered children</strong> are listed above.
-              Pay fees under Payments — your coach will assign teams and schedules when ready.
+              Pay fees under Payments. Your coach will assign teams and schedules when ready.
             </>
           ) : (
             <>
-              <strong className="text-slate-800 font-semibold">Registering a child?</strong> Add them in your profile,
-              then pay fees here — your coach will assign a team and schedule when ready.
+              <strong className="text-slate-800 font-semibold">Registering a child?</strong>{' '}
+              <button type="button" onClick={() => onNavigate('children')} className="text-lions-600 hover:text-lions-700 font-medium underline-offset-2 hover:underline">
+                Add them under My Children
+              </button>
+              , then pay fees here. Your coach will assign a team and schedule when ready.
             </>
           )}
         </p>
@@ -886,13 +884,24 @@ function resolveClubPlayer(email: string, name: string) {
 }
 
 /* ───────── Payments Tab ───────── */
+type PayHistoryFilter = 'all' | 'membership' | 'store'
+
+function storeOrdersForEmail(email: string): Order[] {
+  const key = email.trim().toLowerCase()
+  return getOrders()
+    .filter((o) => o.customerEmail.trim().toLowerCase() === key)
+    .sort((a, b) => b.date.localeCompare(a.date))
+}
+
 function PaymentsTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (u: PlayerUser) => void }) {
   const [clubPlayer, setClubPlayer] = useState(() => resolveClubPlayer(user.email, user.name))
   const monthLabel = currentMonthLabel()
+  const [historyFilter, setHistoryFilter] = useState<PayHistoryFilter>('all')
 
   const [payments, setPayments] = useState<Payment[]>(() =>
     clubPlayer ? getPayments().filter((p) => p.playerId === clubPlayer.id) : [],
   )
+  const [storeOrders, setStoreOrders] = useState<Order[]>(() => storeOrdersForEmail(user.email))
   const [checkout, setCheckout] = useState<{ plan: 'monthly' | 'oneTime'; amount: number; label: string } | null>(null)
   const [paying, setPaying] = useState(false)
   const [payError, setPayError] = useState('')
@@ -906,9 +915,14 @@ function PaymentsTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (
       if (player) {
         setPayments(getPayments().filter((p) => p.playerId === player.id))
       }
+      setStoreOrders(storeOrdersForEmail(user.email))
     }
     window.addEventListener('storage', sync)
-    return () => window.removeEventListener('storage', sync)
+    window.addEventListener('dlbc-auth-change', sync)
+    return () => {
+      window.removeEventListener('storage', sync)
+      window.removeEventListener('dlbc-auth-change', sync)
+    }
   }, [user.email, user.name])
 
   if (!clubPlayer || !isPlayerAccountActive(user.email)) {
@@ -993,51 +1007,92 @@ function PaymentsTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (
     setCheckout(null)
   }
 
+  const history = [
+    ...payments.map((tx) => ({
+      id: `pay-${tx.id}`,
+      kind: 'membership' as const,
+      title: tx.plan,
+      detail: `${formatPaymentDate(tx.date)} · ${tx.method}`,
+      amount: tx.amount,
+      status: tx.status,
+      date: tx.date,
+    })),
+    ...storeOrders.map((order) => ({
+      id: `ord-${order.id}`,
+      kind: 'store' as const,
+      title: 'Club store order',
+      detail: `${formatPaymentDate(order.date)} · ${order.items.map((i) => `${i.quantity}× ${i.productName}`).join(', ')}`,
+      amount: order.total,
+      status: order.status,
+      date: order.date,
+      orderId: order.id,
+    })),
+  ].sort((a, b) => b.date.localeCompare(a.date))
+
+  const filteredHistory = history.filter((h) => {
+    if (historyFilter === 'all') return true
+    return h.kind === historyFilter
+  })
+
+  const statusTone = (status: string) => {
+    if (status === 'succeeded' || status === 'paid' || status === 'shipped') return 'text-emerald-600'
+    if (status === 'pending') return 'text-amber-600'
+    return 'text-red-600'
+  }
+
+  const intro = clubPlayer.alsoPlays
+    ? 'Monthly fee for your child, plus a one-time registration fee for you as a player.'
+    : paymentFocus === 'monthly'
+      ? 'As a parent, you pay the monthly membership fee for your child.'
+      : 'As a player, you pay the one-time registration fee for the season.'
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.25rem)] text-slate-900">My payments</h2>
-        <p className="font-inter text-base text-slate-600 mt-1">
-          {clubPlayer.alsoPlays
-            ? 'Monthly fee for your child, plus a one-time registration fee for you as a player.'
-            : paymentFocus === 'monthly'
-              ? 'As a parent, you pay the monthly membership fee for your child.'
-              : 'As a player, you pay the one-time registration fee for the season.'}
-        </p>
-      </div>
+      <p className="font-inter text-sm text-slate-600 max-w-2xl">{intro}</p>
 
       <div
-        className={`rounded-xl p-5 border ${
-          feePaid ? 'bg-emerald-50 border-emerald-200' : 'bg-orange-50 border-orange-200'
+        className={`rounded-2xl p-5 ${
+          feePaid
+            ? 'bg-emerald-50 ring-1 ring-emerald-200/80'
+            : 'bg-amber-50 ring-1 ring-amber-200/80'
         }`}
       >
-        <h3 className={`font-inter font-semibold text-lg ${feePaid ? 'text-emerald-700' : 'text-orange-700'}`}>
-          {feePaid
-            ? paymentFocus === 'monthly'
-              ? `Paid for ${monthLabel}`
-              : 'Registration paid'
-            : paymentFocus === 'monthly'
-              ? `Not paid for ${monthLabel}`
-              : 'Registration not paid'}
-        </h3>
-        <p className="font-inter text-sm text-slate-600 mt-1">
-          {feePaid
-            ? 'Thank you — your membership is up to date.'
-            : paymentFocus === 'monthly'
-              ? 'Pay your monthly fee below to stay eligible for training and matches.'
-              : 'Pay your registration fee below to complete your sign-up.'}
-        </p>
+        <div className="flex items-start gap-3">
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+            feePaid ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'
+          }`}>
+            {feePaid ? <CheckCircle size={20} /> : <CreditCard size={20} />}
+          </div>
+          <div>
+            <h3 className={`font-inter font-semibold text-base ${feePaid ? 'text-emerald-800' : 'text-amber-900'}`}>
+              {feePaid
+                ? paymentFocus === 'monthly'
+                  ? `Paid for ${monthLabel}`
+                  : 'Registration paid'
+                : paymentFocus === 'monthly'
+                  ? `Not paid for ${monthLabel}`
+                  : 'Registration not paid'}
+            </h3>
+            <p className="font-inter text-sm text-slate-600 mt-1">
+              {feePaid
+                ? 'Your membership is up to date.'
+                : paymentFocus === 'monthly'
+                  ? 'Pay your monthly fee below to stay eligible for training and matches.'
+                  : 'Pay your registration fee below to complete your sign-up.'}
+            </p>
+          </div>
+        </div>
       </div>
 
-      <div className={`grid grid-cols-1 ${registeredChildren.length > 1 || clubPlayer.alsoPlays ? 'md:grid-cols-2 max-w-3xl' : 'max-w-md'} gap-4`}>
+      <div className={`grid grid-cols-1 gap-4 ${registeredChildren.length > 1 || clubPlayer.alsoPlays ? 'md:grid-cols-2 max-w-3xl' : 'max-w-md'}`}>
         {paymentFocus === 'monthly' ? (
           registeredChildren.length > 0 ? (
             registeredChildren.map((child) => {
               const childFees = getFeeConfigForBirthYear(parseInt(child.dob.slice(0, 4), 10))
               return (
-                <div key={child.id} className="dash-card p-6">
-                  <p className="font-inter text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">Monthly membership</p>
-                  <p className="font-oswald font-bold text-3xl text-lions-700 mt-2">
+                <div key={child.id} className="club-store-card p-5">
+                  <p className="font-inter text-xs font-medium text-slate-500">Monthly membership</p>
+                  <p className="font-oswald font-bold text-3xl text-slate-900 mt-2 tabular-nums tracking-tight">
                     €{childFees.monthly}
                     <span className="text-base font-inter text-slate-500 font-normal">/month</span>
                   </p>
@@ -1051,113 +1106,151 @@ function PaymentsTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (
                   ) : (
                     <button
                       type="button"
-                      onClick={() => startMembershipCheckout('monthly', childFees.monthly, `Monthly membership — ${child.name}`)}
+                      onClick={() => startMembershipCheckout('monthly', childFees.monthly, `Monthly membership - ${child.name}`)}
                       disabled={paying}
-                      className="mt-4 w-full btn-accent font-inter text-sm font-semibold uppercase tracking-wider px-4 py-3 rounded-xl disabled:opacity-50"
+                      className="club-store-cta mt-4 w-full font-inter text-sm font-semibold px-4 py-3 rounded-xl disabled:opacity-50 active:scale-[0.98] transition-all"
                     >
-                      {paying ? 'Redirecting to Stripe…' : isStripeCheckoutConfigured() ? 'Pay with Stripe' : 'Pay monthly fee'}
+                      {paying ? 'Redirecting…' : isStripeCheckoutConfigured() ? 'Pay with Stripe' : 'Pay monthly fee'}
                     </button>
                   )}
                 </div>
               )
             })
           ) : (
-        <div className="dash-card p-6">
-          <p className="font-inter text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">Monthly membership</p>
-          <p className="font-oswald font-bold text-3xl text-lions-700 mt-2">
-            €{fees.monthly}
-            <span className="text-base font-inter text-slate-500 font-normal">/month</span>
-          </p>
-          <p className="font-inter text-sm text-slate-600 mt-2">Recurring fee for your child&apos;s age group.</p>
-          {monthlyPaid ? (
-            <p className="mt-4 inline-flex items-center gap-2 font-inter text-sm text-emerald-600">
-              <CheckCircle size={16} /> Paid this month
-            </p>
-          ) : (
-            <button
-              type="button"
-              onClick={() => startMembershipCheckout('monthly', fees.monthly, 'Monthly membership')}
-              disabled={paying}
-              className="mt-4 w-full btn-accent font-inter text-sm font-semibold uppercase tracking-wider px-4 py-3 rounded-xl disabled:opacity-50"
-            >
-              {paying ? 'Redirecting to Stripe…' : isStripeCheckoutConfigured() ? 'Pay with Stripe' : 'Pay monthly fee'}
-            </button>
-          )}
-        </div>
+            <div className="club-store-card p-5">
+              <p className="font-inter text-xs font-medium text-slate-500">Monthly membership</p>
+              <p className="font-oswald font-bold text-3xl text-slate-900 mt-2 tabular-nums tracking-tight">
+                €{fees.monthly}
+                <span className="text-base font-inter text-slate-500 font-normal">/month</span>
+              </p>
+              <p className="font-inter text-sm text-slate-600 mt-2">Recurring fee for your child&apos;s age group.</p>
+              {monthlyPaid ? (
+                <p className="mt-4 inline-flex items-center gap-2 font-inter text-sm text-emerald-600">
+                  <CheckCircle size={16} /> Paid this month
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => startMembershipCheckout('monthly', fees.monthly, 'Monthly membership')}
+                  disabled={paying}
+                  className="club-store-cta mt-4 w-full font-inter text-sm font-semibold px-4 py-3 rounded-xl disabled:opacity-50 active:scale-[0.98] transition-all"
+                >
+                  {paying ? 'Redirecting…' : isStripeCheckoutConfigured() ? 'Pay with Stripe' : 'Pay monthly fee'}
+                </button>
+              )}
+            </div>
           )
         ) : (
-        <div className="dash-card p-6">
-          <p className="font-inter text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">One-time registration</p>
-          <p className="font-oswald font-bold text-3xl text-lions-700 mt-2">€{fees.oneTime}</p>
-          <p className="font-inter text-sm text-slate-600 mt-2">Single registration fee for the season.</p>
-          {oneTimePaid ? (
-            <p className="mt-4 inline-flex items-center gap-2 font-inter text-sm text-emerald-600">
-              <CheckCircle size={16} /> Already paid
-            </p>
-          ) : (
-            <button
-              type="button"
-              onClick={() => startMembershipCheckout('oneTime', fees.oneTime, 'One-time registration')}
-              disabled={paying}
-              className="mt-4 w-full btn-gold font-inter text-sm font-semibold uppercase tracking-wider px-4 py-3 rounded-xl disabled:opacity-50"
-            >
-              {paying ? 'Redirecting to Stripe…' : isStripeCheckoutConfigured() ? 'Pay with Stripe' : 'Pay registration fee'}
-            </button>
-          )}
-        </div>
+          <div className="club-store-card p-5">
+            <p className="font-inter text-xs font-medium text-slate-500">One-time registration</p>
+            <p className="font-oswald font-bold text-3xl text-slate-900 mt-2 tabular-nums tracking-tight">€{fees.oneTime}</p>
+            <p className="font-inter text-sm text-slate-600 mt-2">Single registration fee for the season.</p>
+            {oneTimePaid ? (
+              <p className="mt-4 inline-flex items-center gap-2 font-inter text-sm text-emerald-600">
+                <CheckCircle size={16} /> Already paid
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => startMembershipCheckout('oneTime', fees.oneTime, 'One-time registration')}
+                disabled={paying}
+                className="club-store-cta mt-4 w-full font-inter text-sm font-semibold px-4 py-3 rounded-xl disabled:opacity-50 active:scale-[0.98] transition-all"
+              >
+                {paying ? 'Redirecting…' : isStripeCheckoutConfigured() ? 'Pay with Stripe' : 'Pay registration fee'}
+              </button>
+            )}
+          </div>
         )}
         {clubPlayer.alsoPlays && selfFees && (
-        <div className="dash-card p-6">
-          <p className="font-inter text-[10px] uppercase tracking-[0.18em] text-slate-500 font-semibold">Your player registration</p>
-          <p className="font-oswald font-bold text-3xl text-lions-700 mt-2">€{selfFees.oneTime}</p>
-          <p className="font-inter text-sm text-slate-600 mt-2">
-            Your registration
-            {getPlayerBirthYear(clubPlayer) ? ` (age ${calcAgeFromBirthYear(getPlayerBirthYear(clubPlayer)!)}).` : '.'}
-          </p>
-          {oneTimePaid ? (
-            <p className="mt-4 inline-flex items-center gap-2 font-inter text-sm text-emerald-600">
-              <CheckCircle size={16} /> Already paid
+          <div className="club-store-card p-5">
+            <p className="font-inter text-xs font-medium text-slate-500">Your player registration</p>
+            <p className="font-oswald font-bold text-3xl text-slate-900 mt-2 tabular-nums tracking-tight">€{selfFees.oneTime}</p>
+            <p className="font-inter text-sm text-slate-600 mt-2">
+              Your registration
+              {getPlayerBirthYear(clubPlayer) ? ` (age ${calcAgeFromBirthYear(getPlayerBirthYear(clubPlayer)!)}).` : '.'}
             </p>
-          ) : (
-            <button
-              type="button"
-              onClick={() => startMembershipCheckout('oneTime', selfFees.oneTime, 'One-time registration (parent player)')}
-              disabled={paying}
-              className="mt-4 w-full btn-gold font-inter text-sm font-semibold uppercase tracking-wider px-4 py-3 rounded-xl disabled:opacity-50"
-            >
-              {paying ? 'Redirecting to Stripe…' : isStripeCheckoutConfigured() ? 'Pay with Stripe' : 'Pay registration fee'}
-            </button>
-          )}
-        </div>
+            {oneTimePaid ? (
+              <p className="mt-4 inline-flex items-center gap-2 font-inter text-sm text-emerald-600">
+                <CheckCircle size={16} /> Already paid
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => startMembershipCheckout('oneTime', selfFees.oneTime, 'One-time registration (parent player)')}
+                disabled={paying}
+                className="club-store-cta mt-4 w-full font-inter text-sm font-semibold px-4 py-3 rounded-xl disabled:opacity-50 active:scale-[0.98] transition-all"
+              >
+                {paying ? 'Redirecting…' : isStripeCheckoutConfigured() ? 'Pay with Stripe' : 'Pay registration fee'}
+              </button>
+            )}
+          </div>
         )}
       </div>
 
       {payError && (
-        <p className="font-inter text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-3">{payError}</p>
+        <p className="font-inter text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">{payError}</p>
       )}
 
       <div>
-        <h3 className="font-inter font-semibold text-xl text-slate-900 mb-4">Payment history</h3>
-        <div className="dash-card overflow-hidden">
-          {payments.length === 0 ? (
-            <p className="p-6 font-inter text-sm text-slate-500 text-center">No payments yet</p>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+          <h3 className="font-inter font-semibold text-lg text-slate-900">Activity</h3>
+          <div className="dash-segment">
+            {([
+              ['all', 'All'],
+              ['membership', 'Membership'],
+              ['store', 'Store'],
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                aria-selected={historyFilter === key}
+                onClick={() => setHistoryFilter(key)}
+                className={`px-3 py-1.5 font-inter text-sm font-medium ${
+                  historyFilter === key ? 'text-slate-900' : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="club-store-card overflow-hidden">
+          {filteredHistory.length === 0 ? (
+            <div className="p-10 text-center">
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-3">
+                {historyFilter === 'store' ? <ShoppingBag size={20} className="text-slate-400" /> : <CreditCard size={20} className="text-slate-400" />}
+              </div>
+              <p className="font-inter font-medium text-slate-900">
+                {historyFilter === 'store' ? 'No store orders yet' : historyFilter === 'membership' ? 'No membership payments yet' : 'No activity yet'}
+              </p>
+              <p className="font-inter text-sm text-slate-500 mt-1">
+                {historyFilter === 'store'
+                  ? 'Orders from the Club Shop will show up here.'
+                  : 'Membership fees and store purchases appear here.'}
+              </p>
+            </div>
           ) : (
             <div className="divide-y divide-slate-100">
-              {payments.map((tx) => (
-                <div key={tx.id} className="flex items-center justify-between gap-4 px-5 py-4 hover:bg-slate-50 transition-colors">
-                  <div>
-                    <p className="font-inter text-sm font-medium text-slate-900">{tx.plan}</p>
-                    <p className="font-inter text-xs text-slate-500">{formatPaymentDate(tx.date)} · {tx.method}</p>
+              {filteredHistory.map((tx) => (
+                <div key={tx.id} className="flex items-start justify-between gap-4 px-5 py-4 hover:bg-slate-50/80 transition-colors">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                      tx.kind === 'store' ? 'bg-slate-100 text-slate-700' : 'bg-blue-50 text-lions-600'
+                    }`}>
+                      {tx.kind === 'store' ? <ShoppingBag size={16} /> : <CreditCard size={16} />}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-inter text-sm font-medium text-slate-900">{tx.title}</p>
+                      <p className="font-inter text-xs text-slate-500 mt-0.5 line-clamp-2">{tx.detail}</p>
+                      {tx.kind === 'store' && 'orderId' in tx && (
+                        <p className="font-mono text-[11px] text-slate-400 mt-1">{tx.orderId}</p>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="font-inter font-semibold text-slate-900">€{tx.amount}</p>
-                    <p
-                      className={`font-inter text-xs capitalize ${
-                        tx.status === 'succeeded' ? 'text-emerald-600' : tx.status === 'pending' ? 'text-amber-600' : 'text-red-600'
-                      }`}
-                    >
-                      {tx.status}
-                    </p>
+                  <div className="text-right shrink-0">
+                    <p className="font-inter font-semibold text-slate-900 tabular-nums">€{tx.amount.toFixed(2)}</p>
+                    <p className={`font-inter text-xs capitalize mt-0.5 ${statusTone(tx.status)}`}>{tx.status}</p>
                   </div>
                 </div>
               ))}
@@ -1184,7 +1277,6 @@ function PaymentsTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (
 
 /* ───────── Schedule Tab ───────── */
 function ScheduleTab({ clubPlayer }: { clubPlayer: ClubPlayer | null }) {
-  const hasSchedule = clubPlayer ? hasTeamAssignment(clubPlayer) : false
   const attendance = getAttendanceStore()
   const [sessions, setSessions] = useState<SessionEvent[]>(() =>
     loadClubScheduleForPlayer(clubPlayer).map((s) => ({
@@ -1193,7 +1285,7 @@ function ScheduleTab({ clubPlayer }: { clubPlayer: ClubPlayer | null }) {
       excused: attendance[s.id]?.excused,
     })),
   )
-  const [filter, setFilter] = useState<'All' | 'Training' | 'Match' | 'Social'>('All')
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
 
   useEffect(() => {
     const sync = () => {
@@ -1210,29 +1302,27 @@ function ScheduleTab({ clubPlayer }: { clubPlayer: ClubPlayer | null }) {
     return () => window.removeEventListener('storage', sync)
   }, [clubPlayer])
 
-  if (!hasSchedule) {
-    return (
-      <div className="space-y-6">
-        <div>
-          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.25rem)] text-slate-900">My schedule</h2>
-          <p className="font-inter text-base text-slate-600 mt-1">
-            Your team schedule isn&apos;t available yet.
-          </p>
-        </div>
-        <div className="dash-card p-8 text-center max-w-lg">
-          <Calendar size={32} className="mx-auto text-lions-500 mb-3" />
-          <p className="font-inter text-slate-700 font-medium">Waiting for team assignment</p>
-          <p className="font-inter text-sm text-slate-500 mt-2 leading-relaxed">
-            Once your coach assigns you to a team, training sessions and matches will show up here automatically.
-          </p>
-        </div>
-      </div>
-    )
-  }
+  const playerTeams = useMemo((): ClubTeam[] => {
+    if (!clubPlayer) return []
+    const ids = new Set(getTeamIdsForMember(clubPlayer))
+    return getClubTeams().filter((t) => ids.has(t.id))
+  }, [clubPlayer])
 
-  const filtered = filter === 'All' ? sessions : sessions.filter((s) => s.type === filter)
+  const gridItems = useMemo(() => {
+    return sessions.map((s) => {
+      const team = playerTeams.find((t) => t.id === s.teamId)
+      return {
+        id: s.id,
+        title: s.title,
+        date: s.date,
+        time: s.time,
+        type: s.type,
+        subtitle: team ? `${team.name} · ${s.venue}` : s.venue,
+      }
+    })
+  }, [sessions, playerTeams])
 
-  const today = new Date().toISOString().split('T')[0]
+  const todayIso = schedIso(new Date())
 
   const persistAttendance = (updated: SessionEvent[]) => {
     const store = getAttendanceStore()
@@ -1254,116 +1344,88 @@ function ScheduleTab({ clubPlayer }: { clubPlayer: ClubPlayer | null }) {
     persistAttendance(updated)
   }
 
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null
+  const hasTeams = playerTeams.length > 0
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.25rem)] text-slate-900">My schedule</h2>
-        <p className="font-inter text-base text-slate-600 mt-1">
-          Training sessions and matches for your assigned team.
-        </p>
-      </div>
+    <div className="space-y-5">
+      <ScheduleTimeGrid
+        items={gridItems}
+        onEventClick={(id) => setActiveSessionId(id)}
+        hint={
+          hasTeams
+            ? undefined
+            : 'Waiting for a team assignment — sessions will appear here once a coach assigns you.'
+        }
+      />
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-2">
-        {(['All', 'Training', 'Match', 'Social'] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-4 py-2 rounded-lg font-inter text-sm font-medium transition-all ${
-              filter === f
-                ? 'bg-lions-500 text-white shadow-sm'
-                : 'bg-slate-100 text-slate-600 border border-slate-200 hover:border-lions-300 hover:text-lions-700'
-            }`}
-          >
-            {f}
-          </button>
-        ))}
-      </div>
-
-      {/* Sessions List */}
-      <div className="space-y-3">
-        {filtered.length === 0 ? (
-          <p className="font-inter text-sm text-slate-500 text-center py-8">No sessions scheduled yet. Check back soon.</p>
-        ) : (
-        filtered.map((session) => {
-          const isPast = session.date < today
-          const typeColors =
-            session.type === 'Training'
-              ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
-              : session.type === 'Match'
-                ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                : 'bg-purple-500/10 text-purple-400 border-purple-500/20'
-
-          return (
-            <div
-              key={session.id}
-              className="dash-card p-5 hover:border-blue-500/30 transition-colors"
-            >
-              <div className="flex flex-col md:flex-row md:items-center gap-4">
-                {/* Date badge */}
-                <div className="flex flex-col items-center justify-center bg-slate-50 rounded-lg px-4 py-3 min-w-[72px] border border-slate-200">
-                  <span className="font-oswald font-bold text-lg text-slate-900">
-                    {new Date(session.date).getDate()}
-                  </span>
-                  <span className="font-inter text-xs text-slate-500 uppercase">
-                    {new Date(session.date).toLocaleDateString('en-IE', { month: 'short' })}
-                  </span>
-                </div>
-
-                {/* Info */}
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h4 className="font-inter font-semibold text-slate-900">{session.title}</h4>
-                    <span className={`text-xs font-inter font-medium px-2 py-0.5 rounded border ${typeColors}`}>
-                      {session.type}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-4 text-sm text-slate-400">
-                    <span className="flex items-center gap-1">
-                      <Clock size={14} />
-                      {session.time}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <MapPin size={14} />
-                      {session.venue}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className="flex items-center gap-2">
-                  {isPast ? (
-                    session.attended ? (
-                      <span className="flex items-center gap-1 text-green-400 font-inter text-sm">
-                        <CheckCircle size={16} /> Attended
-                      </span>
-                    ) : session.excused ? (
-                      <span className="flex items-center gap-1 text-warn-400 font-inter text-sm">
-                        <Clock size={16} /> Excused
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => handleAttend(session.id)}
-                        className="bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 px-3 py-2 rounded font-inter text-sm transition-colors"
-                      >
-                        Check In
-                      </button>
-                    )
-                  ) : (
-                    <button
-                      onClick={() => handleExcuse(session.id)}
-                      className="bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 px-3 py-2 rounded font-inter text-sm transition-colors"
-                    >
-                      Can&apos;t Make It
-                    </button>
-                  )}
-                </div>
+      {activeSession && (
+        <div className="dash-card p-4 sm:p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+            <div className="flex-1 min-w-0">
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                <h4 className="font-inter font-semibold text-slate-900">{activeSession.title}</h4>
+                <span className="text-xs font-inter font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                  {activeSession.type}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-500">
+                <span className="flex items-center gap-1.5">
+                  <CalendarDays size={14} className="text-slate-400" />
+                  {new Date(activeSession.date + 'T12:00:00').toLocaleDateString('en-IE', {
+                    weekday: 'short', day: 'numeric', month: 'short',
+                  })}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <Clock size={14} className="text-slate-400" />
+                  {activeSession.time}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <MapPin size={14} className="text-slate-400" />
+                  {activeSession.venue}
+                </span>
               </div>
             </div>
-          )
-        })
-        )}
-      </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {activeSession.date < todayIso ? (
+                activeSession.attended ? (
+                  <span className="flex items-center gap-1.5 text-emerald-700 font-inter text-sm font-medium">
+                    <CheckCircle size={16} /> Attended
+                  </span>
+                ) : activeSession.excused ? (
+                  <span className="flex items-center gap-1.5 text-amber-700 font-inter text-sm font-medium">
+                    <Clock size={16} /> Excused
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleAttend(activeSession.id)}
+                    className="bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100 px-3 py-2 rounded-xl font-inter text-sm transition-colors active:scale-[0.98]"
+                  >
+                    Check In
+                  </button>
+                )
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleExcuse(activeSession.id)}
+                  className="bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 px-3 py-2 rounded-xl font-inter text-sm transition-colors active:scale-[0.98]"
+                >
+                  Can&apos;t Make It
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setActiveSessionId(null)}
+                className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1371,14 +1433,10 @@ function ScheduleTab({ clubPlayer }: { clubPlayer: ClubPlayer | null }) {
 /* ───────── Profile Tab ───────── */
 function ProfileTab({
   user,
-  clubPlayer,
   onUpdateUser,
-  onClubPlayerUpdate,
 }: {
   user: PlayerUser
-  clubPlayer: ClubPlayer | null
   onUpdateUser: (u: PlayerUser) => void
-  onClubPlayerUpdate: (p: ClubPlayer) => void
 }) {
   const [form, setForm] = useState({
     name: user.name,
@@ -1388,7 +1446,108 @@ function ProfileTab({
     jerseySize: user.jerseySize || 'M',
   })
   const [saved, setSaved] = useState(false)
-  const canManageChildren = clubPlayer ? !needsPlayerOnboarding(clubPlayer) : false
+
+  const handleChange = (field: string, value: string) => {
+    setForm((prev) => ({ ...prev, [field]: value }))
+    setSaved(false)
+  }
+
+  const handleSave = () => {
+    const updated: PlayerUser = syncUserFromRoster({
+      ...user,
+      name: form.name,
+      email: form.email,
+      phone: form.phone,
+      emergencyContact: form.emergencyContact,
+      jerseySize: form.jerseySize,
+    })
+    onUpdateUser(updated)
+
+    const players = getPlayers()
+    const idx = players.findIndex((p) => p.id === user.id)
+    if (idx >= 0) {
+      players[idx] = { ...updated }
+      savePlayers(players)
+    }
+
+    setSaved(true)
+    setTimeout(() => setSaved(false), 3000)
+  }
+
+  return (
+    <div className="space-y-6">
+      <p className="font-inter text-sm text-slate-600 max-w-2xl">
+        Keep your contact details up to date so coaches can reach you.
+      </p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="club-store-card p-6 flex flex-col items-center text-center">
+          <div className="w-20 h-20 rounded-2xl bg-slate-100 flex items-center justify-center mb-4">
+            <User size={32} className="text-slate-600" />
+          </div>
+          <h3 className="font-inter font-semibold text-lg text-slate-900">{user.name}</h3>
+          <p className="font-inter text-sm text-slate-500 mt-1">{user.email}</p>
+          <p className="mt-4 font-inter text-xs text-slate-500 leading-relaxed">
+            Dublin Lions member. Coaches handle roster details behind the scenes.
+          </p>
+        </div>
+
+        <div className="lg:col-span-2 club-store-card p-6 md:p-8">
+          <h3 className="font-inter font-semibold text-lg text-slate-900 mb-5">Contact details</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="block font-inter font-medium text-xs text-slate-600">Full name</label>
+              <input type="text" value={form.name} onChange={(e) => handleChange('name', e.target.value)} className="club-store-input" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="block font-inter font-medium text-xs text-slate-600">Email</label>
+              <input type="email" value={form.email} onChange={(e) => handleChange('email', e.target.value)} className="club-store-input" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="block font-inter font-medium text-xs text-slate-600">Phone</label>
+              <input type="tel" value={form.phone} onChange={(e) => handleChange('phone', e.target.value)} placeholder="+353 1 234 5678" className="club-store-input" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="block font-inter font-medium text-xs text-slate-600">Emergency contact</label>
+              <input type="text" value={form.emergencyContact} onChange={(e) => handleChange('emergencyContact', e.target.value)} placeholder="Name and phone" className="club-store-input" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="block font-inter font-medium text-xs text-slate-600">Jersey size</label>
+              <select value={form.jerseySize} onChange={(e) => handleChange('jerseySize', e.target.value)} className="club-store-input">
+                <option value="XS">XS</option>
+                <option value="S">S</option>
+                <option value="M">M</option>
+                <option value="L">L</option>
+                <option value="XL">XL</option>
+                <option value="XXL">XXL</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="mt-6 flex items-center gap-4">
+            <button type="button" onClick={handleSave} className="club-store-cta font-inter font-semibold text-sm px-6 py-3 rounded-xl active:scale-[0.98] transition-all">
+              Save changes
+            </button>
+            {saved && (
+              <span className="flex items-center gap-1 text-emerald-600 font-inter text-sm">
+                <CheckCircle size={16} /> Saved
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ChildrenTab({
+  clubPlayer,
+  onClubPlayerUpdate,
+}: {
+  clubPlayer: ClubPlayer | null
+  onClubPlayerUpdate: (p: ClubPlayer) => void
+}) {
+  const canManage = clubPlayer ? !needsPlayerOnboarding(clubPlayer) : false
+  const summary = clubPlayer ? getRegisteredChildrenSummary(clubPlayer) : []
   const [children, setChildren] = useState<ChildDraft[]>([])
   const [childrenError, setChildrenError] = useState('')
   const [childrenSaved, setChildrenSaved] = useState(false)
@@ -1422,33 +1581,6 @@ function ProfileTab({
     if (childrenDirtyRef.current) return
     loadChildrenFromPlayer(clubPlayer)
   }, [clubPlayer, loadChildrenFromPlayer])
-
-  const handleChange = (field: string, value: string) => {
-    setForm((prev) => ({ ...prev, [field]: value }))
-    setSaved(false)
-  }
-
-  const handleSave = () => {
-    const updated: PlayerUser = syncUserFromRoster({
-      ...user,
-      name: form.name,
-      email: form.email,
-      phone: form.phone,
-      emergencyContact: form.emergencyContact,
-      jerseySize: form.jerseySize,
-    })
-    onUpdateUser(updated)
-
-    const players = getPlayers()
-    const idx = players.findIndex((p) => p.id === user.id)
-    if (idx >= 0) {
-      players[idx] = { ...updated }
-      savePlayers(players)
-    }
-
-    setSaved(true)
-    setTimeout(() => setSaved(false), 3000)
-  }
 
   const handleSaveChildren = async () => {
     if (!clubPlayer) return
@@ -1501,333 +1633,185 @@ function ProfileTab({
     }
   }
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.25rem)] text-slate-900">My profile</h2>
-        <p className="font-inter text-base text-slate-600 mt-1">
-          Keep your contact details up to date for fees, kit orders, and club messages.
-        </p>
+  if (!clubPlayer || !canManage) {
+    return (
+      <div className="club-store-card p-8 text-center max-w-md mx-auto">
+        <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-3">
+          <Users size={22} className="text-slate-400" />
+        </div>
+        <p className="font-inter font-medium text-slate-900">Finish welcome setup first</p>
+        <p className="font-inter text-sm text-slate-500 mt-1">Then you can register and manage children here.</p>
       </div>
+    )
+  }
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="dash-card p-6 flex flex-col items-center text-center">
-          <div className="w-24 h-24 rounded-full bg-lions-50 flex items-center justify-center mb-4 ring-2 ring-lions-100">
-            <User size={40} className="text-lions-600" />
+  return (
+    <div className="space-y-6 max-w-3xl">
+      <p className="font-inter text-sm text-slate-600">
+        Register children linked to your account, or update their details. Coaches assign teams from the roster.
+      </p>
+
+      {summary.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {summary.map((child) => (
+            <div key={child.id} className="club-store-card p-4 flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center shrink-0 font-inter font-semibold text-sm text-slate-700">
+                {(child.name || '?').charAt(0).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <p className="font-inter font-medium text-sm text-slate-900 truncate">{child.name}</p>
+                <p className="font-inter text-xs text-slate-500 mt-0.5">
+                  {child.age !== null ? `Age ${child.age}` : 'Age pending'}
+                  {' · '}
+                  {child.gender}
+                </p>
+                <p className="font-inter text-xs text-slate-500 mt-1 flex items-center gap-1.5">
+                  {child.assigned ? (
+                    <>
+                      <CheckCircle size={12} className="text-emerald-600" />
+                      {child.teamName}{child.teamLabel ? ` · ${child.teamLabel}` : ''}
+                    </>
+                  ) : (
+                    <>
+                      <Clock size={12} />
+                      Awaiting team assignment
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="club-store-card p-5 md:p-6">
+        <div className="flex items-start gap-3 mb-5">
+          <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center shrink-0">
+            <Users size={18} className="text-slate-700" />
           </div>
-          <h3 className="font-inter font-semibold text-lg text-slate-900">{user.name}</h3>
-          <p className="font-inter text-sm text-slate-500 mt-1">{user.email}</p>
-          <p className="mt-4 font-inter text-xs text-slate-500 leading-relaxed">
-            Dublin Lions member — coaches handle roster details behind the scenes.
-          </p>
+          <div>
+            <h3 className="font-inter font-semibold text-slate-900">Edit registrations</h3>
+            <p className="font-inter text-sm text-slate-500 mt-0.5">
+              Add or update children any time. Save when you are done.
+            </p>
+          </div>
         </div>
 
-        <div className="lg:col-span-2 space-y-6">
-          <div className="dash-card p-6 md:p-8">
-            <h3 className="font-inter font-semibold text-xl text-slate-900 mb-6">Contact details</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <div className="space-y-2">
-                <label className="block font-inter font-medium text-sm text-slate-700">Full name</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(e) => handleChange('name', e.target.value)}
-                  className="dash-input w-full"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="block font-inter font-medium text-sm text-slate-700">Email</label>
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={(e) => handleChange('email', e.target.value)}
-                  className="dash-input w-full"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="block font-inter font-medium text-sm text-slate-700">Phone</label>
-                <input
-                  type="tel"
-                  value={form.phone}
-                  onChange={(e) => handleChange('phone', e.target.value)}
-                  placeholder="+353 1 234 5678"
-                  className="dash-input w-full"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="block font-inter font-medium text-sm text-slate-700">Emergency contact</label>
-                <input
-                  type="text"
-                  value={form.emergencyContact}
-                  onChange={(e) => handleChange('emergencyContact', e.target.value)}
-                  placeholder="Name & phone"
-                  className="dash-input w-full"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="block font-inter font-medium text-sm text-slate-700">Jersey size</label>
-                <select
-                  value={form.jerseySize}
-                  onChange={(e) => handleChange('jerseySize', e.target.value)}
-                  className="dash-input w-full"
-                >
-                  <option value="XS">XS</option>
-                  <option value="S">S</option>
-                  <option value="M">M</option>
-                  <option value="L">L</option>
-                  <option value="XL">XL</option>
-                  <option value="XXL">XXL</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="mt-6 flex items-center gap-4">
-              <button onClick={handleSave} className="btn-gold font-inter font-semibold text-sm uppercase tracking-wider px-8 py-3 rounded-xl">
-                Save changes
-              </button>
-              {saved && (
-                <span className="flex items-center gap-1 text-emerald-600 font-inter text-sm">
-                  <CheckCircle size={16} /> Saved
-                </span>
-              )}
-            </div>
-          </div>
-
-          {canManageChildren && clubPlayer && (
-            <div className="dash-card p-6 md:p-8 kids-card">
-              <div className="kids-card__header">
-                <div className="kids-card__icon" aria-hidden="true">
-                  <Users size={18} strokeWidth={2.4} />
-                </div>
-                <div className="min-w-0">
-                  <h3 className="kids-card__title">Registered children</h3>
-                  <p className="kids-card__subtitle">
-                    Register a child at any time, or update existing children linked to your account.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-6 space-y-4">
-                {children.length === 0 && (
-                  <div className="kids-empty">
-                    <div className="kids-empty__icon"><Users size={20} /></div>
-                    <p className="kids-empty__title">No children registered yet</p>
-                    <p className="kids-empty__subtitle">Tap the button below to add your first player — you can add more later.</p>
-                  </div>
-                )}
-                {children.map((child, index) => {
-                  const initial = (child.name || '?').trim().charAt(0).toUpperCase() || '?'
-                  const namePreview = child.name?.trim() || `Child ${index + 1}`
-                  return (
-                  <div key={child.id} className="kid-card" data-testid={`child-card-${index}`}>
-                    <div className="kid-card__band" aria-hidden="true" />
-                    <div className="kid-card__head">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="kid-card__avatar" data-child-index={index}>{initial}</div>
-                        <div className="min-w-0">
-                          <p className="kid-card__badge">Child {index + 1}</p>
-                          <p className="kid-card__name" title={namePreview}>{namePreview}</p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => { markChildrenDirty(); setChildren((prev) => prev.filter((c) => c.id !== child.id)) }}
-                        className="kid-card__remove"
-                        aria-label={`Remove ${namePreview}`}
-                        data-testid={`remove-child-${index}`}
-                      >
-                        <Trash2 size={13} strokeWidth={2.3} />
-                        <span>Remove</span>
-                      </button>
-                    </div>
-
-                    <div className="kid-card__body">
-                      <div className="kid-field">
-                        <label className="kid-field__label" htmlFor={`kid-name-${child.id}`}>Player name</label>
-                        <input
-                          id={`kid-name-${child.id}`}
-                          type="text"
-                          value={child.name}
-                          placeholder="First and last name"
-                          onChange={(e) => { markChildrenDirty(); setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, name: e.target.value } : c))) }}
-                          className="kid-input"
-                          data-testid={`child-name-${index}`}
-                        />
-                      </div>
-
-                      <div className="kid-field">
-                        <p className="kid-field__label">Date of birth</p>
-                        <ChildDobPicker
-                          key={child.id}
-                          id={`profile-child-dob-${child.id}`}
-                          value={child.dob}
-                          onChange={(dob) => { markChildrenDirty(); setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, dob } : c))) }}
-                        />
-                      </div>
-
-                      <div className="kid-field">
-                        <p className="kid-field__label">Gender</p>
-                        <div className="kid-gender" role="radiogroup" aria-label="Gender">
-                          {(['Male', 'Female'] as const).map((g) => (
-                            <button
-                              key={g}
-                              type="button"
-                              role="radio"
-                              aria-checked={child.gender === g}
-                              onClick={() => { markChildrenDirty(); setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, gender: g } : c))) }}
-                              className={`kid-gender__opt${child.gender === g ? ' kid-gender__opt--active' : ''}`}
-                              data-testid={`child-gender-${g.toLowerCase()}-${index}`}
-                            >
-                              {g}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )})}
-
-                <button
-                  type="button"
-                  onClick={() => { markChildrenDirty(); setChildren((prev) => [...prev, newChildDraft()]) }}
-                  className="kids-add"
-                  data-testid="add-child-btn"
-                >
-                  <span className="kids-add__plus"><Plus size={16} strokeWidth={2.6} /></span>
-                  <span>{children.length === 0 ? 'Add a child' : 'Add another child'}</span>
-                </button>
-              </div>
-
-              {childrenError && (
-                <p className="kids-error" role="alert">{childrenError}</p>
-              )}
-              <div className="mt-6 flex flex-wrap items-center gap-4">
-                <button
-                  type="button"
-                  onClick={() => void handleSaveChildren()}
-                  disabled={childrenSaving}
-                  className="kids-save"
-                  data-testid="save-children-btn"
-                >
-                  {childrenSaving ? 'Saving…' : 'Save children'}
-                </button>
-                {childrenSaved && (
-                  <span className="kids-saved">
-                    <CheckCircle size={16} /> Saved
-                  </span>
-                )}
-              </div>
+        <div className="space-y-4">
+          {children.length === 0 && (
+            <div className="rounded-2xl bg-slate-50 border border-slate-200/80 px-5 py-8 text-center">
+              <p className="font-inter font-medium text-slate-900">No children registered yet</p>
+              <p className="font-inter text-sm text-slate-500 mt-1">Add your first player below. You can add more later.</p>
             </div>
           )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/* ───────── Notifications Tab ───────── */
-function NotificationsTab({ clubPlayer }: { clubPlayer: ClubPlayer | null }) {
-  const [notifications, setNotifications] = useState<NotificationItem[]>(() => buildPlayerNotifications(clubPlayer))
-
-  useEffect(() => {
-    setNotifications(buildPlayerNotifications(clubPlayer))
-  }, [clubPlayer])
-
-  const markRead = (id: string) => {
-    const readIds = getNotifIdSet(NOTIF_READ_KEY)
-    readIds.add(id)
-    saveNotifIdSet(NOTIF_READ_KEY, readIds)
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)))
-  }
-
-  const markUnread = (id: string) => {
-    const readIds = getNotifIdSet(NOTIF_READ_KEY)
-    readIds.delete(id)
-    saveNotifIdSet(NOTIF_READ_KEY, readIds)
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: false } : n)))
-  }
-
-  const deleteNotif = (id: string) => {
-    const deletedIds = getNotifIdSet(NOTIF_DELETED_KEY)
-    deletedIds.add(id)
-    saveNotifIdSet(NOTIF_DELETED_KEY, deletedIds)
-    setNotifications((prev) => prev.filter((n) => n.id !== id))
-  }
-
-  const typeIcon = (type: NotificationItem['type']) => {
-    if (type === 'payment') return <CreditCard size={16} className="text-amber-400" />
-    if (type === 'session') return <CalendarDays size={16} className="text-blue-400" />
-    return <Bell size={16} className="text-purple-400" />
-  }
-
-  return (
-    <div className="space-y-6 animate-[fade-in-up_0.4s_ease-out]">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-        <div>
-          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Notifications</h2>
-          <p className="font-inter text-base text-slate-400 mt-1">
-            Stay up to date with club announcements and updates.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="bg-blue-500/10 text-blue-400 text-xs font-inter font-medium px-3 py-1.5 rounded">
-            {notifications.filter((n) => !n.read).length} Unread
-          </span>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        {notifications.length === 0 && (
-          <div className="bg-[#1E293B] border border-white/[0.08] rounded-xl p-8 text-center">
-            <Bell size={28} className="mx-auto text-slate-500 mb-3" />
-            <p className="font-inter text-sm text-slate-300 font-medium">You're all caught up</p>
-            <p className="font-inter text-xs text-slate-500 mt-1">Club announcements, fee reminders, and upcoming sessions will appear here.</p>
-          </div>
-        )}
-        {notifications.map((notif) => (
-          <div
-            key={notif.id}
-            className={`bg-[#1E293B] border rounded-xl p-5 transition-colors ${
-              notif.read ? 'border-white/[0.08]' : 'border-l-4 border-l-blue-500 border-white/[0.08]'
-            }`}
-          >
-            <div className="flex items-start gap-4">
-              <div className="w-8 h-8 bg-[#0F172A] rounded-lg flex items-center justify-center shrink-0 mt-0.5">
-                {typeIcon(notif.type)}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-start justify-between gap-2">
-                  <h4 className="font-inter font-semibold text-white">{notif.title}</h4>
-                  <span className="font-inter text-xs text-slate-500 shrink-0">{notif.date}</span>
-                </div>
-                <p className="font-inter text-sm text-slate-300 mt-1">{notif.message}</p>
-                <div className="flex items-center gap-3 mt-3">
-                  {!notif.read ? (
-                    <button
-                      onClick={() => markRead(notif.id)}
-                      className="font-inter text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                    >
-                      Mark as Read
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => markUnread(notif.id)}
-                      className="font-inter text-xs text-slate-500 hover:text-slate-300 transition-colors"
-                    >
-                      Mark as Unread
-                    </button>
-                  )}
+          {children.map((child, index) => {
+            const initial = (child.name || '?').trim().charAt(0).toUpperCase() || '?'
+            const namePreview = child.name?.trim() || `Child ${index + 1}`
+            return (
+              <div key={child.id} className="rounded-2xl border border-slate-200/80 bg-white p-4 space-y-4" data-testid={`child-card-${index}`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center font-inter font-semibold text-sm text-slate-700 shrink-0">
+                      {initial}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-inter text-xs text-slate-500">Child {index + 1}</p>
+                      <p className="font-inter font-medium text-sm text-slate-900 truncate">{namePreview}</p>
+                    </div>
+                  </div>
                   <button
-                    onClick={() => deleteNotif(notif.id)}
-                    className="font-inter text-xs text-red-400 hover:text-red-300 transition-colors flex items-center gap-1"
+                    type="button"
+                    onClick={() => { markChildrenDirty(); setChildren((prev) => prev.filter((c) => c.id !== child.id)) }}
+                    className="inline-flex items-center gap-1.5 text-xs font-inter text-slate-500 hover:text-red-600 transition-colors"
+                    aria-label={`Remove ${namePreview}`}
+                    data-testid={`remove-child-${index}`}
                   >
-                    <Trash2 size={12} /> Delete
+                    <Trash2 size={13} strokeWidth={2.3} />
+                    Remove
                   </button>
                 </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <label className="block font-inter font-medium text-xs text-slate-600" htmlFor={`kid-name-${child.id}`}>Player name</label>
+                    <input
+                      id={`kid-name-${child.id}`}
+                      type="text"
+                      value={child.name}
+                      placeholder="First and last name"
+                      onChange={(e) => { markChildrenDirty(); setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, name: e.target.value } : c))) }}
+                      className="club-store-input"
+                      data-testid={`child-name-${index}`}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="font-inter font-medium text-xs text-slate-600">Date of birth</p>
+                    <ChildDobPicker
+                      key={child.id}
+                      id={`children-tab-dob-${child.id}`}
+                      value={child.dob}
+                      onChange={(dob) => { markChildrenDirty(); setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, dob } : c))) }}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="font-inter font-medium text-xs text-slate-600">Gender</p>
+                    <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Gender">
+                      {(['Male', 'Female'] as const).map((g) => (
+                        <button
+                          key={g}
+                          type="button"
+                          role="radio"
+                          aria-checked={child.gender === g}
+                          onClick={() => { markChildrenDirty(); setChildren((prev) => prev.map((c) => (c.id === child.id ? { ...c, gender: g } : c))) }}
+                          className={`rounded-xl px-3 py-2.5 font-inter text-sm border transition-all active:scale-[0.98] ${
+                            child.gender === g
+                              ? 'club-store-seg-on'
+                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                          }`}
+                          data-testid={`child-gender-${g.toLowerCase()}-${index}`}
+                        >
+                          {g}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        ))}
+            )
+          })}
+
+          <button
+            type="button"
+            onClick={() => { markChildrenDirty(); setChildren((prev) => [...prev, newChildDraft()]) }}
+            className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/80 hover:bg-slate-100 text-slate-700 font-inter text-sm font-medium px-4 py-3 transition-colors active:scale-[0.99]"
+            data-testid="add-child-btn"
+          >
+            <Plus size={16} strokeWidth={2.6} />
+            {children.length === 0 ? 'Add a child' : 'Add another child'}
+          </button>
+        </div>
+
+        {childrenError && (
+          <p className="mt-4 font-inter text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3" role="alert">
+            {childrenError}
+          </p>
+        )}
+        <div className="mt-5 flex flex-wrap items-center gap-4">
+          <button
+            type="button"
+            onClick={() => void handleSaveChildren()}
+            disabled={childrenSaving}
+            className="club-store-cta font-inter font-semibold text-sm px-6 py-3 rounded-xl disabled:opacity-50 active:scale-[0.98] transition-all"
+            data-testid="save-children-btn"
+          >
+            {childrenSaving ? 'Saving…' : 'Save children'}
+          </button>
+          {childrenSaved && (
+            <span className="flex items-center gap-1 text-emerald-600 font-inter text-sm">
+              <CheckCircle size={16} /> Saved
+            </span>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -1837,30 +1821,61 @@ function ChatTab({ user }: { user: PlayerUser | null }) {
   const clubPlayer = user
     ? getClubPlayers().find((p) => p.email.toLowerCase() === user.email.toLowerCase())
     : undefined
-  const teams = getClubTeams()
-  const myTeamIds = clubPlayer ? getTeamIdsForMember(clubPlayer) : []
-  const myTeams = clubPlayer ? teams.filter((t) => myTeamIds.includes(t.id)) : []
 
-  const [teamId, setTeamId] = useState<string>(myTeams[0]?.id ?? '')
+  const [myTeams, setMyTeams] = useState(() => (clubPlayer ? getAccessibleChatTeams(clubPlayer) : []))
+  const [teamId, setTeamId] = useState<string>(() => (clubPlayer ? getAccessibleChatTeams(clubPlayer)[0]?.id ?? '' : ''))
   const [messages, setMessages] = useState<ChatMessage[]>(getChatMessages())
-  const [text, setText] = useState('')
+
+  const refreshChatState = useCallback(() => {
+    if (!clubPlayer) {
+      setMyTeams([])
+      return
+    }
+    const teams = getAccessibleChatTeams(clubPlayer)
+    setMyTeams(teams)
+    setTeamId((prev) => (prev && teams.some((t) => t.id === prev) ? prev : teams[0]?.id ?? ''))
+    setMessages(getChatMessages())
+  }, [clubPlayer])
 
   useEffect(() => {
-    const sync = () => setMessages(getChatMessages())
+    refreshChatState()
+    void whenClubDataReady().then(() => {
+      void pullMergedChatState().then(refreshChatState)
+    })
     const onStorage = (e: StorageEvent) => {
-      if (!e.key || e.key === 'dlbc_chat_messages') sync()
+      if (!e.key) return
+      if (
+        e.key === 'dlbc_chat_messages' ||
+        e.key === 'dlbc_chat_members' ||
+        e.key === 'dlbc_chat_deleted_ids' ||
+        e.key === 'dlbc_players' ||
+        e.key === 'dlbc_teams'
+      ) {
+        refreshChatState()
+      }
     }
     window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
-  }, [])
+    let bc: BroadcastChannel | null = null
+    try {
+      bc = new BroadcastChannel('dlbc_chat')
+      bc.onmessage = () => refreshChatState()
+    } catch { /* unavailable */ }
+    const pullTimer = setInterval(() => {
+      void pullMergedChatState().then(refreshChatState)
+    }, 3000)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      bc?.close()
+      clearInterval(pullTimer)
+    }
+  }, [refreshChatState])
 
   if (!clubPlayer) {
     return (
       <div className="space-y-6 animate-[fade-in-up_0.4s_ease-out]">
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Team Chat</h2>
-        <div className="dash-card dash-card p-6">
-          <p className="font-inter text-sm text-slate-300">
-            Your account (<span className="text-white font-medium">{user?.email}</span>) isn't linked to a
+        <div className="dash-card p-6">
+          <p className="font-inter text-sm text-slate-600">
+            Your account (<span className="text-slate-900 font-medium">{user?.email}</span>) isn't linked to a
             roster player yet, so Team Chat isn't available. Ask your manager to make sure a player record
             exists with this exact email address.
           </p>
@@ -1872,86 +1887,71 @@ function ChatTab({ user }: { user: PlayerUser | null }) {
   if (myTeams.length === 0) {
     return (
       <div className="space-y-6 animate-[fade-in-up_0.4s_ease-out]">
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Team Chat</h2>
-        <div className="dash-card dash-card p-6">
-          <p className="font-inter text-sm text-slate-300">You're not assigned to a team yet.</p>
+        <div className="dash-card p-6">
+          <p className="font-inter text-sm text-slate-600">
+            You're not in a team chat yet. Ask your manager to add you to the team or invite you to the chat.
+          </p>
         </div>
       </div>
     )
   }
 
   const activeTeamId = teamId || myTeams[0].id
-  const room = getChatRoom(activeTeamId)
-  const isMember = room.memberIds.includes(clubPlayer.id)
+  const canSend = myTeams.some((t) => t.id === activeTeamId)
   const teamMessages = messages
     .filter((m) => m.teamId === activeTeamId)
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
 
-  const handleSend = () => {
-    if (!text.trim() || !isMember) return
-    addChatMessage(activeTeamId, clubPlayer.name, 'player', text.trim())
+  const lastPreview = (teamId: string) => {
+    const last = messages
+      .filter((m) => m.teamId === teamId)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]
+    return last?.text
+  }
+
+  const chatTeams = myTeams.map((t) => ({
+    id: t.id,
+    name: t.name,
+    subtitle: getTeamAgeDivisionLabel(t),
+    preview: lastPreview(t.id),
+  }))
+
+  const handleSend = (body: string) => {
+    if (!body.trim() || !canSend || !activeTeamId) return
+    ensureChatMembership(activeTeamId, clubPlayer.id)
+    const message = addChatMessage(activeTeamId, clubPlayer.name, 'player', body.trim())
+    setMessages((prev) => {
+      const byId = new Map(prev.map((m) => [m.id, m]))
+      byId.set(message.id, message)
+      return [...byId.values()].sort(
+        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+      )
+    })
+    void publishChatNow()
+  }
+
+  const handleDelete = (messageId: string) => {
+    if (!deleteOwnChatMessage(messageId, clubPlayer.name, 'player')) return
     setMessages(getChatMessages())
-    setText('')
+    void publishChatNow()
   }
 
   return (
-    <div className="space-y-6 animate-[fade-in-up_0.4s_ease-out]">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-        <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Team Chat</h2>
-        {myTeams.length > 1 && (
-          <select
-            value={activeTeamId}
-            onChange={(e) => setTeamId(e.target.value)}
-            className="bg-white/5 border border-[#334155] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
-          >
-            {myTeams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
-        )}
-      </div>
-
-      <div className="dash-card dash-card flex flex-col h-[28rem]">
-        <div className="flex-1 overflow-y-auto scroll-slim p-4 space-y-3">
-          {teamMessages.length === 0 ? (
-            <p className="font-inter text-sm text-slate-500 text-center mt-8">No messages yet — say hello!</p>
-          ) : (
-            teamMessages.map((m) => {
-              const mine = m.senderName === clubPlayer.name && m.senderRole === 'player'
-              return (
-                <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[75%] rounded-xl px-4 py-2 ${mine ? 'bg-blue-600 text-white' : 'bg-white/5 text-slate-200'}`}>
-                    {!mine && (
-                      <p className="font-inter text-xs font-semibold text-blue-300 mb-0.5">
-                        {m.senderName}{m.senderRole === 'manager' ? ' (Manager)' : ''}
-                      </p>
-                    )}
-                    <p className="font-inter text-sm">{m.text}</p>
-                    <p className="font-inter text-[10px] text-white/50 mt-1">
-                      {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </p>
-                  </div>
-                </div>
-              )
-            })
-          )}
-        </div>
-        <div className="border-t border-white/[0.08] p-3 flex items-center gap-2">
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleSend() }}
-            disabled={!isMember}
-            placeholder={isMember ? 'Type a message…' : "You're not a member of this chat"}
-            className="flex-1 bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-50"
-          />
-          <button
-            onClick={handleSend}
-            disabled={!isMember || !text.trim()}
-            className="btn-gradient text-white font-inter font-semibold text-sm px-5 py-2.5 rounded-lg transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Send
-          </button>
-        </div>
-      </div>
+    <div className="space-y-4 animate-[fade-in-up_0.4s_ease-out]">
+      <TeamChatUI
+        variant="player"
+        teams={chatTeams}
+        activeTeamId={activeTeamId}
+        onTeamChange={setTeamId}
+        messages={teamMessages}
+        currentSenderName={clubPlayer.name}
+        currentSenderRole="player"
+        canSend={canSend}
+        sendBlockedReason="Ask your manager to add you to this team chat"
+        onSend={handleSend}
+        onDeleteMessage={handleDelete}
+        emptyTeamsMessage="Ask your manager to add you to a team or invite you to the chat."
+      />
     </div>
   )
 }
@@ -1967,9 +1967,9 @@ export default function PlayerDashboard() {
   // brief auth flicker on token refresh) doesn't bounce the user back to the
   // Overview tab while they were mid-flow on Schedule / Payments / Chat.
   const [activeTab, setActiveTabState] = useState<TabKey>(() => {
-    const saved = sessionStorage.getItem('dlbc_player_tab') as TabKey | null
-    if (saved && ['overview', 'payments', 'schedule', 'profile', 'notifications', 'chat'].includes(saved)) {
-      return saved
+    const saved = sessionStorage.getItem('dlbc_player_tab')
+    if (saved && ['overview', 'payments', 'schedule', 'children', 'profile', 'chat', 'shop'].includes(saved)) {
+      return saved as TabKey
     }
     return 'overview'
   })
@@ -1978,7 +1978,18 @@ export default function PlayerDashboard() {
     setActiveTabState(tab)
   }, [])
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('dlbc_player_sidebar_collapsed') === '1')
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [showNotifications, setShowNotifications] = useState(false)
+  const [, setNotifTick] = useState(0)
+
+  const toggleCollapse = useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev
+      localStorage.setItem('dlbc_player_sidebar_collapsed', next ? '1' : '0')
+      return next
+    })
+  }, [])
 
   const [dataReady, setDataReady] = useState(false)
 
@@ -2038,8 +2049,6 @@ export default function PlayerDashboard() {
   }, [authUser?.user_metadata, user, dataReady, refreshClubPlayer])
 
   const needsOnboarding = clubPlayer ? needsPlayerOnboarding(clubPlayer) : false
-  const paymentFocus = clubPlayer ? getMemberPaymentFocus(clubPlayer) : null
-  const feePaid = clubPlayer ? isMemberFeePaid(clubPlayer) : false
 
   // Players should always see the Schedule tab — the ScheduleTab component
   // shows a friendly "waiting for team assignment" message when a coach has
@@ -2098,7 +2107,30 @@ export default function PlayerDashboard() {
     )
   }
 
-  const unreadCount = buildPlayerNotifications(clubPlayer).filter((n) => !n.read).length
+  // notifTick forces rebuild after dismiss/clear
+  const notifications = buildPlayerNotifications(clubPlayer)
+  const isRail = sidebarCollapsed
+
+  const dismissNotification = (id: string) => {
+    const deletedIds = getNotifIdSet(NOTIF_DELETED_KEY)
+    deletedIds.add(id)
+    saveNotifIdSet(NOTIF_DELETED_KEY, deletedIds)
+    setNotifTick((t) => t + 1)
+  }
+
+  const clearNotifications = () => {
+    const deletedIds = getNotifIdSet(NOTIF_DELETED_KEY)
+    for (const n of notifications) deletedIds.add(n.id)
+    saveNotifIdSet(NOTIF_DELETED_KEY, deletedIds)
+    setNotifTick((t) => t + 1)
+    setShowNotifications(false)
+  }
+
+  const notifIcon = (type: NotificationItem['type']) => {
+    if (type === 'payment') return <CreditCard size={14} className="text-amber-500" />
+    if (type === 'session') return <CalendarDays size={14} className="text-blue-500" />
+    return <Bell size={14} className="text-amber-500" />
+  }
 
   return (
     <div className="dashboard-shell player-dash min-h-[100dvh] flex">
@@ -2110,72 +2142,96 @@ export default function PlayerDashboard() {
       )}
 
       <aside
-        className={`dash-sidebar fixed md:static inset-y-0 left-0 z-50 w-64 flex flex-col py-6 px-4 transition-transform duration-300 md:translate-x-0 ${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
+        className={`dash-sidebar fixed md:sticky inset-y-0 left-0 z-50 flex flex-col py-6 transition-[transform,width,padding] duration-300 md:translate-x-0 ${
+          isRail ? 'dash-sidebar--rail w-64 md:w-[4.75rem] px-4 md:px-2.5' : 'w-64 px-4'
+        } ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}
         style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}
       >
-        <Link to="/" className="flex items-center gap-3 mb-5 px-2 hover:opacity-90 transition-opacity group" title="Back to Dublin Lions home">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-lions-100 to-warn-50 ring-1 ring-lions-200 group-hover:ring-lions-400 transition-all">
-            <img src={logoUrl || asset('logo-lions-emblem.png')} alt="Dublin Lions" className="h-7 w-auto" />
-          </div>
-          <div>
-            <p className="font-oswald font-bold text-lg text-slate-900 tracking-wide leading-none">DUBLIN LIONS</p>
-            <p className="font-inter text-[10px] uppercase tracking-[0.2em] text-warn-600 mt-1">Player Portal</p>
-          </div>
-        </Link>
+        <div className={`flex items-center mb-5 ${isRail ? 'md:justify-center justify-between' : 'justify-between'} gap-2`}>
+          <Link
+            to="/"
+            className={`flex items-center gap-3 min-w-0 hover:opacity-90 transition-opacity group ${isRail ? 'md:justify-center' : ''}`}
+            title="Back to Dublin Lions home"
+          >
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-lions-100 to-lions-50 ring-1 ring-lions-200 group-hover:ring-lions-400 transition-all shrink-0">
+              <img src={logoUrl || asset('logo-lions-emblem.png')} alt="Dublin Lions" className="h-7 w-auto" />
+            </div>
+            <div className={isRail ? 'md:hidden' : ''}>
+              <p className="font-oswald font-bold text-lg text-slate-900 tracking-wide leading-none">DUBLIN LIONS</p>
+              <p className="font-inter text-[10px] uppercase tracking-[0.2em] text-lions-600 mt-1">Player Portal</p>
+            </div>
+          </Link>
+          <button
+            type="button"
+            onClick={toggleCollapse}
+            className={`dash-rail-toggle hidden md:flex shrink-0 ${isRail ? 'md:hidden' : ''}`}
+            title="Collapse sidebar"
+            aria-label="Collapse sidebar"
+          >
+            <PanelLeftClose size={16} />
+          </button>
+        </div>
+
+        {isRail && (
+          <button
+            type="button"
+            onClick={toggleCollapse}
+            className="dash-rail-toggle hidden md:flex mx-auto mb-4"
+            title="Expand sidebar"
+            aria-label="Expand sidebar"
+          >
+            <PanelLeftOpen size={16} />
+          </button>
+        )}
+
         <Link
           to="/"
-          className="flex items-center gap-2 mb-5 mx-1 px-3 py-2 rounded-lg bg-slate-100 hover:bg-lions-50 text-slate-600 hover:text-lions-700 font-inter text-xs transition-all border border-slate-200"
+          className={`flex items-center gap-2 mb-5 rounded-lg bg-slate-100 hover:bg-lions-50 text-slate-600 hover:text-lions-700 font-inter text-xs transition-all border border-slate-200 ${
+            isRail ? 'md:justify-center md:px-0 md:py-2.5 px-3 py-2 mx-1' : 'mx-1 px-3 py-2'
+          }`}
         >
-          <Home size={14} />
-          Back to Site
+          <Home size={14} className="shrink-0" />
+          <span className={isRail ? 'md:hidden' : ''}>Back to Site</span>
         </Link>
 
         <nav className="flex-1 space-y-1 overflow-y-auto scroll-slim -mr-2 pr-2">
-          <p className="nav-section-label px-3 mb-2">My Club</p>
+          <p className={`nav-section-label px-3 mb-2 ${isRail ? 'md:hidden' : ''}`}>My Club</p>
           {sidebarTabs.map((tab) => {
             const Icon = tab.icon
             const isActive = activeTab === tab.key
             return (
-              <button
-                key={tab.key}
-                onClick={() => {
-                  setActiveTab(tab.key)
-                  setSidebarOpen(false)
-                }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-inter text-sm font-medium transition-all duration-150 ${
-                  isActive
-                    ? 'text-slate-900 nav-active'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                }`}
-              >
-                <Icon size={18} className={isActive ? 'text-warn-500' : 'text-lions-500'} />
-                {tab.label}
-                {tab.key === 'notifications' && unreadCount > 0 && (
-                  <span className="ml-auto bg-warn-500 text-white text-[0.65rem] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center">
-                    {unreadCount}
-                  </span>
-                )}
-              </button>
+              <div key={tab.key} className="dash-nav-item">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab(tab.key)
+                    setSidebarOpen(false)
+                  }}
+                  title={tab.label}
+                  className={`w-full flex items-center gap-3 rounded-xl font-inter text-sm font-medium transition-all duration-150 ${
+                    isRail ? 'md:justify-center md:px-2.5 px-3 py-2.5' : 'px-3 py-2.5'
+                  } ${
+                    isActive
+                      ? 'text-slate-900 nav-active'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  }`}
+                >
+                  <Icon size={18} className={`shrink-0 ${isActive ? 'text-lions-600' : 'text-slate-400'}`} />
+                  <span className={isRail ? 'md:hidden' : ''}>{tab.label}</span>
+                </button>
+                {isRail && <span className="dash-nav-tip hidden md:block">{tab.label}</span>}
+              </div>
             )
           })}
-          <button
-            onClick={() => navigate('/store')}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-inter text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-lions-700 transition-all"
-          >
-            <ShoppingBag size={18} className="text-lions-500" />
-            Club Shop
-          </button>
         </nav>
 
         <div className="mt-auto border-t border-slate-200 pt-4">
-          <div className="relative">
+          <div className={`relative ${isRail ? 'md:hidden' : ''}`}>
             <button
               onClick={() => setUserMenuOpen(!userMenuOpen)}
               className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 ring-1 ring-slate-200 hover:bg-white hover:ring-lions-200 transition-colors"
             >
-              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-lions-500 to-lions-600 ring-2 ring-warn-400/40 flex items-center justify-center shrink-0 text-white font-inter font-semibold text-xs">
+              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-lions-500 to-lions-600 ring-2 ring-lions-200 flex items-center justify-center shrink-0 text-white font-inter font-semibold text-xs">
                 {user.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}
               </div>
               <div className="text-left flex-1 min-w-0">
@@ -2210,62 +2266,119 @@ export default function PlayerDashboard() {
               </div>
             )}
           </div>
+          {isRail && (
+            <div className="hidden md:flex flex-col items-center gap-2">
+              <button
+                type="button"
+                onClick={() => { setActiveTab('profile'); setSidebarOpen(false) }}
+                className="dash-rail-toggle"
+                title="Profile"
+                aria-label="Profile"
+              >
+                <User size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="dash-rail-toggle"
+                title="Logout"
+                aria-label="Logout"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+          )}
         </div>
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="dash-topbar h-16 flex items-center justify-between px-4 md:px-8 sticky top-0 z-30">
-          <div className="flex items-center gap-3">
+        <header className="dash-topbar h-auto min-h-16 flex items-center justify-between gap-4 px-4 md:px-8 py-3 sticky top-0 z-30">
+          <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="md:hidden text-slate-500 hover:text-lions-600 p-1 transition-colors"
+              className="md:hidden text-slate-500 hover:text-slate-900 p-1 transition-colors"
               aria-label="Open menu"
             >
               <Menu size={22} />
             </button>
-            <span className="hidden md:block h-7 w-1.5 rounded-full accent-bar" />
-            <h1 className="font-oswald font-bold text-xl md:text-2xl text-slate-900 tracking-wide capitalize">
-              {tabTitle(activeTab)}
-            </h1>
+            <div className="min-w-0">
+              <h1 className="font-oswald font-bold text-xl md:text-2xl text-slate-900 tracking-tight capitalize truncate">
+                {activeTab === 'overview' ? `Hello, ${user.name.split(' ')[0]}!` : tabTitle(activeTab)}
+              </h1>
+              {activeTab === 'overview' && (
+                <p className="hidden sm:block font-inter text-sm text-slate-500 mt-0.5 truncate">
+                  Explore information and activity about your membership.
+                </p>
+              )}
+            </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            {!needsOnboarding && paymentFocus && !feePaid && (
-              <button
-                onClick={() => setActiveTab('payments')}
-                className="hidden sm:inline-flex btn-accent font-inter font-semibold text-xs uppercase tracking-wider px-4 py-2 rounded-lg"
-              >
-                {paymentFocus === 'monthly' ? 'Pay membership' : 'Pay registration'}
-              </button>
-            )}
+          <div className="relative shrink-0">
             <button
-              onClick={() => setActiveTab('notifications')}
-              className="relative p-2 text-slate-500 hover:text-lions-600 transition-colors"
+              type="button"
+              onClick={() => setShowNotifications(!showNotifications)}
+              className="mgr-topbar-btn"
               aria-label="Notifications"
             >
-              <Bell size={20} />
-              {unreadCount > 0 && (
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-warn-500 rounded-full ring-2 ring-white" />
+              <Bell size={18} />
+              {notifications.length > 0 && (
+                <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-red-500 rounded-full" />
               )}
             </button>
+            {showNotifications && (
+              <div className="absolute right-0 top-full mt-2 w-80 dash-card shadow-xl z-50 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="font-inter font-semibold text-sm text-slate-900">Notifications</p>
+                  {notifications.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={clearNotifications}
+                      className="font-inter text-xs text-slate-400 hover:text-red-500"
+                    >
+                      Clear All
+                    </button>
+                  )}
+                </div>
+                <div className="space-y-3 max-h-64 overflow-y-auto">
+                  {notifications.length === 0 ? (
+                    <p className="font-inter text-sm text-slate-400 text-center py-4">No notifications</p>
+                  ) : (
+                    notifications.map((n) => (
+                      <div key={n.id} className="flex gap-3 items-start">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                          n.type === 'payment' ? 'bg-amber-500/10' : n.type === 'session' ? 'bg-blue-500/10' : 'bg-amber-500/10'
+                        }`}>
+                          {notifIcon(n.type)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-inter text-sm text-slate-900">{n.title}</p>
+                          <p className="font-inter text-xs text-slate-500">{n.message}</p>
+                        </div>
+                        <button type="button" onClick={() => dismissNotification(n.id)} className="text-slate-400 hover:text-slate-700">
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </header>
 
         <main className="flex-1 overflow-y-auto p-4 md:p-8 scroll-slim">
           <div key={activeTab} className="max-w-6xl mx-auto dash-view-enter">
-            {activeTab === 'overview' && <OverviewTab user={user} clubPlayer={clubPlayer} onNavigate={setActiveTab} />}
+            {activeTab === 'overview' && <OverviewTab clubPlayer={clubPlayer} onNavigate={setActiveTab} />}
             {activeTab === 'payments' && <PaymentsTab user={user} onUpdateUser={handleUpdateUser} />}
             {activeTab === 'schedule' && <ScheduleTab clubPlayer={clubPlayer} />}
-            {activeTab === 'profile' && (
-              <ProfileTab
-                user={user}
-                clubPlayer={clubPlayer}
-                onUpdateUser={handleUpdateUser}
-                onClubPlayerUpdate={setClubPlayer}
-              />
+            {activeTab === 'children' && (
+              <ChildrenTab clubPlayer={clubPlayer} onClubPlayerUpdate={setClubPlayer} />
             )}
-            {activeTab === 'notifications' && <NotificationsTab clubPlayer={clubPlayer} />}
+            {activeTab === 'profile' && (
+              <ProfileTab user={user} onUpdateUser={handleUpdateUser} />
+            )}
             {activeTab === 'chat' && <ChatTab user={user} />}
+            {activeTab === 'shop' && <Store embedded />}
           </div>
         </main>
       </div>

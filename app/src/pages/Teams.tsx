@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  X, Trophy, TrendingUp, Users, ChevronRight, Pencil, Trash2, Camera,
+  X, Users, ChevronRight, Pencil, Trash2, Camera,
   AlertTriangle, Check, Plus
 } from 'lucide-react'
 import { useSiteImages, useSiteImage, useSiteText, LABEL_PREFIX, asset } from '@/hooks/useSiteImages'
@@ -48,9 +48,6 @@ interface DisplayPlayer {
   since: number
   nationality: string
   image: string
-  ppg: number
-  rpg: number
-  apg: number
   clubPlayer: Player
 }
 
@@ -65,9 +62,6 @@ function toDisplayPlayer(p: Player): DisplayPlayer {
     since: p.since || 2021,
     nationality: p.gender === 'Male' ? 'IRL' : 'IRL',
     image: p.photoUrl ? asset(p.photoUrl) : '',
-    ppg: p.ppg || 0,
-    rpg: p.rpg || 0,
-    apg: p.apg || 0,
     clubPlayer: p,
   }
 }
@@ -89,9 +83,6 @@ function EditPlayerModal({
   const [number, setNumber] = useState(player.number.toString())
   const [height, setHeight] = useState(player.height)
   const [age, setAge] = useState(player.age.toString())
-  const [ppg, setPpg] = useState(player.ppg.toString())
-  const [rpg, setRpg] = useState(player.rpg.toString())
-  const [apg, setApg] = useState(player.apg.toString())
   const [photoPreview, setPhotoPreview] = useState(player.image)
 
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -111,9 +102,6 @@ function EditPlayerModal({
       jerseyNumber: parseInt(number) || player.number,
       height,
       age: parseInt(age) || player.age,
-      ppg: parseFloat(ppg) || 0,
-      rpg: parseFloat(rpg) || 0,
-      apg: parseFloat(apg) || 0,
     }
     const newPhoto = photoPreview !== player.image ? photoPreview : undefined
     onSave(player.id, updates, newPhoto)
@@ -217,38 +205,6 @@ function EditPlayerModal({
                 type="number"
                 value={age}
                 onChange={(e) => setAge(e.target.value)}
-                className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-electric-blue"
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs text-slate-400 uppercase tracking-wider mb-1">PPG</label>
-              <input
-                type="number"
-                step="0.1"
-                value={ppg}
-                onChange={(e) => setPpg(e.target.value)}
-                className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-electric-blue"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 uppercase tracking-wider mb-1">RPG</label>
-              <input
-                type="number"
-                step="0.1"
-                value={rpg}
-                onChange={(e) => setRpg(e.target.value)}
-                className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-electric-blue"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 uppercase tracking-wider mb-1">APG</label>
-              <input
-                type="number"
-                step="0.1"
-                value={apg}
-                onChange={(e) => setApg(e.target.value)}
                 className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-electric-blue"
               />
             </div>
@@ -494,20 +450,6 @@ function PlayerCard({
                   Since: {player.since}
                 </span>
               </div>
-              <div className="flex gap-4 mt-3 pt-3 border-t border-white/5">
-                <div className="text-center">
-                  <div className="font-oswald font-bold text-sm text-white">{player.ppg}</div>
-                  <div className="font-inter text-[10px] text-slate-400 uppercase tracking-wider">PPG</div>
-                </div>
-                <div className="text-center">
-                  <div className="font-oswald font-bold text-sm text-white">{player.rpg}</div>
-                  <div className="font-inter text-[10px] text-slate-400 uppercase tracking-wider">RPG</div>
-                </div>
-                <div className="text-center">
-                  <div className="font-oswald font-bold text-sm text-white">{player.apg}</div>
-                  <div className="font-inter text-[10px] text-slate-400 uppercase tracking-wider">APG</div>
-                </div>
-              </div>
             </div>
           </button>
         </div>
@@ -589,23 +531,6 @@ function PlayerCard({
                   <div className="font-oswald font-bold text-lg text-white mt-1">{player.since}</div>
                 </div>
               </div>
-              <div className="bg-[#0A1628] rounded-lg p-4">
-                <div className="font-inter text-xs text-slate-400 uppercase tracking-wider mb-2">Season Stats</div>
-                <div className="flex justify-around">
-                  <div className="text-center">
-                    <div className="font-oswald font-bold text-2xl text-electric-blue">{player.ppg}</div>
-                    <div className="font-inter text-xs text-slate-400">PPG</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="font-oswald font-bold text-2xl text-electric-blue">{player.rpg}</div>
-                    <div className="font-inter text-xs text-slate-400">RPG</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="font-oswald font-bold text-2xl text-electric-blue">{player.apg}</div>
-                    <div className="font-inter text-xs text-slate-400">APG</div>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -642,7 +567,6 @@ function TeamSection({
 }) {
   const headerReveal = useScrollReveal()
   const coachReveal = useScrollReveal()
-  const statsReveal = useScrollReveal()
   const coachImg = useSiteImage('coachRob')
   const [editingCoach, setEditingCoach] = useState(false)
 
@@ -655,8 +579,6 @@ function TeamSection({
 
   // Live player data
   const [players, setPlayersState] = useState<DisplayPlayer[]>([])
-  const [teamStats, setTeamStats] = useState({ ppg: 0, rpg: 0, apg: 0, fg: '0%' })
-  const [record, setRecord] = useState('W 0 — L 0')
 
   const loadData = useCallback(() => {
     const allPlayers = getPlayers()
@@ -665,21 +587,6 @@ function TeamSection({
       .map(toDisplayPlayer)
     setPlayersState(teamPlayers)
 
-    const team = getTeams().find((t) => t.id === teamId)
-    if (team) setRecord(`W ${team.wins} — L ${team.losses}`)
-
-    // Compute team stats from player stats
-    if (teamPlayers.length > 0) {
-      const avgPpg = teamPlayers.reduce((s, p) => s + p.ppg, 0) / teamPlayers.length
-      const avgRpg = teamPlayers.reduce((s, p) => s + p.rpg, 0) / teamPlayers.length
-      const avgApg = teamPlayers.reduce((s, p) => s + p.apg, 0) / teamPlayers.length
-      setTeamStats({
-        ppg: Math.round(avgPpg * 10) / 10,
-        rpg: Math.round(avgRpg * 10) / 10,
-        apg: Math.round(avgApg * 10) / 10,
-        fg: '46.2%',
-      })
-    }
   }, [teamId])
 
   useEffect(() => {
@@ -706,10 +613,6 @@ function TeamSection({
             <p className="font-inter text-base text-slate-400 mt-1">
               {genderLabel === "Men's" ? "Men's" : "Women's"} Senior Team · Domino's Division 1
             </p>
-          </div>
-          <div className="flex items-center gap-2 bg-amber-400/10 px-4 py-2 rounded-lg self-start md:self-center">
-            <Trophy className="w-5 h-5 text-amber-400" />
-            <span className="font-oswald font-bold text-xl text-amber-400">{record}</span>
           </div>
         </div>
 
@@ -802,28 +705,6 @@ function TeamSection({
           )}
         </div>
 
-        {/* Team Stats */}
-        <div
-          ref={statsReveal.ref}
-          className={`section-reveal ${statsReveal.visible ? 'visible' : ''} mt-12 grid grid-cols-2 md:grid-cols-4 gap-4`}
-          style={{ transitionDelay: '100ms' }}
-        >
-          {[
-            { label: 'Points Per Game', value: teamStats.ppg, icon: TrendingUp },
-            { label: 'Rebounds Per Game', value: teamStats.rpg, icon: TrendingUp },
-            { label: 'Assists Per Game', value: teamStats.apg, icon: TrendingUp },
-            { label: 'Field Goal %', value: teamStats.fg, icon: TrendingUp },
-          ].map((stat) => (
-            <div key={stat.label} className="bg-[#1E293B] rounded-xl p-5 text-center">
-              <div className="font-oswald font-bold text-2xl md:text-3xl text-electric-blue">
-                {stat.value}
-              </div>
-              <div className="font-inter text-xs text-slate-400 uppercase tracking-wider mt-2">
-                {stat.label}
-              </div>
-            </div>
-          ))}
-        </div>
       </div>
     </section>
   )
@@ -901,9 +782,6 @@ export default function Teams() {
       registrationDate: new Date().toISOString().split('T')[0],
       registeredWithBI: false,
       photoUrl: newPhoto,
-      ppg: updates.ppg ?? 0,
-      rpg: updates.rpg ?? 0,
-      apg: updates.apg ?? 0,
       height: updates.height,
       age: updates.age,
       since: new Date().getFullYear(),
@@ -919,7 +797,6 @@ export default function Teams() {
   const blankPlayer: DisplayPlayer = {
     id: '', name: '', number: 0, position: 'Guard', height: "6'0\"", age: 21,
     since: new Date().getFullYear(), nationality: 'IRL', image: '',
-    ppg: 0, rpg: 0, apg: 0,
     clubPlayer: {
       id: '', name: '', email: '', phone: '', dob: '', gender: 'Male',
       teamIds: [], position: 'Guard', jerseyNumber: 0, status: 'Pending',

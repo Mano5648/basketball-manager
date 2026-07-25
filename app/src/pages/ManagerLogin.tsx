@@ -142,7 +142,7 @@ export default function ManagerLogin() {
           </div>
         </div>
 
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"

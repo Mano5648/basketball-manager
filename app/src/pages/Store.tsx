@@ -79,114 +79,127 @@ function CartDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
       .filter(Boolean) as { productId: string; quantity: number; product: Product }[]
   }, [cart, products])
 
-  return (
+  return createPortal(
     <>
-      {/* Overlay */}
       <div
-        className={`fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm transition-opacity ${
+        className={`club-store-overlay fixed inset-0 z-[70] transition-opacity duration-300 ${
           open ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
         onClick={onClose}
+        aria-hidden={!open}
       />
-      {/* Drawer */}
       <div
-        className={`fixed top-0 right-0 bottom-0 z-[80] w-full max-w-md bg-[#0F172A] border-l border-white/[0.06] shadow-2xl transition-transform duration-300 ${
-          open ? 'translate-x-0' : 'translate-x-full'
+        className={`club-store-drawer fixed top-0 right-0 bottom-0 z-[80] w-full max-w-md flex flex-col transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+          open ? 'translate-x-0' : 'translate-x-full pointer-events-none'
         }`}
+        aria-hidden={!open}
+        role="dialog"
+        aria-label="Your cart"
       >
-        <div className="flex flex-col h-full">
-          <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
-            <h2 className="font-oswald font-bold text-xl text-white flex items-center gap-2">
-              <ShoppingCart size={20} /> Your Cart ({count})
-            </h2>
-            <button onClick={onClose} className="w-8 h-8 bg-white/5 rounded-full flex items-center justify-center text-slate-400 hover:text-white">
-              <X size={18} />
-            </button>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200/80">
+          <div>
+            <h2 className="font-oswald font-bold text-xl text-slate-900 tracking-tight">Your cart</h2>
+            <p className="font-inter text-xs text-slate-500 mt-0.5">{count} {count === 1 ? 'item' : 'items'}</p>
           </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-9 h-9 rounded-xl bg-slate-100 text-slate-500 hover:text-slate-900 hover:bg-slate-200 flex items-center justify-center transition-colors active:scale-[0.98]"
+            aria-label="Close cart"
+          >
+            <X size={18} />
+          </button>
+        </div>
 
-          <div className="flex-1 overflow-y-auto p-5 space-y-4">
-            {cartNotice && (
-              <p className="font-inter text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-                {cartNotice}
-              </p>
-            )}
-            {cartItems.length === 0 ? (
-              <div className="text-center py-12">
-                <ShoppingCart size={48} className="text-slate-600 mx-auto mb-4" />
-                <p className="font-inter text-slate-400">Your cart is empty.</p>
-                <p className="font-inter text-sm text-slate-500 mt-1">Browse our club gear and add items here.</p>
+        <div className="flex-1 overflow-y-auto p-5 space-y-3 scroll-slim">
+          {cartNotice && (
+            <p className="font-inter text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+              {cartNotice}
+            </p>
+          )}
+          {cartItems.length === 0 ? (
+            <div className="text-center py-16 px-4">
+              <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-4">
+                <ShoppingCart size={24} className="text-slate-400" />
               </div>
-            ) : (
-              cartItems.map((item) => (
-                <div key={item.productId} className="flex gap-4 bg-[#1E293B] rounded-xl p-4 border border-white/[0.06]">
-                  <div className="w-16 h-16 bg-[#0A1628] rounded-lg flex items-center justify-center shrink-0 overflow-hidden">
-                    {item.product.imageKey ? (
-                      <img src={item.product.imageKey} alt={item.product.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <Package size={20} className="text-slate-600" />
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-inter font-medium text-sm text-white truncate">{item.product.name}</p>
-                    <p className="font-inter text-xs text-slate-400 mt-0.5">€{item.product.price.toFixed(2)} each</p>
-                    {item.product.stock <= LOW_STOCK_THRESHOLD && item.product.stock > 0 && (
-                      <p className="font-inter text-[10px] text-amber-400 mt-0.5">Only {item.product.stock} left</p>
-                    )}
-                    <div className="flex items-center gap-3 mt-2">
-                      <div className="flex items-center gap-1 bg-[#0A1628] rounded-lg">
-                        <button
-                          onClick={() => {
-                            const result = updateCartQuantity(item.productId, item.quantity - 1)
-                            if (!result.ok && result.reason) setCartNotice(result.reason)
-                            else setCartNotice('')
-                          }}
-                          className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white"
-                        >
-                          <Minus size={14} />
-                        </button>
-                        <span className="font-inter text-sm text-white w-6 text-center">{item.quantity}</span>
-                        <button
-                          onClick={() => {
-                            const result = updateCartQuantity(item.productId, item.quantity + 1)
-                            if (!result.ok && result.reason) setCartNotice(result.reason)
-                            else setCartNotice('')
-                          }}
-                          disabled={getRemainingStock(item.productId) <= 0}
-                          className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          <Plus size={14} />
-                        </button>
-                      </div>
+              <p className="font-inter font-medium text-slate-900">Cart is empty</p>
+              <p className="font-inter text-sm text-slate-500 mt-1">Add club gear to get started.</p>
+            </div>
+          ) : (
+            cartItems.map((item) => (
+              <div key={item.productId} className="flex gap-3.5 p-3.5 rounded-2xl bg-white ring-1 ring-slate-200/80 shadow-sm">
+                <div className="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center shrink-0 overflow-hidden">
+                  {item.product.imageKey ? (
+                    <img src={item.product.imageKey} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <Package size={20} className="text-slate-300" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-inter font-medium text-sm text-slate-900 truncate">{item.product.name}</p>
+                  <p className="font-inter text-xs text-slate-500 mt-0.5">€{item.product.price.toFixed(2)} each</p>
+                  {item.product.stock <= LOW_STOCK_THRESHOLD && item.product.stock > 0 && (
+                    <p className="font-inter text-[11px] text-amber-700 mt-0.5">Only {item.product.stock} left</p>
+                  )}
+                  <div className="flex items-center gap-2.5 mt-2.5">
+                    <div className="flex items-center rounded-lg bg-slate-100">
                       <button
-                        onClick={() => removeFromCart(item.productId)}
-                        className="text-slate-500 hover:text-red-400 transition-colors"
+                        type="button"
+                        onClick={() => {
+                          const result = updateCartQuantity(item.productId, item.quantity - 1)
+                          if (!result.ok && result.reason) setCartNotice(result.reason)
+                          else setCartNotice('')
+                        }}
+                        className="w-7 h-7 flex items-center justify-center text-slate-500 hover:text-slate-900 active:scale-95"
+                        aria-label="Decrease quantity"
                       >
-                        <Trash2 size={14} />
+                        <Minus size={14} />
+                      </button>
+                      <span className="font-inter text-sm text-slate-900 w-6 text-center tabular-nums">{item.quantity}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const result = updateCartQuantity(item.productId, item.quantity + 1)
+                          if (!result.ok && result.reason) setCartNotice(result.reason)
+                          else setCartNotice('')
+                        }}
+                        disabled={getRemainingStock(item.productId) <= 0}
+                        className="w-7 h-7 flex items-center justify-center text-slate-500 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed active:scale-95"
+                        aria-label="Increase quantity"
+                      >
+                        <Plus size={14} />
                       </button>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-inter font-semibold text-sm text-white">
-                      €{(item.product.price * item.quantity).toFixed(2)}
-                    </p>
+                    <button
+                      type="button"
+                      onClick={() => removeFromCart(item.productId)}
+                      className="text-slate-400 hover:text-red-600 transition-colors p-1"
+                      aria-label="Remove item"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
-
-          {cartItems.length > 0 && (
-            <div className="p-5 border-t border-white/[0.06] space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="font-inter text-slate-300">Subtotal</span>
-                <span className="font-inter font-bold text-lg text-white">€{total.toFixed(2)}</span>
+                <p className="font-inter font-semibold text-sm text-slate-900 tabular-nums shrink-0">
+                  €{(item.product.price * item.quantity).toFixed(2)}
+                </p>
               </div>
-            </div>
+            ))
           )}
-          <CheckoutButton showTrigger={cartItems.length > 0} onSuccess={onClose} />
         </div>
+
+        {cartItems.length > 0 && (
+          <div className="px-5 pt-4 border-t border-slate-200/80">
+            <div className="flex items-center justify-between mb-1">
+              <span className="font-inter text-sm text-slate-500">Subtotal</span>
+              <span className="font-oswald font-bold text-xl text-slate-900 tabular-nums">€{total.toFixed(2)}</span>
+            </div>
+          </div>
+        )}
+        <CheckoutButton showTrigger={cartItems.length > 0} onSuccess={onClose} />
       </div>
-    </>
+    </>,
+    document.body,
   )
 }
 
@@ -295,10 +308,11 @@ function CheckoutButton({ showTrigger, onSuccess }: { showTrigger: boolean; onSu
   return (
     <>
       {showTrigger && (
-        <div className="px-5 pb-5">
+        <div className="px-5 pb-5 pt-3">
           <button
+            type="button"
             onClick={openCheckout}
-            className="w-full bg-electric-blue hover:bg-blue-400 text-white font-inter font-semibold text-sm rounded-lg px-4 py-3 transition-all flex items-center justify-center gap-2"
+            className="club-store-cta w-full font-inter font-semibold text-sm rounded-xl px-4 py-3.5 transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
           >
             <CreditCard size={16} /> Checkout
           </button>
@@ -306,52 +320,68 @@ function CheckoutButton({ showTrigger, onSuccess }: { showTrigger: boolean; onSu
       )}
 
       {open && createPortal(
-        <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => !done && setOpen(false)}>
-          <div className="bg-[#1E293B] rounded-2xl max-w-md w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="club-store-overlay fixed inset-0 z-[200] flex items-center justify-center p-4"
+          onClick={() => !done && setOpen(false)}
+        >
+          <div
+            className="club-store-sheet w-full max-w-md overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             {!done ? (
               <>
-                <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
-                  <h3 className="font-oswald font-bold text-xl text-white">Checkout</h3>
-                  <button onClick={() => setOpen(false)} className="w-8 h-8 bg-white/5 rounded-full flex items-center justify-center text-slate-400 hover:text-white">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200/80">
+                  <div>
+                    <h3 className="font-oswald font-bold text-xl text-slate-900 tracking-tight">Checkout</h3>
+                    <p className="font-inter text-xs text-slate-500 mt-0.5">Confirm details and pay</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setOpen(false)}
+                    className="w-9 h-9 rounded-xl bg-slate-100 text-slate-500 hover:text-slate-900 hover:bg-slate-200 flex items-center justify-center transition-colors"
+                    aria-label="Close checkout"
+                  >
                     <X size={18} />
                   </button>
                 </div>
                 <div className="p-5 space-y-4 relative">
                   <HoneypotField value={honeypot} onChange={setHoneypot} />
                   {loggedInContact && (
-                    <p className="font-inter text-xs text-slate-400 bg-white/[0.03] border border-white/[0.06] rounded-lg px-3 py-2">
-                      Pre-filled from your account — change name or email below if needed.
+                    <p className="font-inter text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
+                      Pre-filled from your account. Edit below if needed.
                     </p>
                   )}
                   <div>
-                    <label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-1">Full Name</label>
+                    <label className="block font-inter text-xs font-medium text-slate-600 mb-1.5">Full name</label>
                     <input
                       value={name}
                       onChange={(e) => setName(e.target.value)}
-                      className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
-                      placeholder="e.g. John Murphy"
+                      className="club-store-input"
+                      placeholder="e.g. Aoife Murphy"
+                      autoComplete="name"
                     />
                   </div>
                   <div>
-                    <label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-1">Email</label>
+                    <label className="block font-inter text-xs font-medium text-slate-600 mb-1.5">Email</label>
                     <input
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
-                      placeholder="john@example.com"
+                      className="club-store-input"
+                      placeholder="you@example.com"
+                      autoComplete="email"
                     />
                   </div>
                   <div>
-                    <label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-2">Payment Method</label>
-                    <div className="flex gap-2">
+                    <label className="block font-inter text-xs font-medium text-slate-600 mb-2">Payment method</label>
+                    <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
                         onClick={() => setMethod('card')}
-                        className={`flex-1 flex items-center justify-center gap-2 rounded-lg px-4 py-3 border font-inter text-sm transition-all ${
+                        className={`flex items-center justify-center gap-2 rounded-xl px-3 py-3 border font-inter text-sm transition-all active:scale-[0.98] ${
                           method === 'card'
-                            ? 'border-electric-blue bg-blue-500/10 text-white'
-                            : 'border-white/[0.06] text-slate-400 hover:text-white hover:bg-white/5'
+                            ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'
                         }`}
                       >
                         <CreditCard size={16} /> Card
@@ -359,47 +389,60 @@ function CheckoutButton({ showTrigger, onSuccess }: { showTrigger: boolean; onSu
                       <button
                         type="button"
                         onClick={() => setMethod('cash')}
-                        className={`flex-1 flex items-center justify-center gap-2 rounded-lg px-4 py-3 border font-inter text-sm transition-all ${
+                        className={`flex items-center justify-center gap-2 rounded-xl px-3 py-3 border font-inter text-sm transition-all active:scale-[0.98] ${
                           method === 'cash'
-                            ? 'border-electric-blue bg-blue-500/10 text-white'
-                            : 'border-white/[0.06] text-slate-400 hover:text-white hover:bg-white/5'
+                            ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'
                         }`}
                       >
-                        <Banknote size={16} /> Cash on Collection
+                        <Banknote size={16} /> Cash
                       </button>
                     </div>
+                    {method === 'cash' && (
+                      <p className="font-inter text-xs text-slate-500 mt-2">Pay when you collect from the club.</p>
+                    )}
                   </div>
-                  <PrivacyConsentField checked={privacyAccepted} onChange={setPrivacyAccepted} />
-                  <TurnstileWidget onVerify={setTurnstileToken} onExpire={() => setTurnstileToken('')} theme="dark" />
+                  <PrivacyConsentField checked={privacyAccepted} onChange={setPrivacyAccepted} tone="light" />
+                  <TurnstileWidget onVerify={setTurnstileToken} onExpire={() => setTurnstileToken('')} theme="light" />
                 </div>
                 {error && (
-                  <p className="font-inter text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded mx-5 mb-3 px-3 py-2">
+                  <p className="font-inter text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl mx-5 mb-3 px-3 py-2.5">
                     {error}
                   </p>
                 )}
-                <div className="p-5 border-t border-white/[0.06] flex gap-3">
-                  <button onClick={() => setOpen(false)} className="flex-1 bg-white/5 border border-white/[0.06] text-slate-300 font-inter font-medium text-sm rounded-lg px-4 py-2.5 hover:bg-white/10">
+                <div className="p-5 border-t border-slate-200/80 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setOpen(false)}
+                    className="flex-1 bg-white border border-slate-200 text-slate-700 font-inter font-medium text-sm rounded-xl px-4 py-2.5 hover:bg-slate-50 active:scale-[0.98] transition-colors"
+                  >
                     Cancel
                   </button>
                   <button
+                    type="button"
                     onClick={handleCheckout}
                     disabled={!name.trim() || !email.trim() || paying}
-                    className="flex-1 bg-electric-blue hover:bg-blue-400 disabled:opacity-40 text-white font-inter font-semibold text-sm rounded-lg px-4 py-2.5 transition-colors"
+                    className="club-store-cta flex-1 font-inter font-semibold text-sm rounded-xl px-4 py-2.5 transition-all disabled:opacity-40 active:scale-[0.98]"
                   >
-                    {paying ? 'Redirecting to Stripe…' : method === 'card' ? (isStripeCheckoutConfigured() ? 'Pay with Stripe' : 'Continue to payment') : 'Place Order'}
+                    {paying ? 'Redirecting…' : method === 'card' ? (isStripeCheckoutConfigured() ? 'Pay with Stripe' : 'Continue to payment') : 'Place order'}
                   </button>
                 </div>
               </>
             ) : (
               <div className="p-8 text-center">
-                <CheckCircle size={56} className="text-green-400 mx-auto mb-4" />
-                <h3 className="font-oswald font-bold text-2xl text-white mb-2">Order Confirmed!</h3>
-                <p className="font-inter text-slate-300 mb-1">Thank you for supporting Dublin Lions BC.</p>
-                <p className="font-inter text-sm text-slate-400 mb-1">A confirmation email has been sent to {email || 'your inbox'}.</p>
-                <p className="font-inter text-sm text-slate-400 mb-6">Order ID: <span className="text-white font-mono">{orderId}</span></p>
+                <div className="w-14 h-14 rounded-2xl bg-emerald-50 flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle size={28} className="text-emerald-600" />
+                </div>
+                <h3 className="font-oswald font-bold text-2xl text-slate-900 mb-2 tracking-tight">Order confirmed</h3>
+                <p className="font-inter text-slate-600 mb-1">Thanks for supporting Dublin Lions.</p>
+                <p className="font-inter text-sm text-slate-500 mb-1">Confirmation sent to {email || 'your inbox'}.</p>
+                <p className="font-inter text-sm text-slate-500 mb-6">
+                  Order <span className="text-slate-900 font-mono text-xs">{orderId}</span>
+                </p>
                 <button
+                  type="button"
                   onClick={closeAll}
-                  className="bg-electric-blue hover:bg-blue-400 text-white font-inter font-semibold text-sm rounded-lg px-8 py-3 transition-colors"
+                  className="club-store-cta font-inter font-semibold text-sm rounded-xl px-8 py-3 transition-all active:scale-[0.98]"
                 >
                   Done
                 </button>
@@ -450,8 +493,8 @@ function CheckoutButton({ showTrigger, onSuccess }: { showTrigger: boolean; onSu
 
 /* ─────────────────────── Store Page ─────────────────────── */
 
-export default function Store() {
-  const [products, setProductsState] = useState<Product[]>([])
+export default function Store({ embedded = false }: { embedded?: boolean } = {}) {
+  const [products, setProductsState] = useState(() => getProducts().filter((p) => p.active))
   const [category, setCategory] = useState('All')
   const [cartOpen, setCartOpen] = useState(false)
   const [cartCount, setCartCount] = useState(getCartCount)
@@ -494,40 +537,41 @@ export default function Store() {
   }, [])
 
   return (
-    <div className="min-h-[100dvh] bg-deep-navy">
-      {/* Header */}
-      <div className="pt-24 pb-8 px-4 md:px-8 lg:px-12 max-w-7xl mx-auto">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="font-oswald font-bold text-[clamp(2rem,5vw,3.5rem)] text-white leading-tight">
-              CLUB STORE
-            </h1>
-            <p className="font-inter text-slate-400 mt-1 max-w-lg">
-              Official Dublin Lions BC merchandise — jerseys, apparel, equipment and more. All profits support the club.
+    <div className={`club-store ${embedded ? 'club-store--embedded' : 'club-store--page'}`}>
+      <div className={`club-store__header ${embedded ? '' : 'pt-24'} max-w-7xl mx-auto px-4 md:px-8 lg:px-12`}>
+        <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 pb-5">
+          <div className="min-w-0">
+            {!embedded && (
+              <h1 className="font-oswald font-bold text-[clamp(2rem,4.5vw,3rem)] text-slate-900 tracking-tight leading-none">
+                Club store
+              </h1>
+            )}
+            <p className={`font-inter text-sm text-slate-600 max-w-lg ${embedded ? '' : 'mt-2'}`}>
+              Official Dublin Lions gear. Profits support the club.
             </p>
           </div>
           <button
+            type="button"
             onClick={() => setCartOpen(true)}
-            className="flex items-center gap-2 bg-[#1E293B] hover:bg-[#26354a] border border-white/[0.06] text-white font-inter font-medium text-sm px-5 py-3 rounded-lg transition-colors"
+            className="club-store-cart-btn shrink-0 inline-flex items-center gap-2 font-inter font-medium text-sm px-4 py-2.5 rounded-xl transition-all active:scale-[0.98]"
           >
             <ShoppingCart size={18} />
             Cart
             {cartCount > 0 && (
-              <span className="bg-electric-blue text-white text-xs font-bold px-2 py-0.5 rounded-full">{cartCount}</span>
+              <span className="club-store-cart-count">{cartCount}</span>
             )}
           </button>
         </div>
 
-        {/* Category Filters */}
-        <div className="flex flex-wrap gap-2 mt-8">
+        <div className="dash-segment overflow-x-auto max-w-full mb-6">
           {CATEGORIES.map((cat) => (
             <button
               key={cat}
+              type="button"
+              aria-selected={category === cat}
               onClick={() => setCategory(cat)}
-              className={`px-4 py-2 rounded-lg font-inter text-sm transition-all ${
-                category === cat
-                  ? 'bg-electric-blue text-white'
-                  : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
+              className={`px-3.5 py-2 font-inter text-sm font-medium whitespace-nowrap transition-colors ${
+                category === cat ? 'text-slate-900' : 'text-slate-500 hover:text-slate-800'
               }`}
             >
               {cat}
@@ -537,82 +581,81 @@ export default function Store() {
       </div>
 
       {storeNotice && (
-        <div className="px-4 md:px-8 lg:px-12 max-w-7xl mx-auto">
-          <p className="font-inter text-sm text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3 mb-4">
+        <div className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12">
+          <p className="font-inter text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
             {storeNotice}
           </p>
         </div>
       )}
 
-      {/* Product Grid */}
-      <div className="px-4 md:px-8 lg:px-12 pb-20 max-w-7xl mx-auto">
+      <div className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12 pb-16">
         {filtered.length === 0 ? (
           <div className="text-center py-20">
-            <Package size={64} className="text-slate-700 mx-auto mb-4" />
-            <p className="font-inter text-lg text-slate-400">No products available in this category.</p>
+            <div className="w-16 h-16 rounded-2xl bg-white ring-1 ring-slate-200/80 flex items-center justify-center mx-auto mb-4">
+              <Package size={28} className="text-slate-300" />
+            </div>
+            <p className="font-inter font-medium text-slate-900">Nothing in this category</p>
+            <p className="font-inter text-sm text-slate-500 mt-1">Try another filter or check back soon.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-5">
             {filtered.map((product) => (
-              <div
+              <article
                 key={product.id}
-                className="bg-[#1E293B] border border-white/[0.06] rounded-xl overflow-hidden hover:border-white/20 transition-all duration-200 hover:-translate-y-1 hover:shadow-xl group"
+                className="club-store-card group flex flex-col overflow-hidden"
               >
-                <div className="aspect-square bg-[#0A1628] relative overflow-hidden">
+                <div className="aspect-square bg-slate-100 relative overflow-hidden">
                   {product.imageKey ? (
                     <img
                       src={product.imageKey}
                       alt={product.name}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                      className="w-full h-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.03]"
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
-                      <Package size={48} className="text-slate-700" />
+                      <Package size={40} className="text-slate-300" />
                     </div>
                   )}
                   {product.stock <= LOW_STOCK_THRESHOLD && product.stock > 0 && (
-                    <span className="absolute top-3 right-3 bg-amber-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded">
-                      Only {product.stock} left
+                    <span className="absolute top-3 left-3 bg-amber-500 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md">
+                      {product.stock} left
                     </span>
                   )}
                   {product.stock === 0 && (
-                    <span className="absolute top-3 right-3 bg-red-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded">
-                      Out of Stock
+                    <span className="absolute top-3 left-3 bg-slate-900 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md">
+                      Sold out
                     </span>
                   )}
                 </div>
-                <div className="p-5">
-                  <p className="font-inter text-[10px] uppercase tracking-widest text-slate-500 mb-1">{product.category}</p>
-                  <h3 className="font-inter font-semibold text-white text-base leading-snug">{product.name}</h3>
-                  <p className="font-inter text-xs text-slate-400 mt-1 line-clamp-2">{product.description}</p>
-                  <div className="flex items-center justify-between mt-4">
-                    <span className="font-oswald font-bold text-xl text-white">€{product.price.toFixed(2)}</span>
+                <div className="flex flex-col flex-1 p-4">
+                  <p className="font-inter text-[10px] uppercase tracking-[0.14em] text-slate-400 mb-1">{product.category}</p>
+                  <h3 className="font-inter font-semibold text-slate-900 text-[0.95rem] leading-snug">{product.name}</h3>
+                  <p className="font-inter text-xs text-slate-500 mt-1 line-clamp-2 flex-1">{product.description}</p>
+                  <div className="flex items-center justify-between gap-3 mt-4">
+                    <span className="font-oswald font-bold text-xl text-slate-900 tabular-nums">€{product.price.toFixed(2)}</span>
                     <button
+                      type="button"
                       onClick={() => handleAdd(product.id)}
                       disabled={product.stock === 0}
-                      className={`flex items-center gap-1.5 font-inter font-medium text-xs px-4 py-2.5 rounded-lg transition-all ${
+                      className={`inline-flex items-center gap-1.5 font-inter font-medium text-xs px-3.5 py-2.5 rounded-xl transition-all active:scale-[0.98] disabled:cursor-not-allowed ${
                         addedId === product.id
-                          ? 'bg-green-500 text-white'
+                          ? 'bg-emerald-500 text-white'
                           : product.stock === 0
-                          ? 'bg-white/5 text-slate-600 cursor-not-allowed'
-                          : 'bg-electric-blue hover:bg-blue-400 text-white'
+                            ? 'bg-slate-100 text-slate-400'
+                            : 'bg-slate-900 text-white hover:bg-slate-800'
                       }`}
                     >
                       {addedId === product.id ? (
-                        <>
-                          <CheckCircle size={14} /> Added
-                        </>
+                        <><CheckCircle size={14} /> Added</>
                       ) : product.stock === 0 ? (
-                        <>Out of Stock</>
+                        'Sold out'
                       ) : (
-                        <>
-                          <ShoppingBag size={14} /> Add to Cart
-                        </>
+                        <><ShoppingBag size={14} /> Add</>
                       )}
                     </button>
                   </div>
                 </div>
-              </div>
+              </article>
             ))}
           </div>
         )}

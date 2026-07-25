@@ -16,7 +16,7 @@ export default function ProtectedRoute({
 
   if (loading) {
     return (
-      <div className="min-h-[100dvh] bg-[#0A1628] flex items-center justify-center">
+      <div className="min-h-[100dvh] flex items-center justify-center" style={{ background: '#f3f2ec' }}>
         <Loader2 size={32} className="text-blue-500 animate-spin" />
       </div>
     )

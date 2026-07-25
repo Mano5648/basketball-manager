@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/lib/AuthContext'
 import { CommandPalette, type CommandItem } from '@/components/dashboard/CommandPalette'
+import { ScheduleTimeGrid } from '@/components/dashboard/ScheduleTimeGrid'
+import { TeamChatUI } from '@/components/chat/TeamChatUI'
 import type { LucideIcon } from 'lucide-react'
 import {
   LayoutDashboard,
@@ -58,6 +60,9 @@ import {
   Ticket,
   UserMinus,
   UserCheck,
+  Menu,
+  ChevronDown,
+  Clock,
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-react'
@@ -107,8 +112,10 @@ import {
   getOrders,
   getChatMessages,
   addChatMessage,
+  deleteOwnChatMessage,
   getChatRoom,
   addChatMember,
+  resolveChatMemberId,
   removeChatMember,
   setChatAdmin,
   type ChatRoomMembership,
@@ -149,6 +156,8 @@ import {
   reconcileClubRoster,
   reconcileClubRosterIfNeeded,
   pullRemoteAppState,
+  publishChatNow,
+  pullMergedChatState,
   whenClubDataReady,
   ensureClubRosterSynced,
   getRosterListedMembers,
@@ -341,40 +350,52 @@ function useLiveData() {
 function formField(label: string, child: React.ReactNode) {
   return (
     <div>
-      <label className="block font-inter text-sm text-slate-300 mb-1">{label}</label>
+      <label className="block font-inter text-sm text-slate-600 mb-1.5">{label}</label>
       {child}
     </div>
   )
 }
 
+const dashField =
+  'w-full dash-input rounded-xl px-4 py-2.5 font-inter text-sm'
+
 /* ─────────────────────── Helper Components ─────────────────────── */
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
-    Paid: 'bg-green-500/10 text-green-400 border-green-500/20',
-    Active: 'bg-green-500/10 text-green-400 border-green-500/20',
-    'Completed': 'bg-green-500/10 text-green-400 border-green-500/20',
-    Succeeded: 'bg-green-500/10 text-green-400 border-green-500/20',
-    succeeded: 'bg-green-500/10 text-green-400 border-green-500/20',
-    Sent: 'bg-green-500/10 text-green-400 border-green-500/20',
-    Pending: 'bg-warn-500/10 text-warn-400 border-warn-500/20',
-    pending: 'bg-warn-500/10 text-warn-400 border-warn-500/20',
-    Scheduled: 'bg-warn-500/10 text-warn-400 border-warn-500/20',
-    Overdue: 'bg-red-500/10 text-red-400 border-red-500/20',
-    Expired: 'bg-red-500/10 text-red-400 border-red-500/20',
-    Failed: 'bg-red-500/10 text-red-400 border-red-500/20',
-    failed: 'bg-red-500/10 text-red-400 border-red-500/20',
-    Draft: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
+    Paid: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    Active: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    'Completed': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    Succeeded: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    succeeded: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    Sent: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    Pending: 'bg-amber-50 text-amber-700 border-amber-200',
+    pending: 'bg-amber-50 text-amber-700 border-amber-200',
+    Scheduled: 'bg-amber-50 text-amber-700 border-amber-200',
+    Overdue: 'bg-red-50 text-red-600 border-red-200',
+    Expired: 'bg-red-50 text-red-600 border-red-200',
+    Failed: 'bg-red-50 text-red-600 border-red-200',
+    failed: 'bg-red-50 text-red-600 border-red-200',
+    Draft: 'bg-slate-50 text-slate-600 border-slate-200',
+    Training: 'bg-lions-50 text-lions-700 border-lions-200',
+    Match: 'bg-violet-50 text-violet-700 border-violet-200',
+    Event: 'bg-sky-50 text-sky-700 border-sky-200',
   }
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-inter font-medium border capitalize ${styles[status] || 'bg-slate-500/10 text-slate-400 border-slate-500/20'}`}>
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-inter font-medium border capitalize ${styles[status] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${
         status === 'Paid' || status === 'Active' || status === 'Completed' || status === 'Succeeded' || status === 'succeeded' || status === 'Sent'
-          ? 'bg-green-400'
+          ? 'bg-emerald-500'
           : status === 'Pending' || status === 'pending' || status === 'Scheduled'
-          ? 'bg-warn-400'
+          ? 'bg-amber-500'
           : status === 'Overdue' || status === 'Expired' || status === 'Failed' || status === 'failed'
-          ? 'bg-red-400'
+          ? 'bg-red-500'
+          : status === 'Match'
+          ? 'bg-violet-500'
+          : status === 'Training'
+          ? 'bg-lions-500'
+          : status === 'Event'
+          ? 'bg-sky-500'
           : 'bg-slate-400'
       }`} />
       {status}
@@ -384,16 +405,16 @@ function StatusBadge({ status }: { status: string }) {
 
 function TeamBadge({ team }: { team: string }) {
   const colors: Record<string, string> = {
-    "Men's": 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-    "Women's": 'bg-pink-500/10 text-pink-400 border-pink-500/20',
-    Both: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-    Boys: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-    Girls: 'bg-pink-500/10 text-pink-400 border-pink-500/20',
-    Men: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-    Women: 'bg-pink-500/10 text-pink-400 border-pink-500/20',
+    "Men's": 'bg-blue-50 text-blue-700 border-blue-200',
+    "Women's": 'bg-pink-50 text-pink-700 border-pink-200',
+    Both: 'bg-violet-50 text-violet-700 border-violet-200',
+    Boys: 'bg-blue-50 text-blue-700 border-blue-200',
+    Girls: 'bg-pink-50 text-pink-700 border-pink-200',
+    Men: 'bg-blue-50 text-blue-700 border-blue-200',
+    Women: 'bg-pink-50 text-pink-700 border-pink-200',
   }
   return (
-    <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-inter font-medium border ${colors[team] || 'bg-slate-500/10 text-slate-400 border-slate-500/20'}`}>
+    <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-inter font-medium border ${colors[team] || 'bg-slate-50 text-slate-600 border-slate-200'}`}>
       {team}
     </span>
   )
@@ -421,30 +442,30 @@ function StatCard({
     red: 'mgr-stat-block--red',
   }[accent]
   const iconTint = {
-    gold: 'from-lions-500/25 to-lions-500/5 text-lions-300 ring-lions-400/20',
-    blue: 'from-blue-500/25 to-blue-500/5 text-blue-300 ring-blue-400/20',
-    green: 'from-emerald-500/25 to-emerald-500/5 text-emerald-300 ring-emerald-400/20',
-    red: 'from-red-500/25 to-red-500/5 text-red-300 ring-red-400/20',
+    gold: 'from-lions-500/15 to-lions-500/5 text-lions-600 ring-lions-400/20',
+    blue: 'from-blue-500/15 to-blue-500/5 text-blue-600 ring-blue-400/20',
+    green: 'from-emerald-500/15 to-emerald-500/5 text-emerald-600 ring-emerald-400/20',
+    red: 'from-red-500/15 to-red-500/5 text-red-500 ring-red-400/20',
   }[accent]
   return (
     <div className={`mgr-stat-block group ${accentClass}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="font-inter text-[10px] uppercase tracking-[0.2em] text-slate-500">{label}</p>
-          <p className="font-oswald font-bold text-[clamp(1.85rem,3.2vw,2.65rem)] text-white mt-2 leading-none tracking-tight">{value}</p>
+          <p className="font-oswald font-bold text-[clamp(1.85rem,3.2vw,2.65rem)] text-slate-900 mt-2 leading-none tracking-tight">{value}</p>
         </div>
-        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ring-1 ${iconTint} transition-transform duration-200 group-hover:scale-105`}>
+        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br ring-1 ${iconTint} transition-transform duration-200 group-hover:scale-105`}>
           <Icon size={20} />
         </div>
       </div>
-      <div className="flex items-center gap-1.5 mt-4 pt-3 border-t border-white/[0.05]">
+      <div className="flex items-center gap-1.5 mt-4 pt-3 border-t border-black/[0.05]">
         {changeType === 'positive' ? (
-          <ArrowUpRight size={13} className="text-emerald-400 shrink-0" />
+          <ArrowUpRight size={13} className="text-emerald-500 shrink-0" />
         ) : changeType === 'negative' ? (
           <ArrowDownRight size={13} className="text-red-400 shrink-0" />
         ) : null}
         <span className={`font-inter text-xs ${
-          changeType === 'positive' ? 'text-emerald-400/90' : changeType === 'negative' ? 'text-red-400/90' : 'text-slate-500'
+          changeType === 'positive' ? 'text-emerald-600' : changeType === 'negative' ? 'text-red-500' : 'text-slate-500'
         }`}>
           {change}
         </span>
@@ -476,11 +497,13 @@ function Modal({ open, onClose, title, children, maxWidth = 'max-w-lg' }: {
 }) {
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className={`dash-card w-full ${maxWidth} p-6 space-y-4 max-h-[90vh] overflow-y-auto`} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <h3 className="font-inter font-semibold text-xl text-white">{title}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><XCircle size={22} /></button>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/45 p-4" onClick={onClose}>
+      <div className={`dash-card w-full ${maxWidth} p-6 space-y-4 max-h-[90vh] overflow-y-auto`} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-inter font-semibold text-xl text-slate-900">{title}</h3>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-900 p-1 rounded-lg" aria-label="Close">
+            <XCircle size={22} />
+          </button>
         </div>
         {children}
       </div>
@@ -488,8 +511,15 @@ function Modal({ open, onClose, title, children, maxWidth = 'max-w-lg' }: {
   )
 }
 
-/* ─── Sidebar User Card — reads the signed-in user from localStorage ─── */
-function SidebarUserCard({ onLogout }: { onLogout: () => void }) {
+/* ─── Sidebar User Card — matches player portal user menu ─── */
+function SidebarUserCard({
+  onLogout,
+  onSettings,
+}: {
+  onLogout: () => void
+  onSettings: () => void
+}) {
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [user, setUser] = useState<{ name?: string; email?: string; role?: string } | null>(() => {
     try {
       const raw = localStorage.getItem('dlbc_user')
@@ -516,20 +546,41 @@ function SidebarUserCard({ onLogout }: { onLogout: () => void }) {
   const subtitle = user?.role === 'manager' ? 'Manager' : user?.role || 'Signed in'
 
   return (
-    <div className="mt-3 px-3 py-3 rounded-xl bg-white/[0.03] border border-white/[0.07] flex items-center gap-3">
-      <InitialsAvatar name={name} size={34} />
-      <div className="flex-1 min-w-0">
-        <p className="font-inter font-medium text-sm text-white truncate">{name}</p>
-        <p className="font-inter text-[10px] uppercase tracking-[0.14em] text-lions-400/75 truncate">{subtitle}</p>
-      </div>
+    <div className="relative">
       <button
-        onClick={onLogout}
-        className="text-slate-500 hover:text-red-400 transition-colors duration-150 p-1"
-        title="Logout"
-        aria-label="Logout"
+        onClick={() => setUserMenuOpen(!userMenuOpen)}
+        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 ring-1 ring-slate-200 hover:bg-white hover:ring-lions-200 transition-colors"
       >
-        <LogOut size={17} />
+        <InitialsAvatar name={name} size={36} />
+        <div className="text-left flex-1 min-w-0">
+          <p className="font-inter font-medium text-sm text-slate-900 truncate">{name}</p>
+          <p className="font-inter text-xs text-slate-500 truncate">{subtitle}</p>
+        </div>
+        <ChevronDown
+          size={14}
+          className={`text-slate-500 shrink-0 transition-transform duration-200 ${userMenuOpen ? 'rotate-180' : ''}`}
+        />
       </button>
+
+      {userMenuOpen && (
+        <div className="absolute bottom-full left-0 right-0 mb-2 dash-card p-1 shadow-lg overflow-hidden z-50">
+          <button
+            onClick={() => {
+              onSettings()
+              setUserMenuOpen(false)
+            }}
+            className="w-full flex items-center gap-2 px-3 py-2.5 font-inter text-sm text-slate-600 hover:bg-slate-50 hover:text-lions-700 transition-colors rounded-lg"
+          >
+            <Settings size={14} /> Settings
+          </button>
+          <button
+            onClick={onLogout}
+            className="w-full flex items-center gap-2 px-3 py-2.5 font-inter text-sm text-red-600 hover:bg-red-50 transition-colors rounded-lg"
+          >
+            <LogOut size={14} /> Logout
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -554,61 +605,42 @@ function Sidebar({
   const navigate = useNavigate()
   const logoUrl = useSiteImage('logo')
   const { signOut } = useAuth()
+  const isRail = collapsed
 
   const handleLogout = async () => {
     await signOut()
     navigate('/')
   }
 
-  // Collapsed rail only applies on desktop; the mobile drawer is always full width.
-  const isRail = collapsed
-
-  const navButton = (item: NavItem, isActive: boolean) => {
-    const Icon = item.icon
-    return (
-      <div key={item.key} className="dash-nav-item">
-        <button
-          onClick={() => { onNavigate(item.key); onCloseMobile() }}
-          className={`mgr-nav-pill ${isActive ? 'mgr-nav-pill--active' : ''} ${
-            isRail ? 'md:justify-center md:px-2.5' : ''
-          }`}
-        >
-          <Icon size={18} className="mgr-nav-icon" />
-          <span className={isRail ? 'md:hidden' : ''}>{item.label}</span>
-        </button>
-        {isRail && <span className="dash-nav-tip hidden md:block">{item.label}</span>}
-      </div>
-    )
-  }
-
   return (
     <>
       {mobileOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden" onClick={onCloseMobile} />
+        <div className="fixed inset-0 bg-black/60 z-40 md:hidden" onClick={onCloseMobile} />
       )}
       <aside
-        className={`fixed top-0 left-0 h-full dash-sidebar z-40 flex flex-col py-5 transition-[transform,width] duration-300 ease-out ${
-          isRail ? 'w-64 md:w-[4.75rem] md:px-2.5 px-4' : 'w-64 px-3'
-        } ${mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
+        className={`dash-sidebar fixed md:sticky inset-y-0 left-0 z-50 flex flex-col py-6 transition-[transform,width,padding] duration-300 md:translate-x-0 ${
+          isRail ? 'dash-sidebar--rail w-64 md:w-[4.75rem] px-4 md:px-2.5' : 'w-64 px-4'
+        } ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
         style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}
       >
-        <div className={`flex items-center mb-4 ${isRail ? 'md:justify-center justify-between' : 'justify-between'}`}>
+        <div className={`flex items-center mb-5 ${isRail ? 'md:justify-center justify-between' : 'justify-between'} gap-2`}>
           <Link
             to="/"
-            className={`mgr-sidebar-brand hover:opacity-95 transition-opacity group ${isRail ? 'md:p-2 md:justify-center' : 'flex-1 min-w-0'}`}
+            className={`flex items-center gap-3 min-w-0 hover:opacity-90 transition-opacity group ${isRail ? 'md:justify-center' : ''}`}
             title="Back to Dublin Lions home"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-lions-500/15 ring-1 ring-lions-400/25 shrink-0">
-              <img src={logoUrl} alt="Dublin Lions" className="h-5 w-auto brightness-0 invert" />
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-lions-100 to-lions-50 ring-1 ring-lions-200 group-hover:ring-lions-400 transition-all shrink-0">
+              <img src={logoUrl} alt="Dublin Lions" className="h-7 w-auto" />
             </div>
-            <div className={`min-w-0 ${isRail ? 'md:hidden' : ''}`}>
-              <p className="font-oswald font-bold text-base text-white tracking-wide leading-none">Dublin Lions</p>
-              <p className="font-inter text-[9px] uppercase tracking-[0.22em] text-lions-400/80 mt-1">Club Command</p>
+            <div className={isRail ? 'md:hidden' : ''}>
+              <p className="font-oswald font-bold text-lg text-slate-900 tracking-wide leading-none">DUBLIN LIONS</p>
+              <p className="font-inter text-[10px] uppercase tracking-[0.2em] text-lions-600 mt-1">Club Command</p>
             </div>
           </Link>
           <button
+            type="button"
             onClick={onToggleCollapse}
-            className={`dash-rail-toggle hidden md:flex ml-2 shrink-0 ${isRail ? 'md:hidden' : ''}`}
+            className={`dash-rail-toggle hidden md:flex shrink-0 ${isRail ? 'md:hidden' : ''}`}
             title="Collapse sidebar"
             aria-label="Collapse sidebar"
           >
@@ -618,6 +650,7 @@ function Sidebar({
 
         {isRail && (
           <button
+            type="button"
             onClick={onToggleCollapse}
             className="dash-rail-toggle hidden md:flex mx-auto mb-4"
             title="Expand sidebar"
@@ -629,38 +662,74 @@ function Sidebar({
 
         <Link
           to="/"
-          className={`flex items-center gap-2 mb-4 rounded-lg border border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.05] text-slate-400 hover:text-white font-inter text-xs transition-all ${
-            isRail ? 'md:justify-center md:px-0 md:py-2.5 px-3 py-2' : 'px-3 py-2'
+          className={`flex items-center gap-2 mb-5 rounded-lg bg-slate-100 hover:bg-lions-50 text-slate-600 hover:text-lions-700 font-inter text-xs transition-all border border-slate-200 ${
+            isRail ? 'md:justify-center md:px-0 md:py-2.5 px-3 py-2 mx-1' : 'mx-1 px-3 py-2'
           }`}
         >
           <Home size={14} className="shrink-0" />
-          <span className={isRail ? 'md:hidden' : ''}>Public site</span>
+          <span className={isRail ? 'md:hidden' : ''}>Back to Site</span>
         </Link>
 
-        <nav className="flex-1 space-y-4 overflow-y-auto scroll-slim -mr-1 pr-1">
+        <nav className="flex-1 space-y-4 overflow-y-auto scroll-slim -mr-2 pr-2">
           {navSections.map((group) => (
-            <div key={group.section} className="space-y-0.5">
+            <div key={group.section} className="space-y-1">
               <p className={`nav-section-label px-3 mb-2 ${isRail ? 'md:hidden' : ''}`}>{group.section}</p>
-              {group.items.map((item) => navButton(item, active === item.key))}
+              {group.items.map((item) => {
+                const Icon = item.icon
+                const isActive = active === item.key
+                return (
+                  <div key={item.key} className="dash-nav-item">
+                    <button
+                      type="button"
+                      onClick={() => { onNavigate(item.key); onCloseMobile() }}
+                      title={item.label}
+                      className={`w-full flex items-center gap-3 rounded-xl font-inter text-sm font-medium transition-all duration-150 ${
+                        isRail ? 'md:justify-center md:px-2.5 px-3 py-2.5' : 'px-3 py-2.5'
+                      } ${
+                        isActive
+                          ? 'text-slate-900 nav-active'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                      }`}
+                    >
+                      <Icon size={18} className={`shrink-0 ${isActive ? 'text-lions-600' : 'text-slate-400'}`} />
+                      <span className={isRail ? 'md:hidden' : ''}>{item.label}</span>
+                    </button>
+                    {isRail && <span className="dash-nav-tip hidden md:block">{item.label}</span>}
+                  </div>
+                )
+              })}
             </div>
           ))}
         </nav>
 
-        <div className="mt-auto">
-          <div className="border-t border-white/[0.06] my-4" />
-          {navButton({ key: 'settings', label: 'Settings', icon: Settings }, active === 'settings')}
-          <div className={isRail ? 'md:hidden mt-1' : 'mt-1'}>
-            <SidebarUserCard onLogout={handleLogout} />
+        <div className="mt-auto border-t border-slate-200 pt-4">
+          <div className={isRail ? 'md:hidden' : ''}>
+            <SidebarUserCard
+              onLogout={handleLogout}
+              onSettings={() => { onNavigate('settings'); onCloseMobile() }}
+            />
           </div>
           {isRail && (
-            <button
-              onClick={handleLogout}
-              className="dash-rail-toggle hidden md:flex mx-auto mt-3"
-              title="Logout"
-              aria-label="Logout"
-            >
-              <LogOut size={16} />
-            </button>
+            <div className="hidden md:flex flex-col items-center gap-2">
+              <button
+                type="button"
+                onClick={() => { onNavigate('settings'); onCloseMobile() }}
+                className="dash-rail-toggle"
+                title="Settings"
+                aria-label="Settings"
+              >
+                <Settings size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="dash-rail-toggle"
+                title="Logout"
+                aria-label="Logout"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
           )}
         </div>
       </aside>
@@ -672,110 +741,88 @@ function Sidebar({
 
 function TopBar({
   title,
+  greetingName,
   onMenuToggle,
   notifications,
   onDismissNotification,
   onClearNotifications,
-  onQuickAction,
-  sidebarCollapsed,
 }: {
   title: string
+  greetingName: string
   onMenuToggle: () => void
   notifications: { id: string; text: string; detail: string; type: string }[]
   onDismissNotification: (id: string) => void
   onClearNotifications: () => void
-  onQuickAction: (action: 'add-payment' | 'send-message' | 'add-fixture') => void
-  sidebarCollapsed: boolean
 }) {
-  const [showQuickActions, setShowQuickActions] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
+  const isHome = title === 'Dashboard'
+  const hello = greetingName ? `Hello, ${greetingName}!` : 'Hello!'
 
   return (
-    <header className={`fixed top-0 left-0 ${sidebarCollapsed ? 'md:left-[4.75rem]' : 'md:left-64'} right-0 dash-topbar z-30 flex items-center justify-between gap-4 px-4 md:px-6 transition-[left] duration-300`} style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}>
+    <header className="dash-topbar h-auto min-h-16 flex items-center justify-between gap-4 px-4 md:px-8 py-3 sticky top-0 z-30">
       <div className="flex items-center gap-3 min-w-0">
         <button
           onClick={onMenuToggle}
-          className="md:hidden text-slate-400 hover:text-white p-1.5 transition-colors duration-150"
+          className="md:hidden text-slate-500 hover:text-slate-900 p-1 transition-colors"
           aria-label="Open menu"
         >
-          <LayoutDashboard size={20} />
+          <Menu size={22} />
         </button>
-        <h2 className="font-oswald font-bold text-lg md:text-xl text-white tracking-tight leading-tight truncate">{title}</h2>
+        <div className="min-w-0">
+          <h2 className="font-oswald font-bold text-xl md:text-2xl text-slate-900 tracking-tight leading-tight truncate">
+            {isHome ? hello : title}
+          </h2>
+          {isHome && (
+            <p className="hidden sm:block font-inter text-sm text-slate-500 mt-0.5 truncate">
+              Explore information and activity about your club.
+            </p>
+          )}
+        </div>
       </div>
 
-      <div className="flex items-center gap-2 shrink-0">
-        <div className="relative">
-          <button
-            onClick={() => setShowNotifications(!showNotifications)}
-            className="mgr-topbar-btn"
-            aria-label="Notifications"
-          >
-            <Bell size={18} />
-            {notifications.length > 0 && (
-              <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-red-500 rounded-full" />
-            )}
-          </button>
-          {showNotifications && (
-            <div className="absolute right-0 top-full mt-2 w-80 dash-card shadow-xl z-50 p-4">
-              <div className="flex items-center justify-between mb-3">
-                <p className="font-inter font-semibold text-sm text-white">Notifications</p>
-                {notifications.length > 0 && (
-                  <button onClick={() => { onClearNotifications(); setShowNotifications(false) }} className="font-inter text-xs text-slate-400 hover:text-red-400">
-                    Clear All
-                  </button>
-                )}
-              </div>
-              <div className="space-y-3 max-h-64 overflow-y-auto">
-                {notifications.length === 0 ? (
-                  <p className="font-inter text-sm text-slate-400 text-center py-4">No notifications</p>
-                ) : (
-                  notifications.map((n) => (
-                    <div key={n.id} className="flex gap-3 items-start">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-                        n.type === 'success' ? 'bg-green-500/10' : n.type === 'alert' ? 'bg-red-500/10' : 'bg-amber-500/10'
-                      }`}>
-                        {n.type === 'success' ? <CheckCircle size={14} className="text-green-400" /> : n.type === 'alert' ? <AlertCircle size={14} className="text-red-400" /> : <Bell size={14} className="text-amber-400" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-inter text-sm text-white">{n.text}</p>
-                        <p className="font-inter text-xs text-slate-400">{n.detail}</p>
-                      </div>
-                      <button onClick={() => onDismissNotification(n.id)} className="text-slate-400 hover:text-white"><X size={14} /></button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+      <div className="relative shrink-0">
+        <button
+          onClick={() => setShowNotifications(!showNotifications)}
+          className="mgr-topbar-btn"
+          aria-label="Notifications"
+        >
+          <Bell size={18} />
+          {notifications.length > 0 && (
+            <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-red-500 rounded-full" />
           )}
-        </div>
-
-        <div className="relative">
-          <button
-            onClick={() => setShowQuickActions(!showQuickActions)}
-            className="mgr-topbar-btn mgr-topbar-btn--primary"
-            aria-label="Quick actions"
-          >
-            <Plus size={18} />
-          </button>
-          {showQuickActions && (
-            <div className="absolute right-0 top-full mt-2 w-56 dash-card shadow-xl z-50 py-2">
-              {([
-                { label: 'Record Payment', icon: Banknote, action: 'add-payment' as const },
-                { label: 'Send Message', icon: Send, action: 'send-message' as const },
-                { label: 'Add Fixture', icon: Calendar, action: 'add-fixture' as const },
-              ]).map((item) => (
-                <button
-                  key={item.label}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 font-inter text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-colors duration-150"
-                  onClick={() => { setShowQuickActions(false); onQuickAction(item.action) }}
-                >
-                  <item.icon size={16} />
-                  {item.label}
+        </button>
+        {showNotifications && (
+          <div className="absolute right-0 top-full mt-2 w-80 dash-card shadow-xl z-50 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <p className="font-inter font-semibold text-sm text-slate-900">Notifications</p>
+              {notifications.length > 0 && (
+                <button onClick={() => { onClearNotifications(); setShowNotifications(false) }} className="font-inter text-xs text-slate-400 hover:text-red-500">
+                  Clear All
                 </button>
-              ))}
+              )}
             </div>
-          )}
-        </div>
+            <div className="space-y-3 max-h-64 overflow-y-auto">
+              {notifications.length === 0 ? (
+                <p className="font-inter text-sm text-slate-400 text-center py-4">No notifications</p>
+              ) : (
+                notifications.map((n) => (
+                  <div key={n.id} className="flex gap-3 items-start">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                      n.type === 'success' ? 'bg-green-500/10' : n.type === 'alert' ? 'bg-red-500/10' : 'bg-amber-500/10'
+                    }`}>
+                      {n.type === 'success' ? <CheckCircle size={14} className="text-green-500" /> : n.type === 'alert' ? <AlertCircle size={14} className="text-red-500" /> : <Bell size={14} className="text-amber-500" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-inter text-sm text-slate-900">{n.text}</p>
+                      <p className="font-inter text-xs text-slate-500">{n.detail}</p>
+                    </div>
+                    <button onClick={() => onDismissNotification(n.id)} className="text-slate-400 hover:text-slate-700"><X size={14} /></button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </header>
   )
@@ -785,23 +832,13 @@ function TopBar({
 
 /* ─── Manager home: real-time ops console (ui-ux-pro-max pattern) ─── */
 function ClubOpsConsole({
-  managerFirstName,
-  today,
-  seasonLabel,
   overdueCount,
   unpaidCount,
-  activeMembers,
-  totalTeams,
   nextSession,
   onNavigate,
 }: {
-  managerFirstName: string
-  today: string
-  seasonLabel: string
   overdueCount: number
   unpaidCount: number
-  activeMembers: number
-  totalTeams: number
   nextSession?: { title: string; date: string; time: string; location: string }
   onNavigate: (view: string) => void
 }) {
@@ -833,43 +870,22 @@ function ClubOpsConsole({
   ]
 
   return (
-    <div className="mgr-ops-hero p-6 md:p-8">
-      <div className="relative flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
-        <div>
-          <p className="font-inter text-[10px] font-semibold uppercase tracking-[0.24em] text-lions-400/90">Live operations</p>
-          <h1 className="font-oswald font-bold text-[clamp(2rem,3.5vw,2.85rem)] text-white mt-2 leading-[0.95] tracking-tight">
-            Welcome back{managerFirstName ? `, ${managerFirstName}` : ''}
-          </h1>
-          <p className="font-inter text-sm text-slate-400 mt-3 max-w-xl leading-relaxed">
-            {activeMembers} active members · {totalTeams} teams · fees, roster, and fixtures in one place.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <span className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 border border-emerald-500/25 px-3 py-1.5 font-inter text-xs text-emerald-300">
-            <span className="live-dot" aria-hidden="true" />
-            Season {seasonLabel}
-          </span>
-          <span className="rounded-full bg-white/[0.04] border border-white/10 px-3 py-1.5 font-inter text-xs text-slate-300">
-            {today}
-          </span>
-        </div>
-      </div>
-
-      <div className="relative grid grid-cols-1 md:grid-cols-3 gap-3 mt-8">
+    <div className="mgr-ops-hero">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {priorities.map((item) => (
           <button
             key={item.id}
             type="button"
             onClick={item.onClick}
-            className={`ops-priority-tile ${item.urgent ? 'ops-priority-tile-urgent' : ''}`}
+            className={`ops-priority-tile ${item.urgent ? 'ops-priority-tile-urgent' : ''} ${item.id === 'next' ? 'ops-priority-tile--accent' : ''}`}
           >
             <p className="font-inter text-[10px] uppercase tracking-[0.18em] text-slate-500">{item.label}</p>
-            <p className={`font-oswald font-bold mt-2 leading-tight ${item.id === 'next' ? 'text-base md:text-lg font-inter font-semibold text-white' : 'text-3xl text-white'}`}>
+            <p className={`ops-priority-value font-oswald font-bold mt-2 leading-tight ${item.id === 'next' ? 'text-base md:text-lg font-inter font-semibold text-white' : 'text-3xl text-slate-900'}`}>
               {item.value}
             </p>
             <p className="font-inter text-xs text-slate-500 mt-2 flex items-center justify-between gap-2">
               <span>{item.hint}</span>
-              <ChevronRight size={14} className="shrink-0 text-slate-600 group-hover:text-lions-400" />
+              <ChevronRight size={14} className="shrink-0 opacity-60" />
             </p>
           </button>
         ))}
@@ -899,13 +915,6 @@ function DashboardView({ data, onNavigate }: { data: ReturnType<typeof useLiveDa
     ? `${paymentsThisMonth} payment${paymentsThisMonth !== 1 ? 's' : ''} this month`
     : 'No payments yet this month'
   const overdueCaption = stats.overduePlayers === 0 ? 'All settled up' : 'Needs follow-up'
-
-  const today = new Date().toLocaleDateString('en-IE', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  })
 
   const recentActivity = useMemo(() => {
     const acts: { id: string; text: string; detail: string; time: string; type: string }[] = []
@@ -940,37 +949,23 @@ function DashboardView({ data, onNavigate }: { data: ReturnType<typeof useLiveDa
   }, [payments, sessions, announcements])
 
   const activityIcons: Record<string, { icon: LucideIcon; color: string }> = {
-    payment: { icon: CheckCircle, color: 'bg-green-500/10 text-green-400' },
-    registration: { icon: UserPlus, color: 'bg-blue-500/10 text-blue-400' },
-    alert: { icon: AlertCircle, color: 'bg-red-500/10 text-red-400' },
-    message: { icon: MessageSquare, color: 'bg-amber-500/10 text-amber-400' },
+    payment: { icon: CheckCircle, color: 'bg-emerald-500/10 text-emerald-600' },
+    registration: { icon: UserPlus, color: 'bg-blue-500/10 text-blue-600' },
+    alert: { icon: AlertCircle, color: 'bg-red-500/10 text-red-500' },
+    message: { icon: MessageSquare, color: 'bg-lions-500/10 text-lions-600' },
   }
 
   const upcomingSessions = useMemo(() => {
     return [...sessions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).slice(0, 3)
   }, [sessions])
 
-  const managerFirstName = (() => {
-    try {
-      const u = JSON.parse(localStorage.getItem('dlbc_user') || 'null')
-      return u?.name ? u.name.split(' ')[0] : ''
-    } catch {
-      return ''
-    }
-  })()
-
   const nextSession = upcomingSessions[0]
 
   return (
     <div className="space-y-6">
       <ClubOpsConsole
-        managerFirstName={managerFirstName}
-        today={today}
-        seasonLabel={data.season?.label || '2025/26'}
         overdueCount={stats.overduePlayers}
         unpaidCount={unpaidCount}
-        activeMembers={activeMembers}
-        totalTeams={stats.totalTeams}
         nextSession={nextSession ? { title: nextSession.title, date: nextSession.date, time: nextSession.time, location: nextSession.location } : undefined}
         onNavigate={onNavigate}
       />
@@ -1208,7 +1203,7 @@ function SeasonControlCenter({ data }: { data: ReturnType<typeof useLiveData> })
               {result.needsSeniorAssignment.length > 0 ? ` · ${result.needsSeniorAssignment.length} player${result.needsSeniorAssignment.length !== 1 ? 's' : ''} need senior assignment` : ''}
             </p>
           </div>
-          <button onClick={() => setResult(null)} className="text-slate-400 hover:text-white shrink-0"><X size={16} /></button>
+          <button onClick={() => setResult(null)} className="text-slate-500 hover:text-slate-900 shrink-0"><X size={16} /></button>
         </div>
       )}
 
@@ -1231,7 +1226,7 @@ function SeasonControlCenter({ data }: { data: ReturnType<typeof useLiveData> })
                     <select
                       onChange={(e) => { if (e.target.value) assignToSenior(p.id, e.target.value) }}
                       defaultValue=""
-                      className="bg-white/[0.05] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs font-inter text-slate-200 focus:outline-none"
+                      className={`${dashField} !w-auto px-2.5 py-1.5 text-xs`}
                     >
                       <option value="" disabled>Assign to team…</option>
                       {seniorTeams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -1284,7 +1279,7 @@ function SeasonControlCenter({ data }: { data: ReturnType<typeof useLiveData> })
                       <select
                         onChange={(e) => { if (e.target.value) assignToNewTeam(p.id, e.target.value) }}
                         defaultValue=""
-                        className="bg-white/[0.05] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs font-inter text-slate-200 focus:outline-none"
+                        className={`${dashField} !w-auto px-2.5 py-1.5 text-xs`}
                       >
                         <option value="" disabled>Assign to team…</option>
                         {matchingTeams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -1316,7 +1311,7 @@ function SeasonControlCenter({ data }: { data: ReturnType<typeof useLiveData> })
         <div className="rounded-xl bg-blue-500/10 ring-1 ring-blue-500/20 px-4 py-3 flex items-center gap-3">
           <History size={18} className="text-blue-400 shrink-0" />
           <p className="font-inter text-sm text-blue-300 flex-1">Season &quot;{restoredNotice}&quot; restored and is now active.</p>
-          <button onClick={() => setRestoredNotice(null)} className="text-slate-400 hover:text-white shrink-0"><X size={16} /></button>
+          <button onClick={() => setRestoredNotice(null)} className="text-slate-500 hover:text-slate-900 shrink-0"><X size={16} /></button>
         </div>
       )}
 
@@ -1332,13 +1327,13 @@ function SeasonControlCenter({ data }: { data: ReturnType<typeof useLiveData> })
           {formField('Adult Price (€)', (
             <input
               type="number" min="0" step="0.5" value={adultPrice} onChange={(e) => setAdultPrice(e.target.value)}
-              className="w-full sm:w-32 bg-white/[0.05] border border-white/10 rounded-lg px-3 py-2 text-sm font-inter text-white focus:outline-none focus:ring-1 focus:ring-amber-400/50"
+              className={`${dashField} sm:w-32`}
             />
           ))}
           {formField('Kid Price (€)', (
             <input
               type="number" min="0" step="0.5" value={kidPrice} onChange={(e) => setKidPrice(e.target.value)}
-              className="w-full sm:w-32 bg-white/[0.05] border border-white/10 rounded-lg px-3 py-2 text-sm font-inter text-white focus:outline-none focus:ring-1 focus:ring-amber-400/50"
+              className={`${dashField} sm:w-32`}
             />
           ))}
           <button onClick={handleApplyPrice} className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg hover:scale-[1.03] transition-all duration-150">
@@ -1356,7 +1351,7 @@ function SeasonControlCenter({ data }: { data: ReturnType<typeof useLiveData> })
           {formField('New Season Label', (
             <input
               type="text" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="e.g. 2026/27"
-              className="w-full bg-white/[0.05] border border-white/10 rounded-lg px-3 py-2 text-sm font-inter text-white focus:outline-none focus:ring-1 focus:ring-amber-400/50"
+              className={dashField}
             />
           ))}
           <div className="flex justify-end gap-2">
@@ -1379,7 +1374,7 @@ function SeasonControlCenter({ data }: { data: ReturnType<typeof useLiveData> })
           {formField(`Type "${season.label}" to confirm`, (
             <input
               type="text" value={endConfirmText} onChange={(e) => setEndConfirmText(e.target.value)} placeholder={season.label}
-              className="w-full bg-white/[0.05] border border-white/10 rounded-lg px-3 py-2 text-sm font-inter text-white focus:outline-none focus:ring-1 focus:ring-red-400/50"
+              className={dashField}
             />
           ))}
           <div className="flex justify-end gap-2">
@@ -1514,7 +1509,6 @@ function UnpaidThisMonthPanel({
 /* ─────────────────────── View: Members ─────────────────────── */
 
 const POSITIONS = ['Guard', 'Forward', 'Center', 'Point Guard', 'Shooting Guard', 'Small Forward', 'Power Forward']
-const PAYMENT_PLANS = ['Monthly', 'Full Session', 'Per Session', 'None']
 
 function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof useLiveData>; initialSearch?: string }) {
   const { players, teams, ageGroups, savePlayers, saveTeams } = data
@@ -1645,16 +1639,10 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Members</h2>
-          <p className="font-inter text-sm text-slate-400 mt-1.5">
-            Players and children who signed up and completed registration — assign teams from here or the Teams tab.
-          </p>
-        </div>
+      <div className="flex justify-end">
         <button
           onClick={handleExportCsv}
-          className="flex items-center gap-2 bg-transparent border border-white/30 text-white font-inter font-medium text-sm px-3 py-2 rounded hover:bg-white/5 transition-colors duration-150"
+          className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 font-inter font-medium text-sm px-3 py-2 rounded-xl hover:bg-slate-50 hover:text-slate-900 transition-colors duration-150"
         >
           <Download size={14} />
           Export CSV
@@ -1663,22 +1651,22 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
 
       <div className="dash-card p-3 flex flex-wrap items-center gap-3">
         <div className="relative md:hidden">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             placeholder="Search members..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-48 bg-white/5 border border-[#334155] rounded-lg pl-9 pr-3 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 transition-all duration-200"
+            className={`${dashField} w-48 pl-9 pr-3`}
           />
         </div>
         <button
           type="button"
           onClick={() => setTeamFilter(teamFilter === 'unassigned' ? 'All' : 'unassigned')}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg font-inter text-sm font-medium border transition-all ${
+          className={`flex items-center gap-2 px-3 py-2 rounded-xl font-inter text-sm font-medium border transition-all ${
             teamFilter === 'unassigned'
-              ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-              : 'bg-white/5 text-slate-300 border-[#334155] hover:border-amber-500/30 hover:text-amber-200'
+              ? 'bg-amber-50 text-amber-700 border-amber-200'
+              : 'bg-white text-slate-600 border-slate-200 hover:border-amber-200 hover:text-amber-700'
           }`}
         >
           <UserPlus size={14} />
@@ -1687,7 +1675,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
         <select
           value={teamFilter}
           onChange={(e) => setTeamFilter(e.target.value)}
-          className="bg-white/5 border border-[#334155] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
+          className={dashField}
         >
           <option value="All">All Teams</option>
           <option value="unassigned">Unassigned only</option>
@@ -1696,7 +1684,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
         <select
           value={ageGroupFilter}
           onChange={(e) => setAgeGroupFilter(e.target.value)}
-          className="bg-white/5 border border-[#334155] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
+          className={dashField}
         >
           <option value="All">All Age Groups</option>
           {ageGroups.map((ag) => <option key={ag.id} value={ag.id}>{ag.name}</option>)}
@@ -1704,14 +1692,14 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="bg-white/5 border border-[#334155] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
+          className={dashField}
         >
           <option value="All">All Status</option>
           <option value="Paid">Paid</option>
           <option value="Pending">Pending</option>
           <option value="Overdue">Overdue</option>
         </select>
-        <button onClick={handleExportCsv} className="ml-auto flex items-center gap-2 bg-transparent border border-white/30 text-white font-inter font-medium text-sm px-3 py-2 rounded hover:bg-white/5 transition-colors duration-150">
+        <button onClick={handleExportCsv} className="ml-auto flex items-center gap-2 bg-white border border-slate-200 text-slate-600 font-inter font-medium text-sm px-3 py-2 rounded-xl hover:bg-slate-50 hover:text-slate-900 transition-colors duration-150">
           <Download size={14} />
           Export CSV
         </button>
@@ -1721,31 +1709,31 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-white/[0.06]">
+              <tr className="border-b border-slate-200 bg-slate-50/80">
                 {['Name', 'Teams', 'Status', 'Plan', 'Position', 'Jersey', 'BI Reg', 'Actions'].map((col) => (
-                  <th key={col} className="px-6 py-4 font-inter font-semibold text-xs uppercase tracking-widest text-slate-400 text-left">
+                  <th key={col} className="px-6 py-4 font-inter font-semibold text-xs uppercase tracking-widest text-slate-500 text-left">
                     {col}
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/[0.06]">
+            <tbody className="divide-y divide-slate-100">
               {filtered.map((member) => (
-                <tr key={member.id} className="hover:bg-white/5 transition-colors duration-150 cursor-pointer" onClick={() => openEdit(member)}>
+                <tr key={member.id} className="hover:bg-slate-50 transition-colors duration-150 cursor-pointer" onClick={() => openEdit(member)}>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
                       <InitialsAvatar name={member.name} />
                       <div>
-                        <p className="font-inter font-medium text-sm text-white flex items-center gap-2">
+                        <p className="font-inter font-medium text-sm text-slate-900 flex items-center gap-2">
                           {member.name}
                           {isChildRosterPlayer(member) && (
-                            <span className="text-[10px] uppercase tracking-wider text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">Child</span>
+                            <span className="text-[10px] uppercase tracking-wider text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-md border border-amber-200">Child</span>
                           )}
                           {member.memberType === 'parent' && !isChildRosterPlayer(member) && (
-                            <span className="text-[10px] uppercase tracking-wider text-blue-300 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">Parent</span>
+                            <span className="text-[10px] uppercase tracking-wider text-lions-700 bg-lions-50 px-1.5 py-0.5 rounded-md border border-lions-200">Parent</span>
                           )}
                         </p>
-                        <p className="font-inter text-xs text-slate-400">
+                        <p className="font-inter text-xs text-slate-500">
                           {isChildRosterPlayer(member)
                             ? member.dob
                               ? `DOB ${new Date(member.dob).toLocaleDateString('en-IE')}${calcAge(member.dob) !== null ? ` · Age ${calcAge(member.dob)}` : ''}`
@@ -1759,20 +1747,20 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
                     <div className="flex flex-wrap gap-1">
                       {(member.teamIds ?? []).map((tid) => {
                         const t = teams.find((tm) => tm.id === tid)
-                        return t ? <span key={tid} className="text-xs font-inter text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">{t.name}</span> : null
+                        return t ? <span key={tid} className="text-xs font-inter text-lions-700 bg-lions-50 px-2 py-0.5 rounded-md border border-lions-200">{t.name}</span> : null
                       })}
                       {(member.teamIds ?? []).length === 0 && <span className="text-xs font-inter text-slate-500">Unassigned</span>}
                     </div>
                   </td>
                   <td className="px-6 py-4"><StatusBadge status={member.status} /></td>
-                  <td className="px-6 py-4 font-inter text-sm text-slate-300">{member.paymentPlan}</td>
-                  <td className="px-6 py-4 font-inter text-sm text-slate-300">{member.position}</td>
-                  <td className="px-6 py-4 font-inter text-sm text-blue-400 font-oswald font-bold">#{member.jerseyNumber}</td>
+                  <td className="px-6 py-4 font-inter text-sm text-slate-600">{member.paymentPlan}</td>
+                  <td className="px-6 py-4 font-inter text-sm text-slate-600">{member.position}</td>
+                  <td className="px-6 py-4 font-inter text-sm text-lions-600 font-oswald font-bold">#{member.jerseyNumber}</td>
                   <td className="px-6 py-4">
                     {member.registeredWithBI ? (
-                      <span className="flex items-center gap-1 text-green-400 text-xs font-inter"><ShieldCheck size={12} /> Yes</span>
+                      <span className="flex items-center gap-1 text-emerald-600 text-xs font-inter"><ShieldCheck size={12} /> Yes</span>
                     ) : (
-                      <span className="flex items-center gap-1 text-red-400 text-xs font-inter"><XCircle size={12} /> No</span>
+                      <span className="flex items-center gap-1 text-red-500 text-xs font-inter"><XCircle size={12} /> No</span>
                     )}
                   </td>
                   <td className="px-6 py-4">
@@ -1786,7 +1774,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
                               data.refresh()
                             }
                           }}
-                          className="inline-flex items-center gap-1 bg-green-500/10 hover:bg-green-500/20 text-green-300 border border-green-500/20 font-inter font-semibold text-xs px-2 py-1 rounded transition-colors"
+                          className="inline-flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-inter font-semibold text-xs px-2 py-1 rounded-lg transition-colors"
                           title="Record a cash payment for this month"
                         >
                           <Banknote size={12} /> Mark Paid
@@ -1794,14 +1782,14 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
                       )}
                       <button
                         onClick={(e) => { e.stopPropagation(); openEdit(member) }}
-                        className="text-slate-400 hover:text-blue-400 transition-colors"
+                        className="text-slate-400 hover:text-lions-600 transition-colors"
                         title="Edit"
                       >
                         <Edit3 size={16} />
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); setConfirmDelete(member.id) }}
-                        className="text-slate-400 hover:text-red-400 transition-colors"
+                        className="text-slate-400 hover:text-red-500 transition-colors"
                         title="Delete"
                       >
                         <Trash2 size={16} />
@@ -1813,8 +1801,8 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
             </tbody>
           </table>
         </div>
-        <div className="px-6 py-4 border-t border-white/[0.06]">
-          <p className="font-inter text-xs text-slate-400">
+        <div className="px-6 py-4 border-t border-slate-200">
+          <p className="font-inter text-xs text-slate-500">
             Showing {filtered.length} of {rosterMembers.length} members
           </p>
         </div>
@@ -1825,17 +1813,17 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
           const parentAccount = getParentForChildRosterPlayer(editingPlayer.id)
           if (!parentAccount) return null
           return (
-            <div className="mb-4 p-4 rounded-lg bg-blue-500/10 border border-blue-500/20">
-              <p className="font-inter text-xs uppercase tracking-wider text-blue-300 mb-2">Parent / Guardian</p>
-              <p className="font-inter font-semibold text-white">{parentAccount.name}</p>
-              <p className="font-inter text-sm text-slate-300">{parentAccount.email}</p>
-              {parentAccount.phone ? <p className="font-inter text-sm text-slate-400">{parentAccount.phone}</p> : null}
+            <div className="mb-4 p-4 rounded-lg bg-lions-50 border border-lions-200">
+              <p className="font-inter text-xs uppercase tracking-wider text-lions-600 mb-2">Parent / Guardian</p>
+              <p className="font-inter font-semibold text-slate-900">{parentAccount.name}</p>
+              <p className="font-inter text-sm text-slate-600">{parentAccount.email}</p>
+              {parentAccount.phone ? <p className="font-inter text-sm text-slate-500">{parentAccount.phone}</p> : null}
             </div>
           )
         })()}
         {editingPlayer && editingPlayer.memberType === 'parent' && !isChildRosterPlayer(editingPlayer) && (
-          <div className="mb-4 p-4 rounded-lg bg-white/5 border border-white/10">
-            <p className="font-inter text-xs uppercase tracking-wider text-slate-400 mb-3">Registered children</p>
+          <div className="mb-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
+            <p className="font-inter text-xs uppercase tracking-wider text-slate-500 mb-3">Registered children</p>
             {getRegisteredChildren(editingPlayer).length === 0 ? (
               <p className="font-inter text-sm text-slate-500">No children on this account yet.</p>
             ) : (
@@ -1854,44 +1842,30 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
           </div>
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {formField('Full Name', <input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="John Doe" />)}
-          {formField('Email', <input type="email" value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="john@email.ie" />)}
-          {formField('Phone', <input value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="+353 87 123 4567" />)}
-          {formField('Date of Birth', <input type="date" value={form.dob || ''} onChange={(e) => setForm({ ...form, dob: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" />)}
+          {formField('Full Name', <input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} className={dashField} placeholder="John Doe" />)}
+          {formField('Email', <input type="email" value={form.email || ''} onChange={(e) => setForm({ ...form, email: e.target.value })} className={dashField} placeholder="john@email.ie" />)}
+          {formField('Phone', <input value={form.phone || ''} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={dashField} placeholder="+353 87 123 4567" />)}
+          {formField('Date of Birth', <input type="date" value={form.dob || ''} onChange={(e) => setForm({ ...form, dob: e.target.value })} className={dashField} />)}
           {formField('Gender', (
-            <select value={form.gender || 'Male'} onChange={(e) => setForm({ ...form, gender: e.target.value as 'Male' | 'Female' })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
+            <select value={form.gender || 'Male'} onChange={(e) => setForm({ ...form, gender: e.target.value as 'Male' | 'Female' })} className={dashField}>
               <option value="Male">Male</option>
               <option value="Female">Female</option>
             </select>
           ))}
           {formField('Position', (
-            <select value={form.position || 'Guard'} onChange={(e) => setForm({ ...form, position: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
+            <select value={form.position || 'Guard'} onChange={(e) => setForm({ ...form, position: e.target.value })} className={dashField}>
               {POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           ))}
-          {formField('Jersey Number', <input type="number" value={form.jerseyNumber || 0} onChange={(e) => setForm({ ...form, jerseyNumber: parseInt(e.target.value) || 0 })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" />)}
-          {formField('Payment Status', (
-            <select value={form.status || 'Paid'} onChange={(e) => setForm({ ...form, status: e.target.value as 'Paid' | 'Pending' | 'Overdue' })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
-              <option value="Paid">Paid</option>
-              <option value="Pending">Pending</option>
-              <option value="Overdue">Overdue</option>
-            </select>
-          ))}
-          {formField('Payment Plan', (
-            <select value={form.paymentPlan || 'Monthly'} onChange={(e) => setForm({ ...form, paymentPlan: e.target.value as Player['paymentPlan'] })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
-              {PAYMENT_PLANS.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
-          ))}
-          {formField('Amount (€)', <input type="number" value={form.amount || 0} onChange={(e) => setForm({ ...form, amount: parseInt(e.target.value) || 0 })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" />)}
-          {formField('Last Payment Date', <input type="date" value={form.lastPaymentDate || ''} onChange={(e) => setForm({ ...form, lastPaymentDate: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" />)}
-          {formField('Registration Date', <input type="date" value={form.registrationDate || ''} onChange={(e) => setForm({ ...form, registrationDate: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" />)}
-          {formField('Guardian Name', <input value={form.guardianName || ''} onChange={(e) => setForm({ ...form, guardianName: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="Parent / Guardian" />)}
-          {formField('Guardian Phone', <input value={form.guardianPhone || ''} onChange={(e) => setForm({ ...form, guardianPhone: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="+353 87 000 0000" />)}
+          {formField('Jersey Number', <input type="number" value={form.jerseyNumber || 0} onChange={(e) => setForm({ ...form, jerseyNumber: parseInt(e.target.value) || 0 })} className={dashField} />)}
+          {formField('Registration Date', <input type="date" value={form.registrationDate || ''} onChange={(e) => setForm({ ...form, registrationDate: e.target.value })} className={dashField} />)}
+          {formField('Guardian Name', <input value={form.guardianName || ''} onChange={(e) => setForm({ ...form, guardianName: e.target.value })} className={dashField} placeholder="Parent / Guardian" />)}
+          {formField('Guardian Phone', <input value={form.guardianPhone || ''} onChange={(e) => setForm({ ...form, guardianPhone: e.target.value })} className={dashField} placeholder="+353 87 000 0000" />)}
           <div className="md:col-span-2">
             {formField('Teams', (
               <div className="flex flex-wrap gap-2">
                 {teams.map((t) => (
-                  <label key={t.id} className="flex items-center gap-2 bg-white/5 border border-[#334155] rounded-lg px-3 py-2 cursor-pointer hover:bg-white/[0.08] transition-colors">
+                  <label key={t.id} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 cursor-pointer hover:bg-white hover:border-lions-300 transition-colors">
                     <input
                       type="checkbox"
                       checked={form.teamIds?.includes(t.id) || false}
@@ -1902,7 +1876,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
                       }}
                       className="accent-blue-500"
                     />
-                    <span className="font-inter text-sm text-white">{t.name}</span>
+                    <span className="font-inter text-sm text-slate-700">{t.name}</span>
                   </label>
                 ))}
               </div>
@@ -1910,12 +1884,12 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
           </div>
           <div className="md:col-span-2 flex items-center gap-3">
             <input type="checkbox" id="bi-reg" checked={form.registeredWithBI || false} onChange={(e) => setForm({ ...form, registeredWithBI: e.target.checked })} className="accent-blue-500" />
-            <label htmlFor="bi-reg" className="font-inter text-sm text-slate-300">Registered with Basketball Ireland</label>
+            <label htmlFor="bi-reg" className="font-inter text-sm text-slate-600">Registered with Basketball Ireland</label>
           </div>
         </div>
-        <div className="flex justify-end gap-3 pt-4 border-t border-white/[0.06]">
-          <button onClick={() => { setShowAddModal(false); setEditingPlayer(null) }} className="px-4 py-2 font-inter text-sm text-slate-300 hover:text-white transition-colors">Cancel</button>
-          <button onClick={handleSave} className="btn-gradient text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">
+        <div className="flex justify-end gap-3 pt-4 border-t border-slate-200">
+          <button onClick={() => { setShowAddModal(false); setEditingPlayer(null) }} className="px-4 py-2 font-inter text-sm text-slate-500 hover:text-slate-900 transition-colors">Cancel</button>
+          <button onClick={handleSave} className="btn-gradient text-white font-inter font-semibold text-sm px-6 py-2.5 rounded-xl transition-all duration-150">
             Save Changes
           </button>
         </div>
@@ -1936,7 +1910,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
           )
         })()}
         <div className="flex justify-end gap-3 pt-2">
-          <button data-testid="confirm-delete-cancel" onClick={() => setConfirmDelete(null)} className="px-4 py-2 font-inter text-sm text-slate-300 hover:text-white transition-colors">Cancel</button>
+          <button data-testid="confirm-delete-cancel" onClick={() => setConfirmDelete(null)} className="px-4 py-2 font-inter text-sm text-slate-500 hover:text-slate-900 transition-colors">Cancel</button>
           <button data-testid="confirm-delete-confirm" onClick={() => confirmDelete && handleDelete(confirmDelete)} className="bg-red-500 hover:bg-red-400 text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">
             Delete
           </button>
@@ -1949,7 +1923,7 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
 /* ─────────────────────── View: Teams ─────────────────────── */
 
 function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
-  const { teams, ageGroups, players, saveTeams, saveAgeGroups, refresh } = data
+  const { teams, ageGroups, players, sessions, saveTeams, saveAgeGroups, saveSessions, refresh } = data
   const [activeAgeGroup, setActiveAgeGroup] = useState('senior')
   const [activeDivision, setActiveDivision] = useState<string | 'all'>('all')
   const [showAddTeam, setShowAddTeam] = useState(false)
@@ -2009,9 +1983,9 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
   }
 
   const handleDeleteTeam = (id: string) => {
-    if (!confirm('Delete this team?')) return
-    const next = teams.filter((t) => t.id !== id)
-    saveTeams(next)
+    if (!confirm('Delete this team? Its schedule sessions will also be removed.')) return
+    saveTeams(teams.filter((t) => t.id !== id))
+    saveSessions(sessions.filter((s) => s.teamId !== id))
   }
 
   const handleAddAgeGroup = () => {
@@ -2074,35 +2048,31 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Teams</h2>
-          <p className="font-inter text-sm text-slate-400 mt-1.5">Divisions, rosters &amp; league standings</p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => setShowAddAgeGroup(true)} className="flex items-center gap-2 bg-transparent border border-white/30 text-white font-inter font-medium text-sm px-3 py-2 rounded hover:bg-white/5 transition-colors">
-            <Plus size={14} />
-            Add Age Group
-          </button>
-          <button onClick={() => setShowAddDivision(true)} className="flex items-center gap-2 bg-transparent border border-white/30 text-white font-inter font-medium text-sm px-3 py-2 rounded hover:bg-white/5 transition-colors">
-            <Plus size={14} />
-            Add Division
-          </button>
-          <button onClick={() => setShowAddTeam(true)} className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg hover:scale-[1.03] transition-all duration-150">
-            <Plus size={16} />
-            Add Team
-          </button>
-        </div>
+      <div className="flex justify-end gap-2 flex-wrap">
+        <button onClick={() => setShowAddAgeGroup(true)} className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 font-inter font-medium text-sm px-3 py-2 rounded-xl hover:bg-slate-50 hover:text-slate-900 transition-colors">
+          <Plus size={14} />
+          Add Age Group
+        </button>
+        <button onClick={() => setShowAddDivision(true)} className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 font-inter font-medium text-sm px-3 py-2 rounded-xl hover:bg-slate-50 hover:text-slate-900 transition-colors">
+          <Plus size={14} />
+          Add Division
+        </button>
+        <button onClick={() => setShowAddTeam(true)} className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-xl hover:scale-[1.03] transition-all duration-150">
+          <Plus size={16} />
+          Add Team
+        </button>
       </div>
 
       {/* Age Group Tabs */}
-      <div className="flex gap-1 bg-white/[0.04] border border-white/[0.06] rounded-lg p-1 w-fit overflow-x-auto">
+      <div className="flex gap-1 bg-white border border-slate-200 rounded-2xl p-1 w-fit overflow-x-auto shadow-[0_10px_28px_-22px_rgba(15,23,42,0.2)]">
         {ageGroups.map((ag) => (
           <button
             key={ag.id}
             onClick={() => { setActiveAgeGroup(ag.id); setActiveDivision('all') }}
-            className={`px-4 py-2 rounded-md font-inter text-sm font-medium transition-all duration-150 whitespace-nowrap ${
-              activeAgeGroup === ag.id ? 'bg-white/5 text-white border-b-2 border-blue-500' : 'text-slate-400 hover:text-white'
+            className={`px-4 py-2 rounded-xl font-inter text-sm font-medium transition-all duration-150 whitespace-nowrap ${
+              activeAgeGroup === ag.id
+                ? 'bg-lions-50 text-lions-800 shadow-sm ring-1 ring-lions-200'
+                : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
             }`}
           >
             {ag.name}
@@ -2112,24 +2082,24 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
 
       {/* Division Filter */}
       {divisions.length > 0 && (
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center flex-wrap">
           <Filter size={14} className="text-slate-400" />
           <button
             onClick={() => setActiveDivision('all')}
-            className={`px-3 py-1 rounded-md font-inter text-xs font-medium transition-all ${activeDivision === 'all' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'text-slate-400 hover:text-white bg-white/5'}`}
+            className={`px-3 py-1.5 rounded-full font-inter text-xs font-medium transition-all ${activeDivision === 'all' ? 'bg-lions-50 text-lions-700 border border-lions-200' : 'text-slate-500 hover:text-slate-900 bg-white border border-slate-200'}`}
           >
             All Divisions
           </button>
           {divisions.map((d) => (
             <span
               key={d.id}
-              className={`group flex items-center gap-1.5 pl-3 pr-1.5 py-1 rounded-md font-inter text-xs font-medium transition-all ${activeDivision === d.id ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'text-slate-400 hover:text-white bg-white/5'}`}
+              className={`group flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full font-inter text-xs font-medium transition-all ${activeDivision === d.id ? 'bg-lions-50 text-lions-700 border border-lions-200' : 'text-slate-500 hover:text-slate-900 bg-white border border-slate-200'}`}
             >
               <button onClick={() => setActiveDivision(d.id)}>{d.name}</button>
               <button
                 onClick={(e) => { e.stopPropagation(); handleDeleteDivision(d.id) }}
                 title="Delete division"
-                className="opacity-50 hover:opacity-100 hover:text-red-400 transition-opacity"
+                className="opacity-50 hover:opacity-100 hover:text-red-500 transition-opacity"
               >
                 <X size={12} />
               </button>
@@ -2163,21 +2133,21 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-[#0A1628] rounded-lg p-3 text-center">
-                    <p className="font-oswald font-bold text-xl text-white">{team.wins}-{team.losses}</p>
-                    <p className="font-inter text-xs text-slate-400 uppercase tracking-wider">Record</p>
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center">
+                    <p className="font-oswald font-bold text-xl text-slate-900">{team.wins}-{team.losses}</p>
+                    <p className="font-inter text-xs text-slate-500 uppercase tracking-wider">Record</p>
                   </div>
-                  <div className="bg-[#0A1628] rounded-lg p-3 text-center">
-                    <p className="font-oswald font-bold text-xl text-blue-400">{winPct}%</p>
-                    <p className="font-inter text-xs text-slate-400 uppercase tracking-wider">Win Rate</p>
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center">
+                    <p className="font-oswald font-bold text-xl text-lions-600">{winPct}%</p>
+                    <p className="font-inter text-xs text-slate-500 uppercase tracking-wider">Win Rate</p>
                   </div>
-                  <div className="bg-[#0A1628] rounded-lg p-3 text-center">
-                    <p className="font-oswald font-bold text-xl text-white">{teamPlayers.length}</p>
-                    <p className="font-inter text-xs text-slate-400 uppercase tracking-wider">Players</p>
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center">
+                    <p className="font-oswald font-bold text-xl text-slate-900">{teamPlayers.length}</p>
+                    <p className="font-inter text-xs text-slate-500 uppercase tracking-wider">Players</p>
                   </div>
-                  <div className="bg-[#0A1628] rounded-lg p-3 text-center">
-                    <p className="font-oswald font-bold text-xl text-amber-400">{team.pointsFor}</p>
-                    <p className="font-inter text-xs text-slate-400 uppercase tracking-wider">Points For</p>
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center">
+                    <p className="font-oswald font-bold text-xl text-lions-600">{team.pointsFor}</p>
+                    <p className="font-inter text-xs text-slate-500 uppercase tracking-wider">Points For</p>
                   </div>
                 </div>
 
@@ -2193,12 +2163,12 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
                   <p className="font-inter text-xs text-slate-400 uppercase tracking-wider mb-2">Roster</p>
                   <div className="flex flex-wrap gap-1">
                     {teamPlayers.slice(0, 6).map((p) => (
-                      <span key={p.id} className="text-xs font-inter text-slate-300 bg-white/5 px-2 py-1 rounded border border-white/[0.06]">
+                      <span key={p.id} className="text-xs font-inter text-slate-600 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">
                         #{p.jerseyNumber} {p.name.split(' ').pop()}
                       </span>
                     ))}
                     {teamPlayers.length > 6 && (
-                      <span className="text-xs font-inter text-slate-400 bg-white/5 px-2 py-1 rounded">+{teamPlayers.length - 6} more</span>
+                      <span className="text-xs font-inter text-slate-500 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">+{teamPlayers.length - 6} more</span>
                     )}
                     {teamPlayers.length === 0 && (
                       <span className="text-xs font-inter text-slate-500">No players assigned</span>
@@ -2210,7 +2180,7 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
                   <button
                     type="button"
                     onClick={() => { setRosterTeam(team); setRosterSearch('') }}
-                    className="flex-1 flex items-center justify-center gap-2 bg-blue-500/10 border border-blue-500/25 text-blue-300 hover:bg-blue-500/20 font-inter font-medium text-xs px-3 py-2.5 rounded transition-all"
+                    className="flex-1 flex items-center justify-center gap-2 bg-lions-50 border border-lions-200 text-lions-700 hover:bg-lions-100 font-inter font-medium text-xs px-3 py-2.5 rounded-xl transition-all"
                   >
                     <UserPlus size={14} />
                     Manage Roster
@@ -2282,7 +2252,7 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
                   value={rosterSearch}
                   onChange={(e) => setRosterSearch(e.target.value)}
                   placeholder="Search by name…"
-                  className="w-full bg-white/5 border border-[#334155] rounded-lg pl-9 pr-3 py-2 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+                  className={`${dashField} pl-9`}
                 />
               </div>
               {unassignedForRoster.length === 0 ? (
@@ -2322,10 +2292,10 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
 
       <Modal open={showAddTeam} onClose={() => setShowAddTeam(false)} title="Add New Team">
         <div className="space-y-4">
-          {formField('Team Name', <input value={teamForm.name} onChange={(e) => setTeamForm({ ...teamForm, name: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="Dublin Lions U16 Boys A" />)}
+          {formField('Team Name', <input value={teamForm.name} onChange={(e) => setTeamForm({ ...teamForm, name: e.target.value })} className={dashField} placeholder="Dublin Lions U16 Boys A" />)}
           <div className="grid grid-cols-2 gap-4">
             {formField('Gender', (
-              <select value={teamForm.gender} onChange={(e) => setTeamForm({ ...teamForm, gender: e.target.value as Team['gender'] })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
+              <select value={teamForm.gender} onChange={(e) => setTeamForm({ ...teamForm, gender: e.target.value as Team['gender'] })} className={dashField}>
                 <option value="Boys">Boys</option>
                 <option value="Girls">Girls</option>
                 <option value="Men">Men</option>
@@ -2333,16 +2303,16 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
               </select>
             ))}
             {formField('Division', (
-              <select value={teamForm.divisionId} onChange={(e) => setTeamForm({ ...teamForm, divisionId: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
+              <select value={teamForm.divisionId} onChange={(e) => setTeamForm({ ...teamForm, divisionId: e.target.value })} className={dashField}>
                 <option value="">Select Division</option>
                 {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             ))}
           </div>
-          {formField('Coach', <input value={teamForm.coach} onChange={(e) => setTeamForm({ ...teamForm, coach: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="Coach Name" />)}
+          {formField('Coach', <input value={teamForm.coach} onChange={(e) => setTeamForm({ ...teamForm, coach: e.target.value })} className={dashField} placeholder="Coach Name" />)}
         </div>
         <div className="flex justify-end gap-3 pt-2">
-          <button onClick={() => setShowAddTeam(false)} className="px-4 py-2 font-inter text-sm text-slate-300 hover:text-white transition-colors">Cancel</button>
+          <button onClick={() => setShowAddTeam(false)} className="px-4 py-2 font-inter text-sm text-slate-500 hover:text-slate-900 transition-colors">Cancel</button>
           <button onClick={handleAddTeam} className="btn-gradient text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">Add Team</button>
         </div>
       </Modal>
@@ -2350,25 +2320,25 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
       <Modal open={showAddDivision} onClose={() => setShowAddDivision(false)} title="Add Division">
         <div className="space-y-4">
           <p className="font-inter text-sm text-slate-400">Adding division to <span className="text-white font-medium">{currentAgeGroup?.name}</span></p>
-          {formField('Division Name', <input value={divisionName} onChange={(e) => setDivisionName(e.target.value)} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="e.g., E or Development" />)}
+          {formField('Division Name', <input value={divisionName} onChange={(e) => setDivisionName(e.target.value)} className={dashField} placeholder="e.g., E or Development" />)}
         </div>
         <div className="flex justify-end gap-3 pt-2">
-          <button onClick={() => setShowAddDivision(false)} className="px-4 py-2 font-inter text-sm text-slate-300 hover:text-white transition-colors">Cancel</button>
+          <button onClick={() => setShowAddDivision(false)} className="px-4 py-2 font-inter text-sm text-slate-500 hover:text-slate-900 transition-colors">Cancel</button>
           <button onClick={handleAddDivision} className="btn-gradient text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">Add Division</button>
         </div>
       </Modal>
 
       <Modal open={showAddAgeGroup} onClose={() => setShowAddAgeGroup(false)} title="Add Age Group">
         <div className="space-y-4">
-          {formField('Age Group Name', <input value={ageGroupForm.name} onChange={(e) => setAgeGroupForm({ ...ageGroupForm, name: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="e.g., U8 or Academy" />)}
+          {formField('Age Group Name', <input value={ageGroupForm.name} onChange={(e) => setAgeGroupForm({ ...ageGroupForm, name: e.target.value })} className={dashField} placeholder="e.g., U8 or Academy" />)}
           <div className="grid grid-cols-2 gap-4">
-            {formField('Min Age', <input type="number" value={ageGroupForm.minAge} onChange={(e) => setAgeGroupForm({ ...ageGroupForm, minAge: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500" placeholder="6" />)}
-            {formField('Max Age', <input type="number" value={ageGroupForm.maxAge} onChange={(e) => setAgeGroupForm({ ...ageGroupForm, maxAge: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500" placeholder="8" />)}
+            {formField('Min Age', <input type="number" value={ageGroupForm.minAge} onChange={(e) => setAgeGroupForm({ ...ageGroupForm, minAge: e.target.value })} className={dashField} placeholder="6" />)}
+            {formField('Max Age', <input type="number" value={ageGroupForm.maxAge} onChange={(e) => setAgeGroupForm({ ...ageGroupForm, maxAge: e.target.value })} className={dashField} placeholder="8" />)}
           </div>
           <p className="font-inter text-xs text-slate-500">A default "A" division is created automatically — add more from "Add Division" once it exists.</p>
         </div>
         <div className="flex justify-end gap-3 pt-2">
-          <button onClick={() => setShowAddAgeGroup(false)} className="px-4 py-2 font-inter text-sm text-slate-300 hover:text-white transition-colors">Cancel</button>
+          <button onClick={() => setShowAddAgeGroup(false)} className="px-4 py-2 font-inter text-sm text-slate-500 hover:text-slate-900 transition-colors">Cancel</button>
           <button onClick={handleAddAgeGroup} className="btn-gradient text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">Add Age Group</button>
         </div>
       </Modal>
@@ -2539,11 +2509,7 @@ function PaymentsView({ data }: { data: ReturnType<typeof useLiveData> }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Payments</h2>
-          <p className="font-inter text-sm text-slate-400 mt-1.5">Record payments &amp; track revenue</p>
-        </div>
+      <div className="flex justify-end">
         <button onClick={() => setShowRecord(true)} className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg hover:scale-[1.03] transition-all duration-150">
           <Plus size={16} />
           Record Payment
@@ -2739,84 +2705,92 @@ function PublicFixturesPanel() {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 pt-2 border-t border-slate-200/80">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <div>
-            <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Public Fixtures &amp; Results</h2>
-            <p className="font-inter text-sm text-slate-400 mt-1.5">Publish upcoming games &amp; post final scores</p>
-          </div>
-          <p className="font-inter text-sm text-slate-400 mt-1">Add upcoming games and record final scores. Visible on the homepage and Fixtures page.</p>
+          <h3 className="font-inter font-semibold text-base text-slate-900">Public fixtures</h3>
+          <p className="font-inter text-xs text-slate-500 mt-0.5">Shown on the website schedule page</p>
         </div>
         <button
           onClick={() => { setEditing(null); setShowForm(true) }}
-          className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg hover:scale-[1.03] transition-all duration-150 shrink-0"
+          className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2.5 rounded-xl transition-all duration-150 shrink-0 active:scale-[0.98]"
         >
           <Plus size={16} />
           Add Fixture
         </button>
       </div>
 
-      <div className="dash-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-white/[0.06]">
-                {['Date', 'Time', 'Opponent', 'Venue', 'Competition', 'Result', 'Actions'].map((col) => (
-                  <th key={col} className="px-4 py-3 font-inter font-semibold text-xs uppercase tracking-widest text-slate-400 text-left">{col}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/[0.06]">
-              {sorted.length === 0 ? (
-                <tr><td colSpan={7} className="px-4 py-6 text-center font-inter text-sm text-slate-400">No fixtures yet. Click "Add Fixture" to create one.</td></tr>
-              ) : sorted.map((f) => (
-                <tr key={f.id} className="hover:bg-white/[0.03]">
-                  <td className="px-4 py-3 font-inter text-sm text-white">{f.date}</td>
-                  <td className="px-4 py-3 font-inter text-sm text-slate-300">{f.time}</td>
-                  <td className="px-4 py-3 font-inter text-sm text-white">{f.opponent}</td>
-                  <td className="px-4 py-3 font-inter text-sm text-slate-300">{f.venue}</td>
-                  <td className="px-4 py-3 font-inter text-sm text-slate-300">{f.competition}</td>
-                  <td className="px-4 py-3 font-inter text-sm">
-                    {f.result ? (
-                      <span className={`font-mono font-semibold ${f.result.lionsScore > f.result.opponentScore ? 'text-green-400' : 'text-red-400'}`}>
-                        {f.result.lionsScore}-{f.result.opponentScore}
-                      </span>
-                    ) : (
-                      <span className="text-slate-500">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => setResultFor(f)}
-                        title={f.result ? 'Edit result' : 'Record result'}
-                        className="p-2 text-slate-400 hover:text-amber-400 rounded hover:bg-white/5"
-                      >
-                        <Trophy size={16} />
-                      </button>
-                      <button
-                        onClick={() => { setEditing(f); setShowForm(true) }}
-                        title="Edit fixture"
-                        className="p-2 text-slate-400 hover:text-blue-400 rounded hover:bg-white/5"
-                      >
-                        <Pencil size={16} />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(f.id)}
-                        title="Delete"
-                        className="p-2 text-slate-400 hover:text-red-400 rounded hover:bg-white/5"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {sorted.length === 0 ? (
+        <div className="dash-card p-8 text-center">
+          <Trophy size={28} className="text-slate-400 mx-auto mb-2" />
+          <p className="font-inter text-sm text-slate-500">No public fixtures yet. Add one to publish on the site.</p>
         </div>
-      </div>
+      ) : (
+        <ul className="space-y-2.5">
+          {sorted.map((f) => {
+            const day = new Date(`${f.date}T12:00:00`)
+            const dayNum = Number.isNaN(day.getTime()) ? f.date.slice(-2) : String(day.getDate())
+            const month = Number.isNaN(day.getTime())
+              ? ''
+              : day.toLocaleDateString('en-IE', { month: 'short' })
+            const won = f.result && f.result.lionsScore > f.result.opponentScore
+            const lost = f.result && f.result.lionsScore < f.result.opponentScore
+            return (
+              <li key={f.id} className="dash-card p-4 sm:p-5">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                  <div className="flex flex-col items-center justify-center rounded-xl bg-slate-50 px-3.5 py-2.5 min-w-[4.5rem] shrink-0">
+                    <span className="font-oswald font-bold text-xl text-slate-900 leading-none">{dayNum}</span>
+                    <span className="font-inter text-[11px] uppercase tracking-wide text-slate-500 mt-1">{month}</span>
+                  </div>
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <p className="font-inter font-semibold text-slate-900">
+                      vs {f.opponent}
+                      <span className="ml-2 font-normal text-sm text-slate-500">{f.venue}</span>
+                    </p>
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-inter text-sm text-slate-500">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Clock size={14} className="text-slate-400" />
+                        {f.time}
+                      </span>
+                      <span>{f.competition}</span>
+                      {f.result ? (
+                        <span className={`font-mono font-semibold tabular-nums ${won ? 'text-emerald-600' : lost ? 'text-red-600' : 'text-slate-700'}`}>
+                          {f.result.lionsScore}-{f.result.opponentScore}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">No result</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => setResultFor(f)}
+                      title={f.result ? 'Edit result' : 'Record result'}
+                      className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-colors"
+                    >
+                      <Trophy size={16} />
+                    </button>
+                    <button
+                      onClick={() => { setEditing(f); setShowForm(true) }}
+                      title="Edit fixture"
+                      className="p-2 rounded-lg text-slate-400 hover:text-lions-600 hover:bg-lions-50 transition-colors"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(f.id)}
+                      title="Delete"
+                      className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
 
       {showForm && (
         <FixtureForm
@@ -2856,24 +2830,24 @@ function FixtureForm({ fixture, onClose, onSave }: { fixture: ClubFixture | null
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           {formField('Date', (
-            <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500" />
+            <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className={dashField} />
           ))}
           {formField('Tip-off', (
-            <input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500" />
+            <input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} className={dashField} />
           ))}
         </div>
         {formField('Opponent', (
-          <input type="text" value={form.opponent} onChange={(e) => setForm({ ...form, opponent: e.target.value })} placeholder="e.g. Neptune BC" className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500" />
+          <input type="text" value={form.opponent} onChange={(e) => setForm({ ...form, opponent: e.target.value })} placeholder="e.g. Neptune BC" className={dashField} />
         ))}
         <div className="grid grid-cols-2 gap-3">
           {formField('Venue', (
-            <select value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value as 'Home' | 'Away' })} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
+            <select value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value as 'Home' | 'Away' })} className={dashField}>
               <option value="Home">Home</option>
               <option value="Away">Away</option>
             </select>
           ))}
           {formField('Competition', (
-            <input type="text" value={form.competition} onChange={(e) => setForm({ ...form, competition: e.target.value })} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500" />
+            <input type="text" value={form.competition} onChange={(e) => setForm({ ...form, competition: e.target.value })} className={dashField} />
           ))}
         </div>
         <div className="border-t border-white/[0.06] pt-4 space-y-3">
@@ -2886,7 +2860,7 @@ function FixtureForm({ fixture, onClose, onSave }: { fixture: ClubFixture | null
                 onChange={(e) => setForm({ ...form, ticketsEnabled: e.target.checked })}
                 className="w-4 h-4 accent-blue-500"
               />
-              <span className="font-inter text-xs text-slate-300">Sell tickets for this match</span>
+              <span className="font-inter text-xs text-slate-600">Sell tickets for this match</span>
             </label>
           </div>
           {form.ticketsEnabled && (
@@ -2897,7 +2871,7 @@ function FixtureForm({ fixture, onClose, onSave }: { fixture: ClubFixture | null
                   min={0}
                   value={form.adultPrice ?? 0}
                   onChange={(e) => setForm({ ...form, adultPrice: Number(e.target.value) })}
-                  className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
+                  className={dashField}
                 />
               ))}
               {formField('Kid price (€)', (
@@ -2906,19 +2880,19 @@ function FixtureForm({ fixture, onClose, onSave }: { fixture: ClubFixture | null
                   min={0}
                   value={form.kidPrice ?? 0}
                   onChange={(e) => setForm({ ...form, kidPrice: Number(e.target.value) })}
-                  className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500"
+                  className={dashField}
                 />
               ))}
             </div>
           )}
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={!!form.soldOut} onChange={(e) => setForm({ ...form, soldOut: e.target.checked })} className="w-4 h-4 accent-blue-500" />
-            <span className="font-inter text-sm text-slate-300">Mark as sold out</span>
+            <span className="font-inter text-sm text-slate-600">Mark as sold out</span>
           </label>
         </div>
         <div className="flex justify-end gap-2 pt-2">
-          <button onClick={onClose} className="bg-white/5 border border-white/[0.06] text-slate-300 font-inter text-sm px-4 py-2 rounded-lg hover:bg-white/10">Cancel</button>
-          <button onClick={() => valid && onSave(form)} disabled={!valid} className="btn-gradient disabled:opacity-40 text-white font-inter font-semibold text-sm px-4 py-2 rounded-lg">Save</button>
+          <button onClick={onClose} className="px-4 py-2 font-inter text-sm text-slate-500 hover:text-slate-900">Cancel</button>
+          <button onClick={() => valid && onSave(form)} disabled={!valid} className="btn-gradient disabled:opacity-40 text-white font-inter font-semibold text-sm px-4 py-2 rounded-xl">Save</button>
         </div>
       </div>
     </Modal>
@@ -2931,48 +2905,100 @@ function ResultForm({ fixture, onClose, onSave, onClear }: { fixture: ClubFixtur
   const [mvp, setMvp] = useState(fixture.result?.mvp ?? '')
 
   return (
-    <Modal open onClose={onClose} title={`Result — Dublin Lions vs ${fixture.opponent}`} maxWidth="max-w-md">
-      <p className="font-inter text-sm text-slate-400 mb-4">{fixture.date} · {fixture.time} · {fixture.venue}</p>
+    <Modal open onClose={onClose} title={`Result - Dublin Lions vs ${fixture.opponent}`} maxWidth="max-w-md">
+      <p className="font-inter text-sm text-slate-500 mb-4">{fixture.date} · {fixture.time} · {fixture.venue}</p>
       <div className="grid grid-cols-2 gap-3">
         {formField('Dublin Lions', (
-          <input type="number" min={0} value={lionsScore} onChange={(e) => setLions(Number(e.target.value))} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-base text-white text-center focus:outline-none focus:border-blue-500" />
+          <input type="number" min={0} value={lionsScore} onChange={(e) => setLions(Number(e.target.value))} className={`${dashField} text-center text-base`} />
         ))}
         {formField(fixture.opponent, (
-          <input type="number" min={0} value={oppScore} onChange={(e) => setOpp(Number(e.target.value))} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-base text-white text-center focus:outline-none focus:border-blue-500" />
+          <input type="number" min={0} value={oppScore} onChange={(e) => setOpp(Number(e.target.value))} className={`${dashField} text-center text-base`} />
         ))}
       </div>
       <div className="mt-3">
         {formField('MVP (optional)', (
-          <input type="text" value={mvp} onChange={(e) => setMvp(e.target.value)} placeholder="e.g. Kevin Anyanwu" className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-3 py-2 font-inter text-sm text-white focus:outline-none focus:border-blue-500" />
+          <input type="text" value={mvp} onChange={(e) => setMvp(e.target.value)} placeholder="e.g. Kevin Anyanwu" className={dashField} />
         ))}
       </div>
       <div className="flex justify-between gap-2 pt-4">
         {fixture.result ? (
-          <button onClick={onClear} className="text-red-400 hover:text-red-300 font-inter text-sm px-3 py-2 rounded-lg">Clear result</button>
+          <button onClick={onClear} className="text-red-600 hover:text-red-700 font-inter text-sm px-3 py-2 rounded-lg">Clear result</button>
         ) : <span />}
         <div className="flex gap-2">
-          <button onClick={onClose} className="bg-white/5 border border-white/[0.06] text-slate-300 font-inter text-sm px-4 py-2 rounded-lg hover:bg-white/10">Cancel</button>
-          <button onClick={() => onSave({ lionsScore, opponentScore: oppScore, mvp: mvp.trim() || undefined })} className="bg-lions-500 hover:bg-lions-400 text-white font-inter font-semibold text-sm px-4 py-2 rounded-lg">Save Result</button>
+          <button onClick={onClose} className="px-4 py-2 font-inter text-sm text-slate-500 hover:text-slate-900">Cancel</button>
+          <button onClick={() => onSave({ lionsScore, opponentScore: oppScore, mvp: mvp.trim() || undefined })} className="btn-gradient text-white font-inter font-semibold text-sm px-4 py-2 rounded-xl">Save Result</button>
         </div>
       </div>
     </Modal>
   )
 }
 
+/* ─────────────────────── View: Schedule (time grid) ─────────────────────── */
 function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
-  const { sessions, teams, players, saveSessions } = data
+  const { sessions, teams, players, ageGroups, saveSessions } = data
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [attendanceSession, setAttendanceSession] = useState<string | null>(null)
+  const [activeAgeGroup, setActiveAgeGroup] = useState(() => ageGroups[0]?.id ?? 'senior')
+  const [activeDivision, setActiveDivision] = useState<string | 'all'>('all')
   const [sessionForm, setSessionForm] = useState({
     title: '', teamId: '', date: '', time: '', location: 'Coláiste Bríde', type: 'Training' as Session['type'], opponent: ''
   })
 
+  const currentAgeGroup = ageGroups.find((ag) => ag.id === activeAgeGroup)
+  const divisions = currentAgeGroup?.divisions || []
+
+  const teamsInScope = useMemo(() => {
+    return teams.filter((t) => {
+      if (t.ageGroupId !== activeAgeGroup) return false
+      if (activeDivision !== 'all' && t.divisionId !== activeDivision) return false
+      return true
+    })
+  }, [teams, activeAgeGroup, activeDivision])
+
+  const teamIdSet = useMemo(() => new Set(teamsInScope.map((t) => t.id)), [teamsInScope])
+
+  const gridItems = useMemo(() => {
+    return sessions
+      .filter((s) => teamIdSet.has(s.teamId))
+      .map((s) => {
+        const team = teams.find((t) => t.id === s.teamId)
+        const people = team
+          ? players.filter((p) => p.teamIds.includes(team.id)).map((p) => p.name)
+          : []
+        return {
+          id: s.id,
+          title: s.title,
+          date: s.date,
+          time: s.time,
+          type: s.type,
+          subtitle: team
+            ? `${team.name}${s.type === 'Match' && s.opponent ? ` · vs ${s.opponent}` : ''} · ${s.location}`
+            : s.location,
+          people,
+        }
+      })
+  }, [sessions, teamIdSet, teams, players])
+
+  const openCreate = (date?: string, time?: string, teamId?: string) => {
+    setSessionForm({
+      title: '',
+      teamId: teamId || teamsInScope[0]?.id || '',
+      date: date || '',
+      time: time || '',
+      location: 'Coláiste Bríde',
+      type: 'Training',
+      opponent: '',
+    })
+    setShowCreateModal(true)
+  }
+
   const handleCreateSession = () => {
-    if (!sessionForm.title.trim() || !sessionForm.date || !sessionForm.time || !sessionForm.teamId) return
+    const teamId = sessionForm.teamId
+    if (!sessionForm.title.trim() || !sessionForm.date || !sessionForm.time || !teamId) return
     const newSession: Session = {
       id: `s${Date.now()}`,
       title: sessionForm.title,
-      teamId: sessionForm.teamId,
+      teamId,
       date: sessionForm.date,
       time: sessionForm.time,
       location: sessionForm.location,
@@ -2981,16 +3007,15 @@ function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
       attendance: [],
       notes: '',
     }
-    const next = [...sessions, newSession]
-    saveSessions(next)
+    saveSessions([...sessions, newSession])
     setShowCreateModal(false)
     setSessionForm({ title: '', teamId: '', date: '', time: '', location: 'Coláiste Bríde', type: 'Training', opponent: '' })
   }
 
   const handleDeleteSession = (id: string) => {
     if (!confirm('Delete this session?')) return
-    const next = sessions.filter((s) => s.id !== id)
-    saveSessions(next)
+    saveSessions(sessions.filter((s) => s.id !== id))
+    if (attendanceSession === id) setAttendanceSession(null)
   }
 
   const toggleAttendance = (sessionId: string, playerId: string) => {
@@ -2999,129 +3024,141 @@ function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
     const nextAtt = session.attendance.includes(playerId)
       ? session.attendance.filter((pid) => pid !== playerId)
       : [...session.attendance, playerId]
-    const next = sessions.map((s) => s.id === sessionId ? { ...s, attendance: nextAtt } : s)
-    saveSessions(next)
+    saveSessions(sessions.map((s) => (s.id === sessionId ? { ...s, attendance: nextAtt } : s)))
   }
-
-  const sortedSessions = useMemo(() => {
-    return [...sessions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-  }, [sessions])
 
   return (
     <div className="space-y-6">
-      <PublicFixturesPanel />
-
-      <SeasonControlCenter data={data} />
-
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Training Schedule</h2>
-          <p className="font-inter text-sm text-slate-400 mt-1.5">Plan sessions &amp; matches across all teams</p>
+      <div className="flex flex-col gap-3">
+        <div className="dash-segment overflow-x-auto max-w-full w-fit">
+          {ageGroups.map((ag) => (
+            <button
+              key={ag.id}
+              type="button"
+              aria-selected={activeAgeGroup === ag.id}
+              onClick={() => { setActiveAgeGroup(ag.id); setActiveDivision('all') }}
+              className={`px-3.5 py-2 font-inter text-sm font-medium whitespace-nowrap ${
+                activeAgeGroup === ag.id ? 'text-slate-900' : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              {ag.name}
+            </button>
+          ))}
         </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg hover:scale-[1.03] transition-all duration-150"
-        >
-          <Plus size={16} />
-          Create Session
-        </button>
-      </div>
 
-      <div className="dash-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-white/[0.06]">
-                {['Date', 'Title', 'Team', 'Time', 'Location', 'Type', 'Attendance', 'Actions'].map((col) => (
-                  <th key={col} className="px-6 py-4 font-inter font-semibold text-xs uppercase tracking-widest text-slate-400 text-left">{col}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/[0.06]">
-              {sortedSessions.map((s) => {
-                const team = teams.find((t) => t.id === s.teamId)
-                const totalPlayers = team?.players.length || 0
-                return (
-                  <tr key={s.id} className="hover:bg-white/5 transition-colors duration-150">
-                    <td className="px-6 py-4 font-inter text-sm text-slate-300">{s.date}</td>
-                    <td className="px-6 py-4 font-inter font-medium text-sm text-white">{s.title}</td>
-                    <td className="px-6 py-4">
-                      {team ? <span className="text-xs font-inter text-blue-400 bg-blue-500/10 px-2 py-1 rounded border border-blue-500/20">{team.name}</span> : <span className="text-xs text-slate-500">Unknown</span>}
-                    </td>
-                    <td className="px-6 py-4 font-inter text-sm text-slate-300">{s.time}</td>
-                    <td className="px-6 py-4 font-inter text-sm text-slate-300">{s.location}</td>
-                    <td className="px-6 py-4"><StatusBadge status={s.type} /></td>
-                    <td className="px-6 py-4">
-                      <button
-                        onClick={() => setAttendanceSession(s.id)}
-                        className="flex items-center gap-2"
-                      >
-                        <div className="w-24 h-2 bg-white/10 rounded-full overflow-hidden">
-                          <div className="h-full bg-blue-500 rounded-full" style={{ width: `${totalPlayers > 0 ? (s.attendance.length / totalPlayers) * 100 : 0}%` }} />
-                        </div>
-                        <span className="font-inter text-xs text-slate-400">{s.attendance.length}/{totalPlayers}</span>
-                      </button>
-                    </td>
-                    <td className="px-6 py-4">
-                      <button
-                        onClick={() => handleDeleteSession(s.id)}
-                        className="text-slate-400 hover:text-red-400 transition-colors"
-                        title="Delete session"
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-        {sortedSessions.length === 0 && (
-          <div className="px-6 py-8 text-center">
-            <Calendar size={32} className="text-slate-500 mx-auto mb-3" />
-            <p className="font-inter text-sm text-slate-400">No sessions scheduled. Create one to get started.</p>
+        {divisions.length > 0 && (
+          <div className="flex gap-2 items-center flex-wrap">
+            <button
+              type="button"
+              onClick={() => setActiveDivision('all')}
+              className={`px-3 py-1.5 rounded-lg font-inter text-xs font-medium transition-colors ${
+                activeDivision === 'all' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              All divisions
+            </button>
+            {divisions.map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => setActiveDivision(d.id)}
+                className={`px-3 py-1.5 rounded-lg font-inter text-xs font-medium transition-colors ${
+                  activeDivision === d.id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {d.name}
+              </button>
+            ))}
           </div>
         )}
       </div>
 
-      <Modal open={showCreateModal} onClose={() => setShowCreateModal(false)} title="Create New Session">
-        <div className="space-y-4">
-          {formField('Session Title', <input value={sessionForm.title} onChange={(e) => setSessionForm({ ...sessionForm, title: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="Training Session" />)}
-          <div className="grid grid-cols-2 gap-4">
-            {formField('Team', (
-              <select value={sessionForm.teamId} onChange={(e) => setSessionForm({ ...sessionForm, teamId: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
-                <option value="">Select Team</option>
-                {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            ))}
-            {formField('Date', <input type="date" value={sessionForm.date} onChange={(e) => setSessionForm({ ...sessionForm, date: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" />)}
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            {formField('Time', <input type="time" value={sessionForm.time} onChange={(e) => setSessionForm({ ...sessionForm, time: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" />)}
-            {formField('Type', (
-              <select value={sessionForm.type} onChange={(e) => setSessionForm({ ...sessionForm, type: e.target.value as Session['type'] })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500">
-                <option>Training</option>
-                <option>Match</option>
-                <option>Event</option>
-              </select>
-            ))}
-          </div>
-          {sessionForm.type === 'Match' && (
-            formField('Opponent', <input value={sessionForm.opponent} onChange={(e) => setSessionForm({ ...sessionForm, opponent: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg px-4 py-2.5 font-inter text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="Neptune BC" />)
-          )}
-          {formField('Location', (
-            <div className="relative">
-              <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-              <input value={sessionForm.location} onChange={(e) => setSessionForm({ ...sessionForm, location: e.target.value })} className="w-full bg-white/5 border border-[#334155] rounded-lg pl-9 pr-4 py-2.5 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30" placeholder="Coláiste Bríde" />
-            </div>
-          ))}
-        </div>
-        <div className="flex justify-end gap-3 pt-2">
-          <button onClick={() => setShowCreateModal(false)} className="px-4 py-2 font-inter text-sm text-slate-300 hover:text-white transition-colors">Cancel</button>
-          <button onClick={handleCreateSession} className="btn-gradient text-white font-inter font-semibold text-sm px-6 py-2 rounded transition-all duration-150">Create Session</button>
-        </div>
-      </Modal>
+      <ScheduleTimeGrid
+        items={gridItems}
+        onEventClick={(id) => setAttendanceSession(id)}
+        onDaySelect={teamsInScope.length > 0 ? (date, time) => openCreate(date, time) : undefined}
+        selectedDate={showCreateModal ? sessionForm.date : null}
+        selectedTime={showCreateModal ? sessionForm.time : null}
+        onOverlayDismiss={() => setShowCreateModal(false)}
+        boardOverlay={
+          showCreateModal ? (
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-inter font-semibold text-lg text-slate-900">Create session</h3>
+                  {sessionForm.date && (
+                    <p className="font-inter text-xs text-slate-500 mt-0.5">
+                      {new Date(sessionForm.date + 'T12:00:00').toLocaleDateString('en-IE', {
+                        weekday: 'long', day: 'numeric', month: 'long',
+                      })}
+                      {sessionForm.time ? ` · ${sessionForm.time}` : ''}
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="text-slate-400 hover:text-slate-800 p-1 rounded-lg"
+                  aria-label="Close"
+                >
+                  <XCircle size={20} />
+                </button>
+              </div>
+              <div className="space-y-3">
+                {formField('Session Title', <input value={sessionForm.title} onChange={(e) => setSessionForm({ ...sessionForm, title: e.target.value })} className={dashField} placeholder="Training Session" autoFocus />)}
+                {formField('Team', (
+                  <select value={sessionForm.teamId} onChange={(e) => setSessionForm({ ...sessionForm, teamId: e.target.value })} className={dashField}>
+                    <option value="">Select Team</option>
+                    {teams
+                      .filter((t) => t.ageGroupId === activeAgeGroup)
+                      .map((t) => <option key={t.id} value={t.id}>{t.name} · {getTeamAgeDivisionLabel(t)}</option>)}
+                  </select>
+                ))}
+                <div className="grid grid-cols-2 gap-3">
+                  {formField('Date', <input type="date" value={sessionForm.date} onChange={(e) => setSessionForm({ ...sessionForm, date: e.target.value })} className={dashField} />)}
+                  {formField('Time', <input type="time" value={sessionForm.time} onChange={(e) => setSessionForm({ ...sessionForm, time: e.target.value })} className={dashField} />)}
+                </div>
+                {formField('Type', (
+                  <select value={sessionForm.type} onChange={(e) => setSessionForm({ ...sessionForm, type: e.target.value as Session['type'] })} className={dashField}>
+                    <option>Training</option>
+                    <option>Match</option>
+                    <option>Event</option>
+                  </select>
+                ))}
+                {sessionForm.type === 'Match' && (
+                  formField('Opponent', <input value={sessionForm.opponent} onChange={(e) => setSessionForm({ ...sessionForm, opponent: e.target.value })} className={dashField} placeholder="Neptune BC" />)
+                )}
+                {formField('Location', (
+                  <div className="relative">
+                    <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input value={sessionForm.location} onChange={(e) => setSessionForm({ ...sessionForm, location: e.target.value })} className={`${dashField} pl-9`} placeholder="Coláiste Bríde" />
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setShowCreateModal(false)} className="px-3 py-2 font-inter text-sm text-slate-500 hover:text-slate-900">Cancel</button>
+                <button type="button" onClick={handleCreateSession} className="btn-gradient text-white font-inter font-semibold text-sm px-5 py-2 rounded-xl">Create</button>
+              </div>
+            </>
+          ) : null
+        }
+        headerRight={
+          <button
+            type="button"
+            onClick={() => openCreate()}
+            disabled={teamsInScope.length === 0}
+            className="flex items-center justify-center gap-2 btn-gold font-inter text-sm px-4 py-2.5 rounded-xl transition-all duration-150 disabled:opacity-50 shrink-0 active:scale-[0.98]"
+          >
+            <Plus size={16} />
+            Create new session
+          </button>
+        }
+        hint={teamsInScope.length === 0 ? 'Create a team under Teams to start scheduling.' : undefined}
+      />
+
+      <PublicFixturesPanel />
+
+      <SeasonControlCenter data={data} />
 
       <Modal open={!!attendanceSession} onClose={() => setAttendanceSession(null)} title="Attendance" maxWidth="max-w-lg">
         {(() => {
@@ -3131,26 +3168,40 @@ function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
           return (
             <div className="space-y-3">
               {session && (
-                <p className="font-inter text-sm text-slate-400">{session.date} at {session.time} — {session.location}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-inter font-semibold text-slate-900">{session.title}</p>
+                    <p className="font-inter text-sm text-slate-500 mt-0.5">{session.date} at {session.time} · {session.location}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => session && handleDeleteSession(session.id)}
+                    className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors shrink-0"
+                    title="Delete session"
+                    aria-label="Delete session"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               )}
               {teamPlayers.length === 0 ? (
-                <p className="font-inter text-sm text-slate-400 text-center py-4">No players on this team</p>
+                <p className="font-inter text-sm text-slate-500 text-center py-4">No players on this team</p>
               ) : (
                 teamPlayers.map((p) => {
                   const attended = session?.attendance.includes(p.id) || false
                   return (
-                    <div key={p.id} className="flex items-center justify-between bg-[#0A1628] rounded-lg p-3">
+                    <div key={p.id} className="flex items-center justify-between bg-slate-50 rounded-xl p-3">
                       <div className="flex items-center gap-3">
                         <InitialsAvatar name={p.name} size={28} />
                         <div>
-                          <p className="font-inter text-sm text-white">{p.name}</p>
-                          <p className="font-inter text-xs text-slate-400">#{p.jerseyNumber} — {p.position}</p>
+                          <p className="font-inter text-sm text-slate-900">{p.name}</p>
+                          <p className="font-inter text-xs text-slate-500">#{p.jerseyNumber} - {p.position}</p>
                         </div>
                       </div>
                       <button
                         onClick={() => attendanceSession && toggleAttendance(attendanceSession, p.id)}
-                        className={`px-3 py-1 rounded font-inter text-xs font-medium transition-all ${
-                          attended ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-white/5 text-slate-400 border border-white/10 hover:text-white'
+                        className={`px-3 py-1.5 rounded-lg font-inter text-xs font-medium transition-all ${
+                          attended ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : 'bg-white text-slate-500 ring-1 ring-slate-200 hover:text-slate-900'
                         }`}
                       >
                         {attended ? 'Present' : 'Absent'}
@@ -3235,13 +3286,6 @@ function ReportsView({ data }: { data: ReturnType<typeof useLiveData> }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Reports</h2>
-          <p className="font-inter text-sm text-slate-400 mt-1.5">Revenue, membership &amp; performance analytics</p>
-        </div>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Monthly Revenue */}
         <div className="dash-card p-6">
@@ -3667,26 +3711,17 @@ function ImagesView() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <div>
-            <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Image Manager</h2>
-            <p className="font-inter text-sm text-slate-400 mt-1.5">Update photos &amp; branding across the public site</p>
-          </div>
-          <p className="font-inter text-sm text-slate-400 mt-1 max-w-xl">
-            Upload images from your computer — drag &amp; drop or click a photo. Changes apply instantly across the entire site.
-          </p>
-          <div className="mt-3">
-            {isSupabaseConfigured ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-green-500/10 border border-green-500/20 px-3 py-1 font-inter text-xs font-medium text-green-400">
-                <CheckCircle size={13} />
-                Shared storage — every visitor sees your uploads
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-warn-500/10 border border-warn-500/20 px-3 py-1 font-inter text-xs font-medium text-warn-400">
-                <AlertCircle size={13} />
-                Browser-only — uploads show on this device until storage is configured
-              </span>
-            )}
-          </div>
+          {isSupabaseConfigured ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-green-500/10 border border-green-500/20 px-3 py-1 font-inter text-xs font-medium text-green-400">
+              <CheckCircle size={13} />
+              Shared storage — every visitor sees your uploads
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-warn-500/10 border border-warn-500/20 px-3 py-1 font-inter text-xs font-medium text-warn-400">
+              <AlertCircle size={13} />
+              Browser-only — uploads show on this device until storage is configured
+            </span>
+          )}
         </div>
         <div className="flex gap-3">
           <label className="cursor-pointer flex items-center gap-2 bg-transparent border-2 border-blue-500 text-blue-500 hover:bg-blue-500 hover:text-white font-inter font-semibold text-sm px-4 py-2 rounded transition-all duration-200">
@@ -3871,11 +3906,7 @@ function StoreManagerView() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white leading-none">Club Store</h2>
-          <p className="font-inter text-sm text-slate-400 mt-1.5">Manage products, stock &amp; online orders</p>
-        </div>
+      <div className="flex justify-end">
         <button onClick={() => setShowAdd(true)} className="flex items-center gap-2 btn-gold font-inter text-sm px-4 py-2 rounded-lg transition-all"><Plus size={16} /> Add Product</button>
       </div>
       <div className="flex gap-1 bg-white/5 rounded-lg p-1 w-fit">
@@ -3884,7 +3915,7 @@ function StoreManagerView() {
       </div>
       {tab === 'products' && (
         <>
-          <div className="relative max-w-sm"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" /><input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." className="w-full bg-white/5 border border-[#334155] rounded-lg pl-10 pr-4 py-2.5 font-inter text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500" /></div>
+          <div className="relative max-w-sm"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" /><input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." className={`${dashField} pl-10`} /></div>
           <div className="dash-card overflow-x-auto">
             <table className="w-full">
               <thead><tr className="border-b border-white/[0.06]">{['Product','Category','Price','Stock','Status','Actions'].map((h) => <th key={h} className="px-4 py-3 font-inter font-semibold text-xs uppercase tracking-widest text-slate-400 text-left">{h}</th>)}</tr></thead>
@@ -3945,8 +3976,8 @@ function ProductForm({ product, onSave, onCancel }: { product?: Product | null; 
             <div><label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-1">Category</label><select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-4 py-2.5 font-inter text-sm text-white">{PRODUCT_CATS.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
             <div><label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-1">Status</label><select value={form.active ? 'active' : 'hidden'} onChange={(e) => setForm({ ...form, active: e.target.value === 'active' })} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-4 py-2.5 font-inter text-sm text-white"><option value="active">Active</option><option value="hidden">Hidden</option></select></div>
           </div>
-          <div><label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-1">Description</label><textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className="w-full bg-[#0A1628] border border-white/[0.06] rounded-lg px-4 py-2.5 font-inter text-sm text-white resize-none" /></div>
-          <div><label className="block font-inter text-xs text-slate-400 uppercase tracking-wider mb-1">Photo</label><div className="flex items-center gap-4">{form.imageKey && <img src={form.imageKey} alt="" className="w-16 h-16 rounded-lg object-cover border border-white/[0.06]" />}<label className="cursor-pointer flex items-center gap-2 bg-white/5 border border-[#334155] rounded-lg px-4 py-2 font-inter text-sm text-slate-300 hover:bg-white/10"><Camera size={14} /> Upload<input type="file" accept="image/*" className="hidden" onChange={handlePhoto} /></label></div></div>
+          <div><label className="block font-inter text-xs text-slate-500 mb-1">Description</label><textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className={`${dashField} resize-none`} /></div>
+          <div><label className="block font-inter text-xs text-slate-500 mb-1">Photo</label><div className="flex items-center gap-4">{form.imageKey && <img src={form.imageKey} alt="" className="w-16 h-16 rounded-lg object-cover border border-slate-200" />}<label className="cursor-pointer flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 font-inter text-sm text-slate-600 hover:bg-slate-100"><Camera size={14} /> Upload<input type="file" accept="image/*" className="hidden" onChange={handlePhoto} /></label></div></div>
         </div>
         <div className="p-5 border-t border-white/[0.06] flex gap-3"><button onClick={onCancel} className="flex-1 bg-white/5 border border-white/[0.06] text-slate-300 font-inter font-medium text-sm rounded-lg px-4 py-2.5 hover:bg-white/10">Cancel</button><button onClick={() => onSave(form)} disabled={!form.name.trim()} className="flex-1 btn-gradient disabled:opacity-40 text-white font-inter font-semibold text-sm rounded-lg px-4 py-2.5 transition-colors flex items-center justify-center gap-2"><Check size={16} /> Save</button></div>
       </div>
@@ -3960,11 +3991,9 @@ function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
   const { teams, players } = data
   const [activeTeamId, setActiveTeamId] = useState<string>(teams[0]?.id || '')
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [text, setText] = useState('')
   const [room, setRoom] = useState<ChatRoomMembership>({ memberIds: [], adminIds: [] })
   const [showMembers, setShowMembers] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
-  const scrollRef = useRef<HTMLDivElement>(null)
 
   const refreshRoom = useCallback(() => {
     if (activeTeamId) setRoom(getChatRoom(activeTeamId))
@@ -3978,71 +4007,81 @@ function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
     const h = (e: StorageEvent) => {
       if (e.key === 'dlbc_chat_messages') sync()
       if (e.key === 'dlbc_chat_members') refreshRoom()
+      if (e.key === 'dlbc_chat_deleted_ids') sync()
     }
     window.addEventListener('storage', h)
     let bc: BroadcastChannel | null = null
     try { bc = new BroadcastChannel('dlbc_chat'); bc.onmessage = sync } catch {}
-    return () => { window.removeEventListener('storage', h); bc?.close() }
+    const pullTimer = setInterval(() => {
+      void pullMergedChatState().then(sync)
+    }, 3000)
+    void pullMergedChatState().then(sync)
+    return () => {
+      window.removeEventListener('storage', h)
+      bc?.close()
+      clearInterval(pullTimer)
+    }
   }, [refreshRoom])
 
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-  }, [messages, activeTeamId])
+    if (!activeTeamId && teams[0]?.id) setActiveTeamId(teams[0].id)
+  }, [teams, activeTeamId])
 
   const filtered = useMemo(() => {
-    return messages.filter((m) => m.teamId === activeTeamId).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+    return messages
+      .filter((m) => m.teamId === activeTeamId)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
   }, [messages, activeTeamId])
 
-  const handleSend = () => {
-    if (!text.trim() || !activeTeamId) return
-    addChatMessage(activeTeamId, 'Manager', 'manager', text.trim())
-    setMessages(getChatMessages())
-    setText('')
+  const lastPreview = (teamId: string) => {
+    const last = messages
+      .filter((m) => m.teamId === teamId)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]
+    return last?.text
   }
 
-  const formatTime = (ts: string) => {
-    const d = new Date(ts)
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const chatTeams = teams.map((team) => ({
+    id: team.id,
+    name: team.name,
+    subtitle: `${getTeamAgeDivisionLabel(team)} · ${getChatRoom(team.id).memberIds.length} members`,
+    preview: lastPreview(team.id),
+  }))
+
+  const handleSend = (body: string) => {
+    if (!body.trim() || !activeTeamId) return
+    const message = addChatMessage(activeTeamId, 'Manager', 'manager', body.trim())
+    setMessages((prev) => {
+      const byId = new Map(prev.map((m) => [m.id, m]))
+      byId.set(message.id, message)
+      return [...byId.values()].sort(
+        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+      )
+    })
+    void publishChatNow()
+  }
+
+  const handleDelete = (messageId: string) => {
+    if (!deleteOwnChatMessage(messageId, 'Manager', 'manager')) return
+    setMessages(getChatMessages())
+    void publishChatNow()
   }
 
   return (
-    <div className="mgr-chat-shell">
-      {/* Team list */}
-      <aside className="mgr-chat-teams">
-        <div className="px-4 py-3 border-b border-white/[0.06]">
-          <p className="font-inter text-[10px] uppercase tracking-[0.18em] text-slate-500">Teams</p>
-        </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-0.5 scroll-slim">
-          {teams.length === 0 ? (
-            <p className="px-3 py-4 font-inter text-xs text-slate-500">No teams yet</p>
-          ) : (
-            teams.map((team) => (
-              <button
-                key={team.id}
-                type="button"
-                onClick={() => setActiveTeamId(team.id)}
-                className={`mgr-chat-team-btn ${activeTeamId === team.id ? 'mgr-chat-team-btn--active' : ''}`}
-              >
-                <p className="mgr-chat-team-name font-inter font-medium text-sm truncate">{team.name}</p>
-                <p className="font-inter text-[10px] text-slate-500 mt-0.5 truncate">{getTeamAgeDivisionLabel(team)}</p>
-              </button>
-            ))
-          )}
-        </div>
-      </aside>
-
-      {/* Conversation */}
-      <div className="flex flex-1 flex-col min-w-0 min-h-0">
-        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/[0.06]">
-          <div className="min-w-0">
-            <p className="font-oswald font-bold text-base text-white truncate">
-              {teams.find((t) => t.id === activeTeamId)?.name || 'Select a team'}
-            </p>
-            <p className="font-inter text-xs text-slate-500 mt-0.5">
-              {room.memberIds.length} member{room.memberIds.length !== 1 ? 's' : ''}
-            </p>
-          </div>
-          {activeTeamId && (
+    <>
+      <TeamChatUI
+        variant="manager"
+        teams={chatTeams}
+        activeTeamId={activeTeamId}
+        onTeamChange={setActiveTeamId}
+        messages={filtered}
+        currentSenderName="Manager"
+        currentSenderRole="manager"
+        canSend={!!activeTeamId}
+        onSend={handleSend}
+        onDeleteMessage={handleDelete}
+        emptyTeamsMessage="Create a team first, then start chatting with members."
+        headerExtra={
+          activeTeamId ? (
             <button
               type="button"
               onClick={() => setShowMembers(true)}
@@ -4051,56 +4090,9 @@ function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
             >
               <Users size={17} />
             </button>
-          )}
-        </div>
-
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3 scroll-slim">
-          {filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full min-h-[12rem] text-center">
-              <MessageSquare size={32} className="text-slate-600 mb-3" />
-              <p className="font-inter text-sm text-slate-400">No messages yet</p>
-              <p className="font-inter text-xs text-slate-600 mt-1">Start the conversation below</p>
-            </div>
-          ) : (
-            filtered.map((msg) => {
-              const isManager = msg.senderRole === 'manager'
-              return (
-                <div key={msg.id} className={`flex flex-col ${isManager ? 'items-end' : 'items-start'}`}>
-                  <div className={`mgr-chat-bubble ${isManager ? 'mgr-chat-bubble--manager' : 'mgr-chat-bubble--player'}`}>
-                    {!isManager && (
-                      <p className="font-inter font-medium text-[11px] text-lions-300/90 mb-1">{msg.senderName}</p>
-                    )}
-                    <p className="font-inter text-sm text-slate-100 whitespace-pre-wrap leading-relaxed">{msg.text}</p>
-                    <p className={`font-inter text-[10px] mt-1.5 ${isManager ? 'text-lions-200/50 text-right' : 'text-slate-600'}`}>
-                      {formatTime(msg.timestamp)}
-                    </p>
-                  </div>
-                </div>
-              )
-            })
-          )}
-        </div>
-
-        <div className="mgr-chat-composer">
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }}
-            placeholder={activeTeamId ? 'Write a message…' : 'Select a team first'}
-            disabled={!activeTeamId}
-            className="mgr-chat-input"
-          />
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!text.trim() || !activeTeamId}
-            className="mgr-chat-send"
-            aria-label="Send message"
-          >
-            <Send size={17} />
-          </button>
-        </div>
-      </div>
+          ) : undefined
+        }
+      />
 
       {showMembers && activeTeamId && (
         <ChatMembersModal
@@ -4122,7 +4114,7 @@ function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
           onAdd={(pid) => { addChatMember(activeTeamId, pid); refreshRoom() }}
         />
       )}
-    </div>
+    </>
   )
 }
 
@@ -4228,7 +4220,8 @@ function AddChatMemberModal({
 }) {
   const [q, setQ] = useState('')
   const available = players
-    .filter((p) => !excludeIds.includes(p.id))
+    .filter((p) => !isChildRosterPlayer(p))
+    .filter((p) => !excludeIds.includes(p.id) && !excludeIds.includes(resolveChatMemberId(p.id)))
     .filter((p) => !q.trim() || p.name.toLowerCase().includes(q.toLowerCase()) || p.email.toLowerCase().includes(q.toLowerCase()))
 
   return (
@@ -4294,8 +4287,6 @@ function SettingsView() {
 
   return (
     <div className="space-y-6 max-w-3xl">
-      <h2 className="font-oswald font-bold text-[clamp(1.5rem,3vw,2.5rem)] text-white">Settings</h2>
-
       <div className="dash-card p-6 md:p-8">
         <div className="flex items-start gap-3 mb-5">
           <CreditCard size={22} className="text-blue-400 mt-1 shrink-0" />
@@ -4667,6 +4658,15 @@ export default function ManagerDashboard() {
 
   const data = useLiveData()
 
+  const greetingName = useMemo(() => {
+    try {
+      const u = JSON.parse(localStorage.getItem('dlbc_user') || 'null')
+      return u?.name ? String(u.name).split(' ')[0] : ''
+    } catch {
+      return ''
+    }
+  }, [isAuthorized])
+
   const toggleCollapse = useCallback(() => {
     setSidebarCollapsed((prev) => {
       const next = !prev
@@ -4769,10 +4769,8 @@ export default function ManagerDashboard() {
     { id: 'act-report', label: 'Generate Report', group: 'Quick actions', icon: FileText, keywords: 'export pdf stats', run: () => setActiveView('reports') },
   ]
 
-  const mainOffset = sidebarCollapsed ? 'md:ml-[4.75rem]' : 'md:ml-64'
-
   return (
-    <div className="dashboard-shell min-h-[100dvh]">
+    <div className="dashboard-shell min-h-[100dvh] flex">
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
       <Sidebar
         active={activeView}
@@ -4782,34 +4780,31 @@ export default function ManagerDashboard() {
         collapsed={sidebarCollapsed}
         onToggleCollapse={toggleCollapse}
       />
-      <TopBar
-        title={viewTitles[activeView] || 'Dashboard'}
-        onMenuToggle={() => setMobileSidebarOpen(!mobileSidebarOpen)}
-        notifications={notifications}
-        onDismissNotification={(id) => setDismissedIds((prev) => new Set(prev).add(id))}
-        onClearNotifications={() => setDismissedIds(new Set(derivedNotifications.map((n) => n.id)))}
-        sidebarCollapsed={sidebarCollapsed}
-        onQuickAction={(action) => {
-          if (action === 'add-payment') setActiveView('payments')
-          else if (action === 'send-message') setActiveView('chat')
-          else if (action === 'add-fixture') setActiveView('schedule')
-        }}
-      />
+      <div className="flex-1 flex flex-col min-w-0">
+        <TopBar
+          title={viewTitles[activeView] || 'Dashboard'}
+          greetingName={greetingName}
+          onMenuToggle={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+          notifications={notifications}
+          onDismissNotification={(id) => setDismissedIds((prev) => new Set(prev).add(id))}
+          onClearNotifications={() => setDismissedIds(new Set(derivedNotifications.map((n) => n.id)))}
+        />
 
-      <main className={`ml-0 ${mainOffset} mt-14 min-h-[calc(100dvh-3.5rem)] p-5 md:p-7 scroll-slim transition-[margin] duration-300`} style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}>
-        <div key={activeView} className="dash-view-enter max-w-[1600px] mx-auto">
-        {activeView === 'dashboard' && <DashboardView data={data} onNavigate={setActiveView} />}
-        {activeView === 'members' && <MembersView data={data} />}
-        {activeView === 'payments' && <PaymentsView data={data} />}
-        {activeView === 'teams' && <TeamsView data={data} />}
-        {activeView === 'schedule' && <ScheduleView data={data} />}
-        {activeView === 'chat' && <ChatView data={data} />}
-        {activeView === 'reports' && <ReportsView data={data} />}
-        {activeView === 'images' && <ImagesView />}
-        {activeView === 'store' && <StoreManagerView />}
-        {activeView === 'settings' && <SettingsView />}
-        </div>
-      </main>
+        <main className="flex-1 overflow-y-auto p-4 md:p-8 scroll-slim">
+          <div key={activeView} className="dash-view-enter max-w-[1600px] mx-auto">
+          {activeView === 'dashboard' && <DashboardView data={data} onNavigate={setActiveView} />}
+          {activeView === 'members' && <MembersView data={data} />}
+          {activeView === 'payments' && <PaymentsView data={data} />}
+          {activeView === 'teams' && <TeamsView data={data} />}
+          {activeView === 'schedule' && <ScheduleView data={data} />}
+          {activeView === 'chat' && <ChatView data={data} />}
+          {activeView === 'reports' && <ReportsView data={data} />}
+          {activeView === 'images' && <ImagesView />}
+          {activeView === 'store' && <StoreManagerView />}
+          {activeView === 'settings' && <SettingsView />}
+          </div>
+        </main>
+      </div>
     </div>
   )
 }
