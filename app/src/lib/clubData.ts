@@ -1857,12 +1857,27 @@ async function sendChatMessageById(messageId: string): Promise<boolean> {
     setChatSendStatus(messageId, null)
     return true
   }
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser()
-  if (authError || !user) {
-    console.warn('[chat_messages] no auth user, cannot send', authError?.message)
+
+  // Prefer getSession() — it's synchronous (reads local storage) so the first
+  // message after mount doesn't wait on a /auth/v1/user round-trip. Fall back
+  // to getUser() if the session hasn't been hydrated yet.
+  let userId: string | null | undefined = null
+  try {
+    const { data } = await supabase.auth.getSession()
+    userId = data.session?.user?.id ?? null
+  } catch {
+    userId = null
+  }
+  if (!userId) {
+    try {
+      const { data } = await supabase.auth.getUser()
+      userId = data.user?.id ?? null
+    } catch {
+      userId = null
+    }
+  }
+  if (!userId) {
+    console.warn('[chat_messages] no auth user, cannot send')
     setChatSendStatus(messageId, 'failed')
     notifyChatListeners()
     return false
@@ -1870,7 +1885,7 @@ async function sendChatMessageById(messageId: string): Promise<boolean> {
   const { error } = await supabase.from('chat_messages').insert({
     id: msg.id,
     team_id: msg.teamId,
-    user_id: user.id,
+    user_id: userId,
     sender_name: msg.senderName,
     sender_role: msg.senderRole,
     text: msg.text,
