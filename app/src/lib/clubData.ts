@@ -30,6 +30,10 @@ export interface Team {
   ageGroupId: string
   divisionId: string
   coach: string
+  /** Optional coach login email. When set, the account with this email can
+   *  create / update / delete sessions for this team from the Player portal
+   *  (server-side enforced via `team_coaches` RLS in supabase). */
+  coachEmail?: string
   players: string[]
   season: string
   wins: number
@@ -308,11 +312,12 @@ const KEYS = {
   orders: 'dlbc_orders',
 }
 
-// Every key EXCEPT `images`, `chatMessages`, `chatDeletedIds` is mirrored to
-// Supabase app_state. Chat now uses the dedicated `chat_messages` table (see
-// supabase/chat-messages-setup.sql), and `images` is superseded by the
-// dedicated site_images table/bucket in src/lib/siteImages.ts.
-const NON_SYNCED_KEY_NAMES = new Set(['images', 'chatMessages', 'chatDeletedIds'])
+// Every key EXCEPT `images`, `chatMessages`, `chatDeletedIds`, `sessions` is
+// mirrored to Supabase app_state. Chat uses the dedicated `chat_messages`
+// table (see supabase/chat-messages-setup.sql), sessions use the dedicated
+// `sessions` table (see supabase/sessions-setup.sql), and `images` is
+// superseded by the dedicated site_images table/bucket in src/lib/siteImages.ts.
+const NON_SYNCED_KEY_NAMES = new Set(['images', 'chatMessages', 'chatDeletedIds', 'sessions'])
 const SYNCED_KEYS = new Set<string>(
   Object.entries(KEYS)
     .filter(([name]) => !NON_SYNCED_KEY_NAMES.has(name))
@@ -1965,6 +1970,318 @@ function initChatMessagesRealtime(): void {
     .subscribe()
 }
 
+/* ─────────────────── Per-row `sessions` table + `team_coaches` ───────────
+   Sessions moved off the JSON blob `app_state[dlbc_schedule]` into a
+   dedicated `sessions` table so writes are atomic (scales to 200+ users),
+   realtime is per-row (players see the schedule update within a second),
+   and RLS lets coaches edit their own team's schedule. See
+   supabase/sessions-setup.sql for schema + RLS. */
+
+type SessionRow = {
+  id: string
+  team_id: string
+  title: string
+  session_type: string
+  opponent: string | null
+  session_date: string
+  session_time: string
+  location: string
+  notes: string
+  attendance: string[] | null
+}
+
+function rowToSession(row: SessionRow): Session {
+  const rawType = row.session_type as Session['type']
+  return {
+    id: row.id,
+    teamId: row.team_id,
+    title: row.title,
+    date: row.session_date,
+    // Trim off any :ss the pg time column returns → the UI expects HH:MM.
+    time: (row.session_time ?? '').slice(0, 5),
+    location: row.location ?? '',
+    type: rawType,
+    opponent: row.opponent ?? undefined,
+    attendance: Array.isArray(row.attendance) ? row.attendance : [],
+    notes: row.notes ?? '',
+  }
+}
+
+function sessionToRow(s: Session): SessionRow {
+  return {
+    id: s.id,
+    team_id: s.teamId,
+    title: s.title,
+    session_type: s.type,
+    opponent: s.opponent ?? null,
+    session_date: s.date,
+    session_time: s.time,
+    location: s.location ?? '',
+    notes: s.notes ?? '',
+    attendance: s.attendance ?? [],
+  }
+}
+
+function writeSessionsCache(sessions: Session[]): void {
+  const sorted = [...sessions].sort(
+    (a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time),
+  )
+  localStorage.setItem(KEYS.sessions, JSON.stringify(sorted))
+  window.dispatchEvent(new StorageEvent('storage', { key: KEYS.sessions }))
+}
+
+function upsertLocalSession(session: Session): void {
+  const current = getStore<Session[]>(KEYS.sessions, [])
+  const next = [...current.filter((s) => s.id !== session.id), session]
+  writeSessionsCache(next)
+}
+
+function removeLocalSession(sessionId: string): void {
+  const current = getStore<Session[]>(KEYS.sessions, [])
+  const next = current.filter((s) => s.id !== sessionId)
+  if (next.length !== current.length) writeSessionsCache(next)
+}
+
+/** Pull all sessions from Supabase into the local cache. Called once on app
+ *  startup — realtime keeps it fresh after that. */
+export async function pullSessionsFromRemote(): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return
+  try {
+    const { data, error } = await supabase
+      .from('sessions')
+      .select('id, team_id, title, session_type, opponent, session_date, session_time, location, notes, attendance')
+      .order('session_date', { ascending: true })
+    if (error || !data) return
+    const sessions = (data as SessionRow[]).map(rowToSession)
+    writeSessionsCache(sessions)
+  } catch {
+    /* offline — keep local */
+  }
+}
+
+/** Create a new session row. Optimistic local update + INSERT to Supabase.
+ *  Returns the freshly-generated id (same one used locally, so if the INSERT
+ *  succeeds the local row already matches the server row). */
+export async function createSessionRow(input: Omit<Session, 'id'>): Promise<Session | null> {
+  const session: Session = { ...input, id: generateChatMessageId() }
+  upsertLocalSession(session)
+
+  if (!isSupabaseConfigured || !supabase) return session
+  const {
+    data: { session: authSession },
+  } = await supabase.auth.getSession()
+  const row = sessionToRow(session)
+  const { error } = await supabase.from('sessions').insert({
+    ...row,
+    created_by: authSession?.user?.id ?? null,
+  })
+  if (error) {
+    console.warn('[sessions] create failed', error.message)
+    removeLocalSession(session.id)
+    return null
+  }
+  return session
+}
+
+/** Update an existing session row. Optimistic local update + UPDATE. */
+export async function updateSessionRow(session: Session): Promise<boolean> {
+  const prev = getStore<Session[]>(KEYS.sessions, []).find((s) => s.id === session.id)
+  upsertLocalSession(session)
+
+  if (!isSupabaseConfigured || !supabase) return true
+  const row = sessionToRow(session)
+  const { error } = await supabase
+    .from('sessions')
+    .update({
+      team_id: row.team_id,
+      title: row.title,
+      session_type: row.session_type,
+      opponent: row.opponent,
+      session_date: row.session_date,
+      session_time: row.session_time,
+      location: row.location,
+      notes: row.notes,
+      attendance: row.attendance,
+    })
+    .eq('id', session.id)
+  if (error) {
+    console.warn('[sessions] update failed', error.message)
+    if (prev) upsertLocalSession(prev)
+    return false
+  }
+  return true
+}
+
+/** Delete a session row. Optimistic local removal + DELETE. */
+export async function deleteSessionRow(sessionId: string): Promise<boolean> {
+  const prev = getStore<Session[]>(KEYS.sessions, []).find((s) => s.id === sessionId)
+  removeLocalSession(sessionId)
+  if (!isSupabaseConfigured || !supabase) return true
+  const { error } = await supabase.from('sessions').delete().eq('id', sessionId)
+  if (error) {
+    console.warn('[sessions] delete failed', error.message)
+    if (prev) upsertLocalSession(prev)
+    return false
+  }
+  return true
+}
+
+/** Bulk-delete all sessions for a team (used when a team itself is deleted). */
+export async function deleteSessionsForTeam(teamId: string): Promise<void> {
+  const current = getStore<Session[]>(KEYS.sessions, [])
+  const next = current.filter((s) => s.teamId !== teamId)
+  if (next.length !== current.length) writeSessionsCache(next)
+  if (!isSupabaseConfigured || !supabase) return
+  const { error } = await supabase.from('sessions').delete().eq('team_id', teamId)
+  if (error) console.warn('[sessions] bulk delete failed', error.message)
+}
+
+let sessionsChannelInitialised = false
+function initSessionsRealtime(): void {
+  if (sessionsChannelInitialised) return
+  if (!isSupabaseConfigured || !supabase) return
+  sessionsChannelInitialised = true
+
+  supabase
+    .channel('sessions-changes')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'sessions' },
+      (payload) => {
+        if (payload.eventType === 'DELETE') {
+          const oldRow = payload.old as { id?: string } | null
+          if (oldRow?.id) removeLocalSession(oldRow.id)
+          return
+        }
+        const row = payload.new as SessionRow | null
+        if (!row?.id) return
+        upsertLocalSession(rowToSession(row))
+      },
+    )
+    .subscribe()
+}
+
+/* ─────────────────── Team coaches (per-team edit role) ─────────────────── */
+
+const TEAM_COACHES_CACHE_KEY = 'dlbc_team_coaches'
+
+type TeamCoachEntry = { teamId: string; coachEmail: string }
+
+function readTeamCoachesCache(): TeamCoachEntry[] {
+  try {
+    const raw = localStorage.getItem(TEAM_COACHES_CACHE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as TeamCoachEntry[]) : []
+  } catch {
+    return []
+  }
+}
+
+function writeTeamCoachesCache(entries: TeamCoachEntry[]): void {
+  localStorage.setItem(TEAM_COACHES_CACHE_KEY, JSON.stringify(entries))
+  window.dispatchEvent(new StorageEvent('storage', { key: TEAM_COACHES_CACHE_KEY }))
+}
+
+export function getTeamCoachesFromCache(): TeamCoachEntry[] {
+  return readTeamCoachesCache()
+}
+
+export function isCoachOfTeam(email: string | null | undefined, teamId: string): boolean {
+  if (!email) return false
+  const needle = email.trim().toLowerCase()
+  return readTeamCoachesCache().some(
+    (e) => e.teamId === teamId && e.coachEmail.toLowerCase() === needle,
+  )
+}
+
+export function getTeamIdsCoachedBy(email: string | null | undefined): string[] {
+  if (!email) return []
+  const needle = email.trim().toLowerCase()
+  return [
+    ...new Set(
+      readTeamCoachesCache()
+        .filter((e) => e.coachEmail.toLowerCase() === needle)
+        .map((e) => e.teamId),
+    ),
+  ]
+}
+
+/** Assign a coach email to a team (manager-only via RLS). Optimistic local
+ *  update; falls back to remote failure by re-fetching. */
+export async function assignTeamCoach(teamId: string, coachEmail: string): Promise<boolean> {
+  const email = coachEmail.trim().toLowerCase()
+  if (!email) return false
+  const cache = readTeamCoachesCache()
+  if (!cache.some((e) => e.teamId === teamId && e.coachEmail === email)) {
+    writeTeamCoachesCache([...cache, { teamId, coachEmail: email }])
+  }
+  if (!isSupabaseConfigured || !supabase) return true
+  const { error } = await supabase
+    .from('team_coaches')
+    .insert({ team_id: teamId, coach_email: email })
+  if (error && error.code !== '23505') {
+    console.warn('[team_coaches] insert failed', error.message)
+    void pullTeamCoachesFromRemote()
+    return false
+  }
+  return true
+}
+
+/** Remove a coach email from a team (manager-only via RLS). */
+export async function removeTeamCoach(teamId: string, coachEmail: string): Promise<boolean> {
+  const email = coachEmail.trim().toLowerCase()
+  const cache = readTeamCoachesCache()
+  const next = cache.filter((e) => !(e.teamId === teamId && e.coachEmail === email))
+  if (next.length !== cache.length) writeTeamCoachesCache(next)
+  if (!isSupabaseConfigured || !supabase) return true
+  const { error } = await supabase
+    .from('team_coaches')
+    .delete()
+    .eq('team_id', teamId)
+    .eq('coach_email', email)
+  if (error) {
+    console.warn('[team_coaches] delete failed', error.message)
+    void pullTeamCoachesFromRemote()
+    return false
+  }
+  return true
+}
+
+export async function pullTeamCoachesFromRemote(): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return
+  try {
+    const { data, error } = await supabase.from('team_coaches').select('team_id, coach_email')
+    if (error || !data) return
+    const entries = (data as { team_id: string; coach_email: string }[]).map((r) => ({
+      teamId: r.team_id,
+      coachEmail: r.coach_email,
+    }))
+    writeTeamCoachesCache(entries)
+  } catch {
+    /* offline */
+  }
+}
+
+let teamCoachesChannelInitialised = false
+function initTeamCoachesRealtime(): void {
+  if (teamCoachesChannelInitialised) return
+  if (!isSupabaseConfigured || !supabase) return
+  teamCoachesChannelInitialised = true
+
+  supabase
+    .channel('team_coaches-changes')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'team_coaches' },
+      () => {
+        // Simple refresh — the whole map is small.
+        void pullTeamCoachesFromRemote()
+      },
+    )
+    .subscribe()
+}
+
 export async function pushMergedChatState(): Promise<void> {
   // Deprecated: chat now uses per-row inserts into `chat_messages`.
   // This shim exists so any lingering callers don't crash.
@@ -2081,6 +2398,10 @@ function applyRemoteAppStateRow(key: string, value: unknown) {
     return
   }
   if (!SYNCED_KEYS.has(key)) return
+  if (key === KEYS.sessions) {
+    // Legacy blob — ignored. Sessions now live in the per-row `sessions` table.
+    return
+  }
   if (key === KEYS.chatMessages) {
     // Legacy blob — ignore. Chat is now the per-row `chat_messages` table.
     return
@@ -2190,6 +2511,12 @@ export async function initAppStateSync(): Promise<void> {
   // Pull the recent chat history once so the local cache is populated for the
   // first render (subsequent updates arrive via the realtime subscription).
   void pullMergedChatState()
+
+  // Sessions + team_coaches are also per-row tables now — subscribe + pull.
+  initSessionsRealtime()
+  initTeamCoachesRealtime()
+  void pullSessionsFromRemote()
+  void pullTeamCoachesFromRemote()
   })()
 
   return appStateSyncPromise

@@ -12,6 +12,11 @@ import {
   getChatSendStatusMap,
   setChatSendStatus,
   type ChatSendStatus,
+  getSessions,
+  createSessionRow,
+  deleteSessionRow,
+  getTeamIdsCoachedBy,
+  type Session as ClubSession,
   getAnnouncements as getClubAnnouncements,
   getPayments,
   getOrders,
@@ -28,7 +33,6 @@ import {
   completePlayerOnboarding,
   getMemberPaymentFocus,
   hasTeamAssignment,
-  getSessionsForPlayer,
   calcAgeFromBirthYear,
   isValidBirthYear,
   isValidChildDob,
@@ -199,9 +203,15 @@ function schedIso(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-function loadClubScheduleForPlayer(player: ClubPlayer | null): SessionEvent[] {
-  if (!player || !hasTeamAssignment(player)) return []
-  return getSessionsForPlayer(player.id)
+function loadClubScheduleForPlayer(player: ClubPlayer | null, coachTeamIds: string[] = []): SessionEvent[] {
+  const teamIds = new Set<string>()
+  if (player && hasTeamAssignment(player)) {
+    getTeamIdsForMember(player).forEach((id) => teamIds.add(id))
+  }
+  coachTeamIds.forEach((id) => teamIds.add(id))
+  if (teamIds.size === 0) return []
+  const allSessions = getSessions().filter((s) => teamIds.has(s.teamId))
+  return allSessions
     .map(clubSessionToEvent)
     .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time))
 }
@@ -1279,37 +1289,97 @@ function PaymentsTab({ user, onUpdateUser }: { user: PlayerUser; onUpdateUser: (
 }
 
 /* ───────── Schedule Tab ───────── */
-function ScheduleTab({ clubPlayer }: { clubPlayer: ClubPlayer | null }) {
+function ScheduleTab({ clubPlayer, user }: { clubPlayer: ClubPlayer | null; user: PlayerUser | null }) {
   const attendance = getAttendanceStore()
   const [sessions, setSessions] = useState<SessionEvent[]>(() =>
-    loadClubScheduleForPlayer(clubPlayer).map((s) => ({
+    loadClubScheduleForPlayer(clubPlayer, getTeamIdsCoachedBy(user?.email)).map((s) => ({
       ...s,
       attended: attendance[s.id]?.attended,
       excused: attendance[s.id]?.excused,
     })),
   )
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [coachTeamIds, setCoachTeamIds] = useState<string[]>(() => getTeamIdsCoachedBy(user?.email))
+  const [createForm, setCreateForm] = useState({
+    teamId: '', date: '', time: '', location: 'Coláiste Bríde', type: 'Training' as ClubSession['type'], opponent: '',
+  })
 
   useEffect(() => {
     const sync = () => {
       const attendanceStore = getAttendanceStore()
       setSessions(
-        loadClubScheduleForPlayer(clubPlayer).map((s) => ({
+        loadClubScheduleForPlayer(clubPlayer, getTeamIdsCoachedBy(user?.email)).map((s) => ({
           ...s,
           attended: attendanceStore[s.id]?.attended,
           excused: attendanceStore[s.id]?.excused,
         })),
       )
+      setCoachTeamIds(getTeamIdsCoachedBy(user?.email))
     }
+    sync()
     window.addEventListener('storage', sync)
     return () => window.removeEventListener('storage', sync)
-  }, [clubPlayer])
+  }, [clubPlayer, user?.email])
 
   const playerTeams = useMemo((): ClubTeam[] => {
-    if (!clubPlayer) return []
-    const ids = new Set(getTeamIdsForMember(clubPlayer))
+    const ids = new Set<string>()
+    if (clubPlayer) getTeamIdsForMember(clubPlayer).forEach((id) => ids.add(id))
+    coachTeamIds.forEach((id) => ids.add(id))
+    if (ids.size === 0) return []
     return getClubTeams().filter((t) => ids.has(t.id))
-  }, [clubPlayer])
+  }, [clubPlayer, coachTeamIds])
+
+  const isCoach = coachTeamIds.length > 0
+  const coachTeams = useMemo(
+    () => getClubTeams().filter((t) => coachTeamIds.includes(t.id)),
+    [coachTeamIds],
+  )
+
+  const deriveTitle = (type: ClubSession['type'], opponent: string): string => {
+    if (type === 'Match') return opponent ? `Match vs ${opponent.trim()}` : 'Match'
+    return type
+  }
+
+  const openCoachCreate = () => {
+    setCreateForm({
+      teamId: coachTeamIds[0] || '',
+      date: '',
+      time: '',
+      location: 'Coláiste Bríde',
+      type: 'Training',
+      opponent: '',
+    })
+    setShowCreate(true)
+  }
+
+  const submitCoachCreate = async () => {
+    if (!createForm.teamId || !createForm.date || !createForm.time) return
+    await createSessionRow({
+      title: deriveTitle(createForm.type, createForm.opponent),
+      teamId: createForm.teamId,
+      date: createForm.date,
+      time: createForm.time,
+      location: createForm.location,
+      type: createForm.type,
+      opponent: createForm.opponent || undefined,
+      attendance: [],
+      notes: '',
+    })
+    setShowCreate(false)
+  }
+
+  const deleteSessionForCoach = async (sessionId: string) => {
+    if (!confirm('Delete this session?')) return
+    await deleteSessionRow(sessionId)
+    if (activeSessionId === sessionId) setActiveSessionId(null)
+  }
+
+  const canCoachEditActive = useMemo(() => {
+    if (!isCoach || !activeSessionId) return false
+    const s = sessions.find((x) => x.id === activeSessionId)
+    return !!s && coachTeamIds.includes(s.teamId)
+  }, [isCoach, activeSessionId, sessions, coachTeamIds])
 
   const gridItems = useMemo(() => {
     return sessions.map((s) => {
@@ -1352,6 +1422,27 @@ function ScheduleTab({ clubPlayer }: { clubPlayer: ClubPlayer | null }) {
 
   return (
     <div className="space-y-5">
+      {isCoach && (
+        <div className="dash-card p-4 sm:p-5 flex items-center justify-between gap-3" data-testid="coach-schedule-panel">
+          <div className="min-w-0">
+            <p className="font-inter font-semibold text-slate-900 text-sm">
+              Coach access — {coachTeams.map((t) => t.name).join(', ')}
+            </p>
+            <p className="font-inter text-xs text-slate-500 mt-0.5">
+              You can add and remove sessions for the team{coachTeams.length === 1 ? '' : 's'} you coach.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={openCoachCreate}
+            className="btn-gradient text-white font-inter font-semibold text-sm px-4 py-2 rounded-xl shrink-0 flex items-center gap-2"
+            data-testid="coach-create-session-btn"
+          >
+            <Plus size={14} /> New session
+          </button>
+        </div>
+      )}
+
       <ScheduleTimeGrid
         items={gridItems}
         onEventClick={(id) => setActiveSessionId(id)}
@@ -1424,6 +1515,136 @@ function ScheduleTab({ clubPlayer }: { clubPlayer: ClubPlayer | null }) {
                 aria-label="Close"
               >
                 <X size={16} />
+              </button>
+              {canCoachEditActive && (
+                <button
+                  type="button"
+                  onClick={() => activeSession && deleteSessionForCoach(activeSession.id)}
+                  className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50"
+                  title="Delete session"
+                  aria-label="Delete session"
+                  data-testid="coach-delete-session-btn"
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCreate && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6 bg-slate-900/40 backdrop-blur-sm"
+          onClick={() => setShowCreate(false)}
+          role="presentation"
+        >
+          <div
+            className="dash-card w-full max-w-md p-5 sm:p-6 shadow-2xl space-y-4 max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Create session"
+            data-testid="coach-create-modal"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="font-inter font-semibold text-lg text-slate-900">New session</h3>
+              <button
+                type="button"
+                onClick={() => setShowCreate(false)}
+                className="text-slate-400 hover:text-slate-800 p-1 rounded-lg"
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block font-inter text-sm text-slate-600 mb-1.5">Team</label>
+                <select
+                  value={createForm.teamId}
+                  onChange={(e) => setCreateForm({ ...createForm, teamId: e.target.value })}
+                  className="w-full h-11 rounded-xl border border-slate-200 bg-white px-3 font-inter text-sm text-slate-900 focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  data-testid="coach-session-team-select"
+                >
+                  <option value="">Select team</option>
+                  {coachTeams.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-inter text-sm text-slate-600 mb-1.5">Date</label>
+                  <input
+                    type="date"
+                    value={createForm.date}
+                    onChange={(e) => setCreateForm({ ...createForm, date: e.target.value })}
+                    className="w-full h-11 rounded-xl border border-slate-200 bg-white px-3 font-inter text-sm text-slate-900 focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                    data-testid="coach-session-date-input"
+                  />
+                </div>
+                <div>
+                  <label className="block font-inter text-sm text-slate-600 mb-1.5">Time</label>
+                  <input
+                    type="time"
+                    value={createForm.time}
+                    onChange={(e) => setCreateForm({ ...createForm, time: e.target.value })}
+                    className="w-full h-11 rounded-xl border border-slate-200 bg-white px-3 font-inter text-sm text-slate-900 focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                    data-testid="coach-session-time-input"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block font-inter text-sm text-slate-600 mb-1.5">Type</label>
+                <select
+                  value={createForm.type}
+                  onChange={(e) => setCreateForm({ ...createForm, type: e.target.value as ClubSession['type'] })}
+                  className="w-full h-11 rounded-xl border border-slate-200 bg-white px-3 font-inter text-sm text-slate-900 focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  data-testid="coach-session-type-select"
+                >
+                  <option>Training</option>
+                  <option>Match</option>
+                  <option>Event</option>
+                </select>
+              </div>
+              {createForm.type === 'Match' && (
+                <div>
+                  <label className="block font-inter text-sm text-slate-600 mb-1.5">Opponent</label>
+                  <input
+                    value={createForm.opponent}
+                    onChange={(e) => setCreateForm({ ...createForm, opponent: e.target.value })}
+                    placeholder="Neptune BC"
+                    className="w-full h-11 rounded-xl border border-slate-200 bg-white px-3 font-inter text-sm text-slate-900 focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                  />
+                </div>
+              )}
+              <div>
+                <label className="block font-inter text-sm text-slate-600 mb-1.5">Location</label>
+                <input
+                  value={createForm.location}
+                  onChange={(e) => setCreateForm({ ...createForm, location: e.target.value })}
+                  placeholder="Coláiste Bríde"
+                  className="w-full h-11 rounded-xl border border-slate-200 bg-white px-3 font-inter text-sm text-slate-900 focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowCreate(false)}
+                className="px-3 py-2 font-inter text-sm text-slate-500 hover:text-slate-900"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitCoachCreate}
+                disabled={!createForm.teamId || !createForm.date || !createForm.time}
+                className="btn-gradient text-white font-inter font-semibold text-sm px-5 py-2 rounded-xl disabled:opacity-50"
+                data-testid="coach-session-submit-btn"
+              >
+                Create
               </button>
             </div>
           </div>
@@ -2436,7 +2657,7 @@ export default function PlayerDashboard() {
           <div key={activeTab} className="max-w-6xl mx-auto dash-view-enter">
             {activeTab === 'overview' && <OverviewTab clubPlayer={clubPlayer} onNavigate={setActiveTab} />}
             {activeTab === 'payments' && <PaymentsTab user={user} onUpdateUser={handleUpdateUser} />}
-            {activeTab === 'schedule' && <ScheduleTab clubPlayer={clubPlayer} />}
+            {activeTab === 'schedule' && <ScheduleTab clubPlayer={clubPlayer} user={user} />}
             {activeTab === 'children' && (
               <ChildrenTab clubPlayer={clubPlayer} onClubPlayerUpdate={setClubPlayer} />
             )}

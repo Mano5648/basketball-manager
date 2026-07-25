@@ -1,0 +1,34 @@
+{
+  "summary": "Frontend-only test for sessions/coaches migration. PREREQUISITE SQL MIGRATION HAS NOT BEEN RUN — /rest/v1/sessions and /rest/v1/team_coaches return 404 (relation does not exist). This blocks all end-to-end tests for cross-client visibility, coach create/delete, and multi-team scheduling. All client-side UI changes verified individually: (a) modal no longer has Session Title free-text input, (b) modal is fixed inset-0 viewport-anchored with backdrop-blur and does not scroll, (c) Cancel/Create buttons fully visible at 1920x800, (d) Team dropdown [data-testid=session-team-select] correctly lists ALL 5 teams across every age group (JOELS Dublin Lions, Abbey Seals Dublin Lions, Dublin Lions U14 Boys, Dublin Lions U14 Girls, Academy U10), (e) Type dropdown present, (f) Coach Assignment Section renders in the roster modal with data-testid='coach-assignment-section', 'coach-email-input', 'coach-add-btn'. Real-time sync, per-row inserts, RLS permissions, coach panel on player side, multi-team merges — none of these were verifiable because the migration is not applied.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "/rest/v1/sessions", "issue": "Returns 404 — public.sessions table does not exist. Migration /app/app/supabase/sessions-setup.sql must be run in Supabase SQL editor before this feature works cross-client.", "priority": "CRITICAL"},
+      {"endpoint": "/rest/v1/team_coaches", "issue": "Returns 404 — public.team_coaches table does not exist. Same migration file must be applied.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Session create/update/delete + coach assignment", "issue": "Not verifiable end-to-end because Supabase tables missing (404). Cannot confirm realtime sync, RLS-enforced coach delete restrictions, or multi-team merge on the player side until migration is run.", "affected_selectors": ["[data-testid=session-team-select]","[data-testid=session-type-select]","[data-testid=coach-assignment-section]","[data-testid=coach-schedule-panel]","[data-testid=coach-create-session-btn]","[data-testid=coach-delete-session-btn]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "USER ACTION REQUIRED: Run /app/app/supabase/sessions-setup.sql in Supabase SQL editor (https://supabase.com/dashboard/project/neulcrpkroiyglgiywcp/sql/new). Without this, sessions do not sync across clients and no coach RLS is enforced. After running, re-request testing to verify cross-client visibility, coach panel on player side, multi-team merge, and delete-sync.",
+    "Nothing to fix in frontend code — modal UX, team dropdown scope, and CoachAssignmentSection are all wired correctly with the expected data-testids."
+  ],
+  "critical_code_review_comments": [
+    "ManagerDashboard.tsx is very large (>3000 lines by references) — consider splitting ScheduleView, TeamsView, and CoachAssignmentSection into dedicated files for maintainability.",
+    "The 'Create session' Team dropdown defaults to the currently-selected age-group team (Academy · U10 — A appeared even though the Senior tab was active in earlier navigation) — behavior is fine (all teams listed), but it may confuse managers; consider defaulting to 'Select Team' or to the team that matches the currently active age-group filter."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only)", "frontend": "UI structure 100% — but E2E flows blocked by missing DB migration"},
+  "test_credentials": "manager@dublinlions.ie / lions2025 ; cooler74.ea@gmail.com / test12",
+  "seed_data_creation": "None — did not create sessions because the DB tables don't exist yet.",
+  "retest_needed": true,
+  "main_agent_can_self_test": false,
+  "context_for_next_testing_agent": "Re-run this test iteration AFTER the user confirms sessions-setup.sql has been executed. Verify: (1) network requests to /rest/v1/sessions?select=* return 200, (2) create a Training session and assert row exists in DB with title='Training', (3) create a Match with opponent='Neptune BC' and assert title='Match vs Neptune BC', (4) open a second browser context as cooler74.ea@gmail.com and confirm manager-created sessions for the child's team appear within 3s (realtime), (5) assign cooler74.ea@gmail.com as coach in Manage Roster on Academy U10-A, then log in as parent and verify [data-testid=coach-schedule-panel] and [data-testid=coach-create-session-btn] render; create + delete a session as coach and confirm bidirectional visibility, (6) confirm coach delete button [data-testid=coach-delete-session-btn] does NOT appear on sessions for teams the parent is not coaching, (7) ensure children spanning 2+ teams causes both teams' sessions to appear on parent schedule. Test credentials in /app/memory/test_credentials.md.",
+  "rca of the issue": "Root cause: The Supabase migration /app/app/supabase/sessions-setup.sql defining public.sessions and public.team_coaches (plus RLS + realtime publication) has not been executed on the Supabase project neulcrpkroiyglgiywcp. Symptom: All fetches issued by pullSessionsFromRemote / getTeamCoachesFromCache return HTTP 404 with 42P01 semantics (relation does not exist), preventing per-row realtime sync, coach permission checks, and cross-client visibility. Reproduction: Open DevTools Network tab on either dashboard → filter 'sessions' or 'team_coaches' → observe 404. Mitigation: Execute the SQL file in the Supabase SQL editor as instructed in the request. No frontend code change needed."
+}

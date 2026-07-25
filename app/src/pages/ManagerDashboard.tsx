@@ -97,6 +97,13 @@ import {
   setTeams,
   getSessions,
   setSessions,
+  createSessionRow,
+  updateSessionRow,
+  deleteSessionRow,
+  deleteSessionsForTeam,
+  assignTeamCoach,
+  removeTeamCoach,
+  getTeamCoachesFromCache,
   getAnnouncements,
   setAnnouncements,
   getPayments,
@@ -301,6 +308,25 @@ function useLiveData() {
   const savePlayers = useCallback((v: Player[]) => { setPlayers(v); setPlayersState(v) }, [])
   const saveTeams = useCallback((v: Team[]) => { setTeams(v); setTeamsState(v) }, [])
   const saveSessions = useCallback((v: Session[]) => { setSessions(v); setSessionsState(v) }, [])
+  const runCreateSession = useCallback(async (input: Omit<Session, 'id'>) => {
+    const created = await createSessionRow(input)
+    if (created) setSessionsState((prev) => [...prev.filter((s) => s.id !== created.id), created])
+    return created
+  }, [])
+  const runUpdateSession = useCallback(async (session: Session) => {
+    const ok = await updateSessionRow(session)
+    if (ok) setSessionsState((prev) => prev.map((s) => (s.id === session.id ? session : s)))
+    return ok
+  }, [])
+  const runDeleteSession = useCallback(async (sessionId: string) => {
+    const ok = await deleteSessionRow(sessionId)
+    if (ok) setSessionsState((prev) => prev.filter((s) => s.id !== sessionId))
+    return ok
+  }, [])
+  const runDeleteSessionsForTeam = useCallback(async (teamId: string) => {
+    await deleteSessionsForTeam(teamId)
+    setSessionsState((prev) => prev.filter((s) => s.teamId !== teamId))
+  }, [])
   const saveAnnouncements = useCallback((v: Announcement[]) => { setAnnouncements(v); setAnnouncementsState(v) }, [])
   const savePayments = useCallback((v: Payment[]) => { setPayments(v); setPaymentsState(v) }, [])
   const saveAgeGroups = useCallback((v: AgeGroup[]) => { setAgeGroups(v); setAgeGroupsState(v) }, [])
@@ -342,7 +368,7 @@ function useLiveData() {
     players, teams, sessions, announcements, payments, ageGroups,
     season, seasonHistory, defaultTicketPrice, pendingSeniorPlayerIds, pendingTeamAssignments,
     refresh,
-    savePlayers, saveTeams, saveSessions, saveAnnouncements, savePayments, saveAgeGroups,
+    savePlayers, saveTeams, saveSessions, runCreateSession, runUpdateSession, runDeleteSession, runDeleteSessionsForTeam, saveAnnouncements, savePayments, saveAgeGroups,
     runStartNewSeason, runEndSeason, runApplyDefaultTicketPrice, dismissPendingSenior,
     dismissPendingTeamAssignment, runRestoreSeason,
   }
@@ -1925,8 +1951,98 @@ function MembersView({ data, initialSearch = '' }: { data: ReturnType<typeof use
 
 /* ─────────────────────── View: Teams ─────────────────────── */
 
+function CoachAssignmentSection({ team }: { team: Team }) {
+  const [email, setEmail] = useState('')
+  const [coaches, setCoaches] = useState<string[]>(() =>
+    getTeamCoachesFromCache().filter((c) => c.teamId === team.id).map((c) => c.coachEmail),
+  )
+
+  useEffect(() => {
+    const sync = (e: StorageEvent) => {
+      if (e.key === 'dlbc_team_coaches') {
+        setCoaches(
+          getTeamCoachesFromCache().filter((c) => c.teamId === team.id).map((c) => c.coachEmail),
+        )
+      }
+    }
+    window.addEventListener('storage', sync)
+    return () => window.removeEventListener('storage', sync)
+  }, [team.id])
+
+  const add = async () => {
+    const trimmed = email.trim().toLowerCase()
+    if (!trimmed || coaches.includes(trimmed)) return
+    setEmail('')
+    setCoaches((prev) => [...prev, trimmed])
+    const ok = await assignTeamCoach(team.id, trimmed)
+    if (!ok) {
+      setCoaches((prev) => prev.filter((e) => e !== trimmed))
+      alert('Could not save coach — check the email and try again.')
+    }
+  }
+
+  const remove = async (coachEmail: string) => {
+    setCoaches((prev) => prev.filter((e) => e !== coachEmail))
+    const ok = await removeTeamCoach(team.id, coachEmail)
+    if (!ok) {
+      setCoaches((prev) => [...prev, coachEmail])
+    }
+  }
+
+  return (
+    <div className="space-y-2" data-testid="coach-assignment-section">
+      <p className="font-inter text-xs text-slate-400">
+        Add the email of a coach so they can create and update this team's schedule from their
+        player account.
+      </p>
+      <div className="flex gap-2">
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void add() } }}
+          placeholder="coach@example.com"
+          className={`${dashField} flex-1`}
+          data-testid="coach-email-input"
+        />
+        <button
+          type="button"
+          onClick={() => void add()}
+          disabled={!email.trim()}
+          className="btn-gradient text-white font-inter font-semibold text-sm px-4 py-2 rounded-xl disabled:opacity-50"
+          data-testid="coach-add-btn"
+        >
+          Add
+        </button>
+      </div>
+      {coaches.length > 0 && (
+        <ul className="space-y-1.5 pt-1">
+          {coaches.map((c) => (
+            <li
+              key={c}
+              className="flex items-center justify-between gap-3 rounded-lg bg-white/5 border border-white/[0.06] px-3 py-2"
+              data-testid={`coach-row-${c}`}
+            >
+              <span className="font-inter text-sm text-white truncate">{c}</span>
+              <button
+                type="button"
+                onClick={() => void remove(c)}
+                className="shrink-0 text-xs font-inter text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-red-500/10"
+                data-testid={`coach-remove-${c}`}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+
 function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
-  const { teams, ageGroups, players, sessions, saveTeams, saveAgeGroups, saveSessions, refresh } = data
+  const { teams, ageGroups, players, saveTeams, saveAgeGroups, runDeleteSessionsForTeam, refresh } = data
   const [activeAgeGroup, setActiveAgeGroup] = useState('senior')
   const [activeDivision, setActiveDivision] = useState<string | 'all'>('all')
   const [showAddTeam, setShowAddTeam] = useState(false)
@@ -1988,7 +2104,7 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
   const handleDeleteTeam = (id: string) => {
     if (!confirm('Delete this team? Its schedule sessions will also be removed.')) return
     saveTeams(teams.filter((t) => t.id !== id))
-    saveSessions(sessions.filter((s) => s.teamId !== id))
+    void runDeleteSessionsForTeam(id)
   }
 
   const handleAddAgeGroup = () => {
@@ -2211,6 +2327,13 @@ function TeamsView({ data }: { data: ReturnType<typeof useLiveData> }) {
       >
         {rosterTeam && (
           <div className="space-y-6">
+            <div>
+              <p className="font-inter text-xs uppercase tracking-wider text-slate-400 mb-3">
+                Coach access
+              </p>
+              <CoachAssignmentSection team={rosterTeam} />
+            </div>
+
             <div>
               <p className="font-inter text-xs uppercase tracking-wider text-slate-400 mb-3">
                 On this team ({rosterTeamPlayers.length})
@@ -2938,13 +3061,13 @@ function ResultForm({ fixture, onClose, onSave, onClear }: { fixture: ClubFixtur
 
 /* ─────────────────────── View: Schedule (time grid) ─────────────────────── */
 function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
-  const { sessions, teams, players, ageGroups, saveSessions } = data
+  const { sessions, teams, players, ageGroups, runCreateSession, runUpdateSession, runDeleteSession } = data
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [attendanceSession, setAttendanceSession] = useState<string | null>(null)
   const [activeAgeGroup, setActiveAgeGroup] = useState(() => ageGroups[0]?.id ?? 'senior')
   const [activeDivision, setActiveDivision] = useState<string | 'all'>('all')
   const [sessionForm, setSessionForm] = useState({
-    title: '', teamId: '', date: '', time: '', location: 'Coláiste Bríde', type: 'Training' as Session['type'], opponent: ''
+    teamId: '', date: '', time: '', location: 'Coláiste Bríde', type: 'Training' as Session['type'], opponent: ''
   })
 
   const currentAgeGroup = ageGroups.find((ag) => ag.id === activeAgeGroup)
@@ -2984,8 +3107,7 @@ function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
 
   const openCreate = (date?: string, time?: string, teamId?: string) => {
     setSessionForm({
-      title: '',
-      teamId: teamId || teamsInScope[0]?.id || '',
+      teamId: teamId || teamsInScope[0]?.id || teams[0]?.id || '',
       date: date || '',
       time: time || '',
       location: 'Coláiste Bríde',
@@ -2995,12 +3117,16 @@ function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
     setShowCreateModal(true)
   }
 
-  const handleCreateSession = () => {
+  const deriveTitle = (type: Session['type'], opponent: string): string => {
+    if (type === 'Match') return opponent ? `Match vs ${opponent.trim()}` : 'Match'
+    return type
+  }
+
+  const handleCreateSession = async () => {
     const teamId = sessionForm.teamId
-    if (!sessionForm.title.trim() || !sessionForm.date || !sessionForm.time || !teamId) return
-    const newSession: Session = {
-      id: `s${Date.now()}`,
-      title: sessionForm.title,
+    if (!sessionForm.date || !sessionForm.time || !teamId) return
+    await runCreateSession({
+      title: deriveTitle(sessionForm.type, sessionForm.opponent),
       teamId,
       date: sessionForm.date,
       time: sessionForm.time,
@@ -3009,25 +3135,24 @@ function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
       opponent: sessionForm.opponent || undefined,
       attendance: [],
       notes: '',
-    }
-    saveSessions([...sessions, newSession])
+    })
     setShowCreateModal(false)
-    setSessionForm({ title: '', teamId: '', date: '', time: '', location: 'Coláiste Bríde', type: 'Training', opponent: '' })
+    setSessionForm({ teamId: '', date: '', time: '', location: 'Coláiste Bríde', type: 'Training', opponent: '' })
   }
 
-  const handleDeleteSession = (id: string) => {
+  const handleDeleteSession = async (id: string) => {
     if (!confirm('Delete this session?')) return
-    saveSessions(sessions.filter((s) => s.id !== id))
+    await runDeleteSession(id)
     if (attendanceSession === id) setAttendanceSession(null)
   }
 
-  const toggleAttendance = (sessionId: string, playerId: string) => {
+  const toggleAttendance = async (sessionId: string, playerId: string) => {
     const session = sessions.find((s) => s.id === sessionId)
     if (!session) return
     const nextAtt = session.attendance.includes(playerId)
       ? session.attendance.filter((pid) => pid !== playerId)
       : [...session.attendance, playerId]
-    saveSessions(sessions.map((s) => (s.id === sessionId ? { ...s, attendance: nextAtt } : s)))
+    await runUpdateSession({ ...session, attendance: nextAtt })
   }
 
   return (
@@ -3108,39 +3233,40 @@ function ScheduleView({ data }: { data: ReturnType<typeof useLiveData> }) {
                 </button>
               </div>
               <div className="space-y-3">
-                {formField('Session Title', <input value={sessionForm.title} onChange={(e) => setSessionForm({ ...sessionForm, title: e.target.value })} className={dashField} placeholder="Training Session" autoFocus />)}
                 {formField('Team', (
-                  <select value={sessionForm.teamId} onChange={(e) => setSessionForm({ ...sessionForm, teamId: e.target.value })} className={dashField}>
+                  <select value={sessionForm.teamId} onChange={(e) => setSessionForm({ ...sessionForm, teamId: e.target.value })} className={dashField} data-testid="session-team-select">
                     <option value="">Select Team</option>
-                    {teams
-                      .filter((t) => t.ageGroupId === activeAgeGroup)
-                      .map((t) => <option key={t.id} value={t.id}>{t.name} · {getTeamAgeDivisionLabel(t)}</option>)}
+                    {teams.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} · {getTeamAgeDivisionLabel(t)}
+                      </option>
+                    ))}
                   </select>
                 ))}
                 <div className="grid grid-cols-2 gap-3">
-                  {formField('Date', <input type="date" value={sessionForm.date} onChange={(e) => setSessionForm({ ...sessionForm, date: e.target.value })} className={dashField} />)}
-                  {formField('Time', <input type="time" value={sessionForm.time} onChange={(e) => setSessionForm({ ...sessionForm, time: e.target.value })} className={dashField} />)}
+                  {formField('Date', <input type="date" value={sessionForm.date} onChange={(e) => setSessionForm({ ...sessionForm, date: e.target.value })} className={dashField} data-testid="session-date-input" />)}
+                  {formField('Time', <input type="time" value={sessionForm.time} onChange={(e) => setSessionForm({ ...sessionForm, time: e.target.value })} className={dashField} data-testid="session-time-input" />)}
                 </div>
                 {formField('Type', (
-                  <select value={sessionForm.type} onChange={(e) => setSessionForm({ ...sessionForm, type: e.target.value as Session['type'] })} className={dashField}>
+                  <select value={sessionForm.type} onChange={(e) => setSessionForm({ ...sessionForm, type: e.target.value as Session['type'] })} className={dashField} data-testid="session-type-select" autoFocus>
                     <option>Training</option>
                     <option>Match</option>
                     <option>Event</option>
                   </select>
                 ))}
                 {sessionForm.type === 'Match' && (
-                  formField('Opponent', <input value={sessionForm.opponent} onChange={(e) => setSessionForm({ ...sessionForm, opponent: e.target.value })} className={dashField} placeholder="Neptune BC" />)
+                  formField('Opponent', <input value={sessionForm.opponent} onChange={(e) => setSessionForm({ ...sessionForm, opponent: e.target.value })} className={dashField} placeholder="Neptune BC" data-testid="session-opponent-input" />)
                 )}
                 {formField('Location', (
                   <div className="relative">
                     <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input value={sessionForm.location} onChange={(e) => setSessionForm({ ...sessionForm, location: e.target.value })} className={`${dashField} pl-9`} placeholder="Coláiste Bríde" />
+                    <input value={sessionForm.location} onChange={(e) => setSessionForm({ ...sessionForm, location: e.target.value })} className={`${dashField} pl-9`} placeholder="Coláiste Bríde" data-testid="session-location-input" />
                   </div>
                 ))}
               </div>
               <div className="flex justify-end gap-2 pt-1">
-                <button type="button" onClick={() => setShowCreateModal(false)} className="px-3 py-2 font-inter text-sm text-slate-500 hover:text-slate-900">Cancel</button>
-                <button type="button" onClick={handleCreateSession} className="btn-gradient text-white font-inter font-semibold text-sm px-5 py-2 rounded-xl">Create</button>
+                <button type="button" onClick={() => setShowCreateModal(false)} className="px-3 py-2 font-inter text-sm text-slate-500 hover:text-slate-900" data-testid="session-cancel-btn">Cancel</button>
+                <button type="button" onClick={handleCreateSession} className="btn-gradient text-white font-inter font-semibold text-sm px-5 py-2 rounded-xl" data-testid="session-create-btn">Create</button>
               </div>
             </>
           ) : null
