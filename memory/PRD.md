@@ -167,3 +167,71 @@ env in `/app/app/.env.local`.
 - P1: Rebuild + redeploy `/app/docs` so all these client fixes ship to the live GitHub Pages site.
 - P2: `PlayerDashboard.tsx` (~2200 lines) and `clubData.ts` (~2500 lines) exceed guidelines —
   split ProfileTab and the sync layer for maintainability.
+
+## 2026-07-25 — Chat migrated to per-row `chat_messages` table + delivery indicators
+
+**Trigger**: user reported group chat messages sometimes not sending, wanted WhatsApp-
+style delivery confirmation (✓✓), red warning + retry for failures, and asked whether
+the app would scale to 200 live users. Answer: not with the old JSON-blob chat.
+
+**Old model (removed)**
+- Entire chat history was a single JSON array under `app_state[dlbc_chat_messages]`.
+- Every send upserted the whole blob → last-writer-wins → group-chat message loss
+  during simultaneous sends.
+- 3-second polling per client on top of realtime blob broadcasts → doesn't scale.
+
+**New model (shipped)**
+- Dedicated `public.chat_messages` table (see `/app/app/supabase/chat-messages-setup.sql`).
+  Columns: id (uuid), team_id, user_id (auth.users FK), sender_name, sender_role,
+  text (1–4000 char), created_at. Indexes on (team_id, created_at desc) and (user_id).
+- RLS: SELECT open to authenticated (client filters by team); INSERT requires
+  `user_id = auth.uid()`; DELETE allowed to sender or `is_manager()`. No UPDATE.
+- Realtime publication `supabase_realtime` extended with `chat_messages`;
+  `replica identity full` so DELETE events carry the id.
+- Client: `sendChatMessageById` INSERTs one row; realtime `postgres_changes` handler
+  updates every open client (no polling needed — 30s pull kept as safety net).
+- Local-only per-message status map (`dlbc_chat_status`) tracks pending/sent/failed
+  without ever syncing status to the server. `markAllPendingChatAsSent` fires on any
+  successful push.
+- Auth for INSERT: `supabase.auth.getSession()` first (synchronous local read),
+  falls back to `getUser()` — fixed the "first-message-always-fails" bug where the
+  initial `getUser()` round-trip could return null before the session was warm.
+
+**UI (TeamChatUI.tsx)**
+- `StatusIndicator` renders ✓ (grey pending), ✓✓ (blue sent), ⚠+↻ (red failed) on
+  own messages only. Failed bubble gets a red border.
+- Retry handler resets to pending and re-publishes; any success flips ALL local
+  pending/failed to sent since the whole per-row queue is drained on the retry.
+- data-testids: chat-status-pending / chat-status-sent / chat-status-failed /
+  chat-composer-input / chat-composer-send / chat-thread-<id> / chat-msg-<id> /
+  chat-delete-<id>.
+
+**Regression fixed en-route** (iteration_14 → iteration_15)
+- ChatTab in PlayerDashboard was recomputing `clubPlayer` (an object from
+  `getClubPlayers().find(...)`) on every render → useCallback identity churn →
+  useEffect re-ran forever → `Maximum update depth exceeded` → messages 2+ failed
+  with `ERR_INSUFFICIENT_RESOURCES`.
+- Fix: `clubPlayer = useMemo(..., [user?.email])`; `refreshChatState` deps changed
+  to primitive `clubPlayerId`; shallow-equality guards on setMessages / setStatuses /
+  setMyTeams so identical arrays no longer schedule a re-render. Same equality
+  guards added to Manager ChatView for defence in depth (it wasn't looping).
+
+**Verified end-to-end** by testing agent (iteration_15):
+- Zero "Maximum update depth" warnings on ChatTab mount.
+- 3 sequential + 5 rapid-fire player sends all landed ✓✓ (8 successful 201 POSTs,
+  0 failures, 0 stuck pending).
+- Manager saw player messages within seconds via realtime; manager reply appeared
+  on player side same way.
+
+## Open / Next action items (updated)
+- P1: `/app/app/supabase/chat-messages-setup.sql` must be applied to any new
+  Supabase environment (already applied to prod project neulcrpkroiyglgiywcp).
+- P1: Rebuild + redeploy `/app/docs` so these client-side chat changes ship to
+  the live GitHub Pages site. User to trigger via **Save to GitHub**.
+- P2: PlayerDashboard.tsx (~2400) and ManagerDashboard.tsx (~4800) still oversized
+  — the chat regression risk we just hit is a symptom. Split ChatTab / ChatView
+  into dedicated files.
+- P2: Consider dropping the 30s pullMergedChatState safety-net polling now that
+  realtime is per-row (much smaller payloads and battle-tested at scale).
+- Old blob rows `app_state[dlbc_chat_messages]` and `app_state[dlbc_chat_deleted_ids]`
+  can be deleted from Supabase — the app no longer reads or writes them.
