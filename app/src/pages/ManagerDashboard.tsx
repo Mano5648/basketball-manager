@@ -4007,8 +4007,19 @@ function ChatView({ data }: { data: ReturnType<typeof useLiveData> }) {
 
   useEffect(() => {
     const sync = () => {
-      setMessages(getChatMessages())
-      setStatuses(getChatSendStatusMap())
+      const nextMsgs = getChatMessages()
+      setMessages((prev) =>
+        prev.length === nextMsgs.length && prev.every((m, i) => m.id === nextMsgs[i]?.id)
+          ? prev
+          : nextMsgs,
+      )
+      const nextStatus = getChatSendStatusMap()
+      setStatuses((prev) => {
+        const pk = Object.keys(prev)
+        const nk = Object.keys(nextStatus)
+        if (pk.length === nk.length && pk.every((k) => prev[k] === nextStatus[k])) return prev
+        return nextStatus
+      })
     }
     sync()
     const h = (e: StorageEvent) => {

@@ -1821,9 +1821,18 @@ function ChildrenTab({
 }
 
 function ChatTab({ user }: { user: PlayerUser | null }) {
-  const clubPlayer = user
-    ? getClubPlayers().find((p) => p.email.toLowerCase() === user.email.toLowerCase())
-    : undefined
+  // Memoize on the primitive email — getClubPlayers() returns a fresh array on
+  // every call (JSON.parse from localStorage), so recomputing this inline made
+  // `clubPlayer` a new object every render and starved the browser via an
+  // infinite refreshChatState → setState → render loop.
+  const clubPlayer = useMemo(
+    () =>
+      user
+        ? getClubPlayers().find((p) => p.email.toLowerCase() === user.email.toLowerCase())
+        : undefined,
+    [user?.email],
+  )
+  const clubPlayerId = clubPlayer?.id
 
   const [myTeams, setMyTeams] = useState(() => (clubPlayer ? getAccessibleChatTeams(clubPlayer) : []))
   const [teamId, setTeamId] = useState<string>(() => (clubPlayer ? getAccessibleChatTeams(clubPlayer)[0]?.id ?? '' : ''))
@@ -1831,16 +1840,40 @@ function ChatTab({ user }: { user: PlayerUser | null }) {
   const [statuses, setStatuses] = useState<Record<string, ChatSendStatus>>(() => getChatSendStatusMap())
 
   const refreshChatState = useCallback(() => {
-    if (!clubPlayer) {
+    if (!clubPlayerId) {
       setMyTeams([])
       return
     }
-    const teams = getAccessibleChatTeams(clubPlayer)
-    setMyTeams(teams)
+    const player = getClubPlayers().find((p) => p.id === clubPlayerId)
+    if (!player) {
+      setMyTeams([])
+      return
+    }
+    const teams = getAccessibleChatTeams(player)
+    // Shallow-equality guards — freshly parsed arrays/objects would otherwise
+    // trip a re-render on every storage/broadcast tick.
+    setMyTeams((prev) =>
+      prev.length === teams.length && prev.every((t, i) => t.id === teams[i]?.id) ? prev : teams,
+    )
     setTeamId((prev) => (prev && teams.some((t) => t.id === prev) ? prev : teams[0]?.id ?? ''))
-    setMessages(getChatMessages())
-    setStatuses(getChatSendStatusMap())
-  }, [clubPlayer])
+    setMessages((prev) => {
+      const next = getChatMessages()
+      if (prev.length === next.length && prev.every((m, i) => m.id === next[i]?.id)) return prev
+      return next
+    })
+    setStatuses((prev) => {
+      const next = getChatSendStatusMap()
+      const prevKeys = Object.keys(prev)
+      const nextKeys = Object.keys(next)
+      if (
+        prevKeys.length === nextKeys.length &&
+        prevKeys.every((k) => prev[k] === next[k])
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [clubPlayerId])
 
   useEffect(() => {
     refreshChatState()

@@ -1,0 +1,23 @@
+{
+  "summary": "REGRESSION VERIFIED FIXED. The infinite render loop in PlayerDashboard's ChatTab is resolved. Player logged in, opened Chat, no 'Maximum update depth exceeded' warnings and no ERR_INSUFFICIENT_RESOURCES errors in the console (0 of each across the full session). All 3 sequential messages (T15 msg1/msg2/msg3) landed with the blue ✓✓ chat-status-sent indicator and produced 3 successful POSTs to /rest/v1/chat_messages. Follow-up rapid-fire of 5 messages (T15 rapid0..rapid4) also all landed as ✓✓ with 5 additional 201 POSTs (8 POSTs total, 0 failures, 0 stuck pending). Cross-client realtime confirmed: all player messages appeared on the manager side of the Academy U10-A chat, and the manager's reply ('MGR reply …') sent with ✓✓ on the manager side. Delete-own-message test was NOT executed to preserve message history per test brief. Overall: iteration_14 regression is resolved and the primary chat delivery flow is stable end-to-end.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "PlayerDashboard.tsx (~2400 lines) and ManagerDashboard.tsx (~4800 lines) remain very large monolith files. Splitting ChatTab/ChatView, PaymentsTab, etc. into dedicated modules would materially reduce the risk of future render-loop regressions like the one just fixed.",
+    "The 30s pullMergedChatState polling remains alongside Supabase realtime. Once realtime is proven reliable at 200 concurrent users the polling can likely be removed or backed off further to reduce Supabase load."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only)", "frontend": "100% — all in-scope tests passed"},
+  "test_credentials": "Player: cooler74.ea@gmail.com / test12. Manager: manager@dublinlions.ie / lions2025.",
+  "seed_data_creation": "Messages left in Academy U10-A chat (per instruction to not clean up): T15 msg1/msg2/msg3 <ts>, T15 rapid0..rapid4 <ts>, MGR reply <ts>. Main agent will bulk-clean.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Chat regression fixed. Player ChatTab useMemo(clubPlayer) + [clubPlayerId] dep in refreshChatState works — no render loop, all messages POST cleanly. If any future chat issue arises, first check devtools console for 'Maximum update depth exceeded' as an early signal; then verify network shows one POST /rest/v1/chat_messages per send (return 201) and the corresponding msg gets chat-status-sent. Note: on the manager side the Academy team must be clicked to open the correct thread; team list may be pre-selected on JOELS Dublin Lions.",
+  "rca of the issue": "N/A — regression fixed. Root cause (documented in iteration_14): clubPlayer was recomputed to a new object on every render, causing useCallback identity churn and an infinite setState→render loop. Fix confirmed working in this iteration: (a) clubPlayer wrapped in useMemo keyed on user?.email, (b) refreshChatState useCallback dep switched to primitive clubPlayerId, (c) shallow-equality guards on setMessages/setStatuses/setMyTeams."
+}
