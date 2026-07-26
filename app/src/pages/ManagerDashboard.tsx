@@ -81,7 +81,8 @@ import {
   Area,
 } from 'recharts'
 import { useSiteImage, LABEL_PREFIX } from '@/hooks/useSiteImages'
-import { isSupabaseConfigured } from '@/lib/supabase'
+import { isSupabaseConfigured, supabase } from '@/lib/supabase'
+import { refundStripeCheckout } from '@/lib/stripeCheckout'
 import { fetchSiteImages, uploadSiteImage, saveSiteImageUrl, resetSiteImage } from '@/lib/siteImages'
 import {
   type Player,
@@ -4521,17 +4522,50 @@ function SettingsView() {
 function PurchaseHistoryPanel() {
   const [purchases, setPurchases] = useState<PurchaseRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const [refundingId, setRefundingId] = useState<string | null>(null)
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     if (!isPurchasesDbConfigured()) {
       setLoading(false)
       return
     }
-    fetchPurchases(50).then((rows) => {
+    fetchPurchases(100).then((rows) => {
       setPurchases(rows)
       setLoading(false)
     })
   }, [])
+
+  useEffect(() => {
+    refresh()
+    // Live-refresh when a new order arrives or a status changes.
+    if (!supabase || !isPurchasesDbConfigured()) return
+    const channel = supabase
+      .channel('purchases-manager-view')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'purchases' },
+        () => refresh(),
+      )
+      .subscribe()
+    return () => {
+      channel.unsubscribe()
+    }
+  }, [refresh])
+
+  const handleRefund = async (p: PurchaseRecord) => {
+    if (!confirm(`Refund €${(p.amount_cents / 100).toFixed(2)} to ${p.customer_email}?\n\nThis will refund the payment on Stripe and mark the order as refunded.`)) return
+    const reason = window.prompt('Refund note (optional):', '') ?? undefined
+    setRefundingId(p.id)
+    try {
+      await refundStripeCheckout(p.id, reason || undefined)
+      // Optimistic flip; realtime will confirm.
+      setPurchases((prev) => prev.map((x) => (x.id === p.id ? { ...x, status: 'refunded' } : x)))
+    } catch (e) {
+      alert(`Refund failed: ${e instanceof Error ? e.message : 'Unknown error'}`)
+    } finally {
+      setRefundingId(null)
+    }
+  }
 
   const typeLabel: Record<string, string> = {
     store: 'Store',
@@ -4540,12 +4574,12 @@ function PurchaseHistoryPanel() {
   }
 
   return (
-    <div className="dash-card overflow-hidden">
+    <div className="dash-card overflow-hidden" data-testid="purchase-history-panel">
       <div className="px-6 py-4 border-b border-white/[0.06]">
         <h3 className="font-inter font-semibold text-lg text-white">Stripe purchase history</h3>
         <p className="font-inter text-sm text-slate-400 mt-1">
           {isPurchasesDbConfigured()
-            ? 'All card payments confirmed via Stripe Checkout.'
+            ? 'All card / Google Pay / Apple Pay payments confirmed via Stripe Checkout.'
             : 'Connect Supabase and run purchases-setup.sql to enable purchase history.'}
         </p>
       </div>
@@ -4558,14 +4592,14 @@ function PurchaseHistoryPanel() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-white/[0.06]">
-                {['Date', 'Customer', 'Type', 'Items', 'Amount', 'Status'].map((col) => (
+                {['Date', 'Customer', 'Type', 'Items', 'Amount', 'Status', ''].map((col) => (
                   <th key={col} className="px-6 py-3 font-inter font-semibold text-xs uppercase tracking-widest text-slate-400 text-left">{col}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-white/[0.06]">
               {purchases.map((p) => (
-                <tr key={p.id} className="hover:bg-white/5 transition-colors">
+                <tr key={p.id} className="hover:bg-white/5 transition-colors" data-testid={`purchase-row-${p.id}`}>
                   <td className="px-6 py-3 font-inter text-sm text-slate-300">
                     {new Date(p.paid_at || p.created_at).toLocaleDateString('en-IE')}
                   </td>
@@ -4578,7 +4612,24 @@ function PurchaseHistoryPanel() {
                     {(p.items as { name: string; quantity: number }[]).map((i) => `${i.name} ×${i.quantity}`).join(', ')}
                   </td>
                   <td className="px-6 py-3 font-inter text-sm text-white">€{(p.amount_cents / 100).toFixed(2)}</td>
-                  <td className="px-6 py-3"><StatusBadge status={p.status === 'paid' ? 'succeeded' : p.status} /></td>
+                  <td className="px-6 py-3">
+                    <StatusBadge status={p.status === 'paid' ? 'succeeded' : p.status} />
+                  </td>
+                  <td className="px-6 py-3 text-right">
+                    {p.status === 'paid' ? (
+                      <button
+                        type="button"
+                        onClick={() => handleRefund(p)}
+                        disabled={refundingId === p.id}
+                        className="font-inter text-xs px-3 py-1.5 rounded-lg border border-red-500/30 text-red-300 hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                        data-testid={`refund-btn-${p.id}`}
+                      >
+                        {refundingId === p.id ? 'Refunding…' : 'Refund'}
+                      </button>
+                    ) : p.status === 'refunded' ? (
+                      <span className="font-inter text-xs text-slate-500" data-testid={`refunded-tag-${p.id}`}>Refunded</span>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
             </tbody>

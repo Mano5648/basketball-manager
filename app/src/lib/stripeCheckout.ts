@@ -81,3 +81,18 @@ export async function verifyStripeCheckout(sessionId: string, verificationToken:
   }
   return verified
 }
+
+/** Manager action — trigger a Stripe refund for a paid purchase.
+ *  The edge function verifies is_manager() from the caller's JWT and returns
+ *  403 otherwise. On success the `purchases` row flips to status='refunded'
+ *  and every open client sees it via realtime. */
+export async function refundStripeCheckout(purchaseId: string, reason?: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured')
+  const { data, error } = await supabase.functions.invoke('refund-checkout-session', {
+    body: { purchaseId, reason },
+  })
+  if (error) throw new Error(error.message || 'Could not issue refund')
+  if (data && (data as { error?: string }).error) {
+    throw new Error((data as { error: string }).error)
+  }
+}

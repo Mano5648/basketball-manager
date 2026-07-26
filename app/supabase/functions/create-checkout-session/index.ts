@@ -113,6 +113,14 @@ Deno.serve(async (req) => {
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       customer_email: customerEmail,
+      // `payment_method_types` intentionally omitted → Stripe Checkout picks the
+      // full set enabled on this account (card, Google Pay, Apple Pay, Link, etc.).
+      // Google Pay is a wallet on top of "card", so it appears automatically when
+      // the buyer's device supports it and the Checkout is served from Stripe's
+      // domain (no domain verification needed for Checkout-hosted flow).
+      payment_method_options: {
+        card: { request_three_d_secure: 'automatic' },
+      },
       line_items: pricedItems.map((item) => ({
         price_data: {
           currency: 'eur',

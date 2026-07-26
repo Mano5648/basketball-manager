@@ -1,7 +1,7 @@
 import { supabase, isSupabaseConfigured } from './supabase'
 
 export type PurchaseType = 'store' | 'ticket' | 'membership'
-export type PurchaseStatus = 'pending' | 'paid' | 'failed' | 'cancelled'
+export type PurchaseStatus = 'pending' | 'paid' | 'failed' | 'cancelled' | 'refunded'
 
 export interface PurchaseLineItem {
   name: string
