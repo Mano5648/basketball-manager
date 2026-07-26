@@ -17,25 +17,35 @@ Paste + run the contents of **`/app/app/supabase/purchases-refund.sql`**. It add
 
 ## 2) Set Supabase edge-function secrets (2 minutes)
 
-The edge functions need the Stripe **secret** key (and the webhook secret so `stripe-webhook` can verify Stripe's signature). Install the Supabase CLI locally if you don't have it, then from the repo root run:
+The edge functions need the Stripe **secret** key (and the webhook secret so `stripe-webhook` can verify Stripe's signature). Grab both from the sandbox JSON the agent saved in your pod at `/tmp/stripe_sandbox.json`:
+
+```bash
+cat /tmp/stripe_sandbox.json | python3 -m json.tool
+# copy the sandbox_secret_key and preview_webhook_secret values
+```
+
+Then set them on Supabase — via the **dashboard** (easiest):
+
+https://supabase.com/dashboard/project/neulcrpkroiyglgiywcp/settings/functions
+
+Add two secrets (paste values from the JSON above):
+
+| Name | Value |
+| --- | --- |
+| `STRIPE_SECRET_KEY` | the `sandbox_secret_key` (starts with `sk_test_…`) |
+| `STRIPE_WEBHOOK_SECRET` | the `preview_webhook_secret` (starts with `whsec_…`) |
+
+Or via the Supabase CLI if you prefer:
 
 ```bash
 cd app
 supabase login                          # opens browser — one-time
 supabase link --project-ref neulcrpkroiyglgiywcp
-supabase secrets set \
-  STRIPE_SECRET_KEY=sk_test_REDACTED... \
-  STRIPE_WEBHOOK_SECRET=whsec_REDACTED...
+# Paste the actual sk_test_ / whsec_ values from /tmp/stripe_sandbox.json:
+supabase secrets set STRIPE_SECRET_KEY=<paste-here> STRIPE_WEBHOOK_SECRET=<paste-here>
 ```
 
-(Use the full sandbox secret key — the agent has the full value; paste it in from your saved sandbox response. Same for the webhook secret.)
-
-If you don't have the Supabase CLI, do it via the dashboard instead:
-https://supabase.com/dashboard/project/neulcrpkroiyglgiywcp/settings/functions
-
-Add two secrets:
-- `STRIPE_SECRET_KEY` = the sandbox `sk_test_…` value
-- `STRIPE_WEBHOOK_SECRET` = the sandbox `whsec_…` value
+> **Never commit these values to git** — GitHub's push protection blocks any `sk_test_` / `sk_live_` / `whsec_` string. They only ever live in Supabase's edge-function environment and in `.env.local` (which is git-ignored).
 
 ---
 
@@ -68,6 +78,20 @@ Then register the webhook URL with Stripe (dashboard → **Developers → Webhoo
 5. Log in as manager (`manager@dublinlions.ie` / `lions2025`), go to **Payments** → scroll to **Stripe purchase history**. The order appears within 1 second (Supabase realtime). Click **Refund** — it hits Stripe, marks the row `refunded`, and the parent sees the status flip live.
 
 ---
+
+## 5) Deploy the live site (GitHub Actions is already wired up)
+
+The workflow at `.github/workflows/deploy.yml` reads five build-time env vars from GitHub → Settings → Secrets and variables → Actions. Add these once and every push to `main` builds + deploys automatically:
+
+| Secret name | Value |
+| --- | --- |
+| `VITE_SUPABASE_URL` | `https://neulcrpkroiyglgiywcp.supabase.co` |
+| `VITE_SUPABASE_ANON_KEY` | your Supabase project's anon/publishable key (Project settings → API) |
+| `VITE_MANAGER_EMAILS` | `manager@dublinlions.ie` (comma-separate if you add more managers) |
+| `VITE_STRIPE_PUBLISHABLE_KEY` | the sandbox `pk_test_…` value (or `pk_live_…` after you claim the account) |
+| `VITE_TURNSTILE_SITE_KEY` | optional — leave blank if you don't use Turnstile |
+
+> Publishable keys (`pk_test_…` / `pk_live_…`, Supabase anon, Turnstile *site* key) are **safe to commit** — they're designed to run in the browser. Only the `sk_test_ / sk_live_ / whsec_` secrets stay server-side (Supabase edge functions), never in git.
 
 ## Going live
 
