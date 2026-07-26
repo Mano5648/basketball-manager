@@ -90,12 +90,12 @@ function BoardShell({
       {children}
       {overlay && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6 bg-slate-900/40 backdrop-blur-sm"
+          className="absolute inset-0 z-40 flex items-center justify-center p-4 sm:p-6 bg-slate-900/40 backdrop-blur-sm"
           onClick={onDismiss}
           role="presentation"
         >
           <div
-            className="dash-card w-full max-w-md p-5 sm:p-6 shadow-2xl space-y-4 max-h-[90vh]"
+            className="dash-card w-full max-w-md p-5 sm:p-6 shadow-2xl space-y-4 max-h-[calc(100%-2rem)]"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"

@@ -584,11 +584,24 @@ export function syncChildrenRosterForParent(parentId: string): Player | null {
 
     const rosterId = childRosterPlayerId(parentId, child.id)
     const team = findTeamForChild(child)
-    const teamId = team?.id
-    const teamIds = teamId ? [teamId] : []
+    const autoTeamId = team?.id
     const age = calcAge(child.dob) ?? undefined
     const existingIdx = nextPlayers.findIndex((p) => p.id === rosterId)
     const now = new Date().toISOString().split('T')[0]
+
+    // Preserve teamIds the manager (or another authorised writer) manually
+    // added — reconcile is a mirror of parent-registered children, not the
+    // source of truth for team assignment. It should only *add* the
+    // auto-computed team if not already present, never remove manual entries.
+    const existingTeamIds = existingIdx >= 0 ? nextPlayers[existingIdx].teamIds : []
+    const mergedTeamIds: string[] =
+      existingIdx >= 0
+        ? autoTeamId && !existingTeamIds.includes(autoTeamId)
+          ? [...existingTeamIds, autoTeamId]
+          : existingTeamIds
+        : autoTeamId
+          ? [autoTeamId]
+          : []
 
     const childPlayer: Player = existingIdx >= 0
       ? {
@@ -596,7 +609,7 @@ export function syncChildrenRosterForParent(parentId: string): Player | null {
           name: child.name.trim(),
           dob: child.dob,
           gender: child.gender || 'Male',
-          teamIds,
+          teamIds: mergedTeamIds,
           guardianName: parent.name,
           guardianPhone: parent.phone,
           age,
@@ -608,7 +621,7 @@ export function syncChildrenRosterForParent(parentId: string): Player | null {
           phone: parent.phone || '',
           dob: child.dob,
           gender: child.gender || 'Male',
-          teamIds,
+          teamIds: mergedTeamIds,
           position: '',
           jerseyNumber: 0,
           status: parent.status,
@@ -628,15 +641,15 @@ export function syncChildrenRosterForParent(parentId: string): Player | null {
     else nextPlayers.push(childPlayer)
 
     for (const t of nextTeams) {
-      const onTeam = teamIds.includes(t.id)
+      const onTeam = mergedTeamIds.includes(t.id)
       const wasOn = t.players.includes(rosterId)
       if (onTeam && !wasOn) t.players.push(rosterId)
       if (!onTeam && wasOn) t.players = t.players.filter((pid) => pid !== rosterId)
     }
 
-    if (teamId) {
-      addChatMember(teamId, parentId)
-      removeChatMember(teamId, rosterId)
+    if (autoTeamId) {
+      addChatMember(autoTeamId, parentId)
+      removeChatMember(autoTeamId, rosterId)
     }
   }
 
