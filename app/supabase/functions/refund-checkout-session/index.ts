@@ -11,6 +11,7 @@
 
 import Stripe from 'https://esm.sh/stripe@14.21.0?target=deno'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
+import { reversePurchase } from '../_shared/fulfil.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -104,6 +105,9 @@ Deno.serve(async (req) => {
       console.error('purchases update failed', updateErr.message)
       return json({ error: 'Refund succeeded on Stripe but DB update failed. Contact admin.' }, 500)
     }
+
+    const { data: full } = await adminClient.from('purchases').select('*').eq('id', purchaseId).maybeSingle()
+    if (full) await reversePurchase(adminClient, full)
 
     return json({ ok: true, refundId: refund.id, amountCents: refund.amount }, 200)
   } catch (err) {

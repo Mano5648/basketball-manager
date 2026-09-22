@@ -1,6 +1,7 @@
 import Stripe from 'https://esm.sh/stripe@14.21.0?target=deno'
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 import { sendPurchaseEmail } from './purchase-email.ts'
+import { fulfilPurchase } from './fulfil.ts'
 
 export interface StripeConfirmResult {
   confirmed: boolean
@@ -107,6 +108,12 @@ export async function confirmStripePurchaseAndSendEmail(
       console.error('Failed to mark purchase paid', updateError.message)
       return { confirmed: false, emailSent: false, reason: updateError.message }
     }
+  }
+
+  try {
+    await fulfilPurchase(supabase, row)
+  } catch (e) {
+    console.error('fulfilment failed', (e as Error).message)
   }
 
   if (row.confirmation_email_sent_at) {

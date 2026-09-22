@@ -1,98 +1,7 @@
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 
 export type LineItem = { name: string; amountCents: number; quantity: number; imageUrl?: string }
-
-type Product = { id: string; name: string; price: number; active?: boolean; stock?: number }
-type Order = {
-  id: string
-  customerName: string
-  customerEmail: string
-  items: { productId: string; productName: string; price: number; quantity: number }[]
-  total: number
-  status: 'pending' | 'paid' | 'shipped' | 'cancelled'
-}
-type TicketPrice = { fixtureKey: string; adultPrice: number; kidPrice: number; enabled: boolean }
-type ClubFixture = {
-  id: string
-  date?: string
-  opponent: string
-  ticketsEnabled?: boolean
-  adultPrice?: number
-  kidPrice?: number
-}
-type Player = { id: string; teamIds: string[]; amount?: number }
-type Team = { id: string; ageGroupId?: string }
-type AgeGroupFeeConfig = { monthly: number; oneTime: number }
-
-const DEFAULT_MEMBERSHIP_FEES: Record<string, AgeGroupFeeConfig> = {
-  u10: { monthly: 30, oneTime: 25 },
-  u12: { monthly: 35, oneTime: 30 },
-  u14: { monthly: 40, oneTime: 35 },
-  u16: { monthly: 45, oneTime: 40 },
-  u18: { monthly: 45, oneTime: 40 },
-  u20: { monthly: 50, oneTime: 45 },
-  senior: { monthly: 50, oneTime: 45 },
-}
-
-async function readState<T>(supabase: SupabaseClient, key: string, fallback: T): Promise<T> {
-  const { data } = await supabase.from('app_state').select('value').eq('key', key).maybeSingle()
-  if (!data?.value) return fallback
-  return data.value as T
-}
-
-function eurosToCents(amount: number): number {
-  return Math.round(amount * 100)
-}
-
-function resolveTicketPricing(
-  fixtureKey: string,
-  fixtures: ClubFixture[],
-  ticketPrices: Record<string, TicketPrice>,
-): { adultPrice: number; kidPrice: number; fixtureName: string } | null {
-  const fixture = fixtures.find((f) => f.id === fixtureKey)
-  if (!fixture || fixture.ticketsEnabled === false) return null
-
-  const override = ticketPrices[fixtureKey]
-  if (override) {
-    if (!override.enabled) return null
-    return {
-      adultPrice: override.adultPrice,
-      kidPrice: override.kidPrice,
-      fixtureName: fixture.opponent,
-    }
-  }
-
-  const adultPrice = fixture.adultPrice ?? 0
-  const kidPrice = fixture.kidPrice ?? 0
-  if (adultPrice <= 0 && kidPrice <= 0) return null
-
-  return { adultPrice, kidPrice, fixtureName: fixture.opponent }
-}
-
-function resolveMembershipFeeCents(
-  playerId: string,
-  planType: string,
-  players: Player[],
-  teams: Team[],
-  fees: Record<string, AgeGroupFeeConfig>,
-): number | null {
-  const player = players.find((p) => p.id === playerId)
-  if (!player) return null
-
-  let ageGroupId: string | null = null
-  if (player.teamIds.length > 0) {
-    const team = teams.find((t) => player.teamIds.includes(t.id))
-    ageGroupId = team?.ageGroupId ?? null
-  }
-
-  const feeConfig = ageGroupId ? fees[ageGroupId] : null
-  const monthly = feeConfig?.monthly ?? player.amount ?? 50
-  const oneTime = feeConfig?.oneTime ?? 40
-
-  if (planType === 'oneTime') return eurosToCents(oneTime)
-  if (planType === 'monthly') return eurosToCents(monthly)
-  return null
-}
+export type PurchaseType = 'store' | 'ticket' | 'membership' | 'lotto' | 'booking'
 
 export type ValidatedCheckout = {
   lineItems: LineItem[]
@@ -100,141 +9,105 @@ export type ValidatedCheckout = {
   metadata: Record<string, string>
 }
 
+type Result = { ok: true; checkout: ValidatedCheckout } | { ok: false; error: string }
+const fail = (error: string): Result => ({ ok: false, error })
+
+/** Server-side pricing: never trust client amounts. Every type reads its price from the DB. */
 export async function validateCheckoutPricing(
   supabase: SupabaseClient,
-  input: {
-    purchaseType: 'store' | 'ticket' | 'membership'
-    referenceId: string
-    playerId?: string
-    metadata?: Record<string, string>
-    clientLineItems?: LineItem[]
-  },
-): Promise<{ ok: true; checkout: ValidatedCheckout } | { ok: false; error: string }> {
+  input: { purchaseType: PurchaseType; referenceId: string; customerEmail: string; metadata?: Record<string, string> },
+): Promise<Result> {
   const metadata = { ...(input.metadata ?? {}) }
 
   if (input.purchaseType === 'store') {
-    const [orders, products] = await Promise.all([
-      readState<Order[]>(supabase, 'dlbc_orders', []),
-      readState<Product[]>(supabase, 'dlbc_products', []),
-    ])
-
-    const order = orders.find((o) => o.id === input.referenceId)
-    if (!order) return { ok: false, error: 'Order not found' }
-    if (order.status !== 'pending') return { ok: false, error: 'Order is not payable' }
-
+    const { data: order } = await supabase.from('orders').select('*').eq('id', input.referenceId).maybeSingle()
+    if (!order) return fail('Order not found')
+    if (order.status !== 'pending') return fail('Order is not payable')
+    if (order.customer_email.toLowerCase() !== input.customerEmail.toLowerCase()) return fail('Order belongs to another customer')
+    const ids = (order.items as { product_id: string; quantity: number; size?: string }[]).map((i) => i.product_id)
+    const { data: products } = await supabase.from('products').select('*').in('id', ids)
     const lineItems: LineItem[] = []
-    for (const item of order.items) {
-      const product = products.find((p) => p.id === item.productId)
-      if (!product || product.active === false) {
-        return { ok: false, error: `Product unavailable: ${item.productName}` }
-      }
-      if (typeof product.stock === 'number' && product.stock < item.quantity) {
-        return { ok: false, error: `Insufficient stock for ${product.name}` }
-      }
-      const imageFromClient = input.clientLineItems?.find((li) => li.name === item.productName)?.imageUrl
-      lineItems.push({
-        name: product.name,
-        amountCents: eurosToCents(product.price),
-        quantity: item.quantity,
-        imageUrl: imageFromClient,
-      })
+    for (const item of order.items as { product_id: string; quantity: number; size?: string }[]) {
+      const p = (products ?? []).find((x) => x.id === item.product_id)
+      if (!p || !p.active) return fail('A product in your cart is no longer available')
+      if (typeof p.stock === 'number' && p.stock < item.quantity) return fail(`Not enough stock for ${p.name}`)
+      const qty = Math.max(1, Math.min(50, Math.floor(item.quantity)))
+      lineItems.push({ name: item.size ? `${p.name} (${item.size})` : p.name, amountCents: p.price_cents, quantity: qty, imageUrl: p.image_url ?? undefined })
     }
-
-    const totalCents = lineItems.reduce((sum, item) => sum + item.amountCents * item.quantity, 0)
-    if (totalCents <= 0) return { ok: false, error: 'Invalid order total' }
-
+    const totalCents = lineItems.reduce((s, i) => s + i.amountCents * i.quantity, 0)
+    if (totalCents <= 0) return fail('Invalid order total')
+    await supabase.from('orders').update({ total_cents: totalCents }).eq('id', order.id)
     metadata.order_id = order.id
     return { ok: true, checkout: { lineItems, totalCents, metadata } }
   }
 
   if (input.purchaseType === 'ticket') {
-    const fixtureKey = metadata.fixture_key
-    if (!fixtureKey) return { ok: false, error: 'Missing fixture_key' }
-
-    const adultQty = Math.max(0, Number(metadata.adult_qty || 0))
-    const kidQty = Math.max(0, Number(metadata.kid_qty || 0))
-    if (adultQty + kidQty <= 0) return { ok: false, error: 'Select at least one ticket' }
-
-    const [fixtures, ticketPrices] = await Promise.all([
-      readState<ClubFixture[]>(supabase, 'dlbc_fixtures', []),
-      readState<Record<string, TicketPrice>>(supabase, 'dlbc_ticket_prices', {}),
-    ])
-
-    const pricing = resolveTicketPricing(fixtureKey, fixtures, ticketPrices)
-    if (!pricing) return { ok: false, error: 'Tickets are not available for this fixture' }
-
-    const fixture = fixtures.find((f) => f.id === fixtureKey)
-    const fixtureName = metadata.fixture_name || fixture?.opponent || 'Match'
+    const { data: fx } = await supabase.from('fixtures').select('*').eq('id', input.referenceId).maybeSingle()
+    if (!fx || !fx.tickets_enabled || fx.status !== 'scheduled') return fail('Tickets are not available for this game')
+    const adultQty = Math.max(0, Math.min(20, Math.floor(Number(metadata.adult_qty || 0))))
+    const kidQty = Math.max(0, Math.min(20, Math.floor(Number(metadata.kid_qty || 0))))
+    if (adultQty + kidQty <= 0) return fail('Select at least one ticket')
+    const label = `${fx.is_home ? 'Home' : 'Away'} vs ${fx.opponent}`
     const lineItems: LineItem[] = []
-    const imageFromClient = input.clientLineItems?.[0]?.imageUrl
-
-    if (adultQty > 0) {
-      if (pricing.adultPrice <= 0) return { ok: false, error: 'Adult tickets are not available' }
-      lineItems.push({
-        name: `Adult ticket — ${fixtureName}`,
-        amountCents: eurosToCents(pricing.adultPrice),
-        quantity: adultQty,
-        imageUrl: imageFromClient,
-      })
-    }
-    if (kidQty > 0) {
-      if (pricing.kidPrice <= 0) return { ok: false, error: 'Kid tickets are not available' }
-      lineItems.push({
-        name: `Kid ticket — ${fixtureName}`,
-        amountCents: eurosToCents(pricing.kidPrice),
-        quantity: kidQty,
-        imageUrl: imageFromClient,
-      })
-    }
-
-    const totalCents = lineItems.reduce((sum, item) => sum + item.amountCents * item.quantity, 0)
-    metadata.fixture_key = fixtureKey
-    metadata.fixture_name = fixtureName
-    metadata.fixture_date = metadata.fixture_date || fixture?.date || ''
+    if (adultQty > 0) { if (fx.adult_price_cents <= 0) return fail('Adult tickets are not on sale'); lineItems.push({ name: `Adult ticket — ${label}`, amountCents: fx.adult_price_cents, quantity: adultQty }) }
+    if (kidQty > 0) { if (fx.kid_price_cents <= 0) return fail('Child tickets are not on sale'); lineItems.push({ name: `Child ticket — ${label}`, amountCents: fx.kid_price_cents, quantity: kidQty }) }
+    metadata.fixture_id = fx.id
+    metadata.fixture_name = label
+    metadata.fixture_date = fx.starts_at
     metadata.adult_qty = String(adultQty)
     metadata.kid_qty = String(kidQty)
-    metadata.adult_price = String(pricing.adultPrice)
-    metadata.kid_price = String(pricing.kidPrice)
-
-    return { ok: true, checkout: { lineItems, totalCents, metadata } }
+    return { ok: true, checkout: { lineItems, totalCents: lineItems.reduce((s, i) => s + i.amountCents * i.quantity, 0), metadata } }
   }
 
   if (input.purchaseType === 'membership') {
-    const playerId = input.playerId || metadata.player_id
-    if (!playerId) return { ok: false, error: 'Missing player_id' }
-
-    const planType = metadata.plan_type
-    if (planType !== 'monthly' && planType !== 'oneTime') {
-      return { ok: false, error: 'Invalid membership plan' }
+    const { data: pkg } = await supabase.from('membership_packages').select('*').eq('id', input.referenceId).maybeSingle()
+    if (!pkg || !pkg.active) return fail('This membership package is not available')
+    if (pkg.price_cents <= 0) return fail('This package is free — contact the club')
+    const { data: profile } = await supabase.from('profiles').select('id').ilike('email', input.customerEmail).maybeSingle()
+    if (!profile) return fail('Member profile not found')
+    if (metadata.child_id) {
+      const { data: child } = await supabase.from('children').select('id, parent_id, full_name').eq('id', metadata.child_id).maybeSingle()
+      if (!child || child.parent_id !== profile.id) return fail('Child not found on your account')
+      metadata.child_name = child.full_name
+    } else if (pkg.audience === 'child') {
+      return fail('Choose which child this membership is for')
     }
-
-    const [players, teams, fees] = await Promise.all([
-      readState<Player[]>(supabase, 'dlbc_players', []),
-      readState<Team[]>(supabase, 'dlbc_teams', []),
-      readState<Record<string, AgeGroupFeeConfig>>(supabase, 'dlbc_membership_fees', DEFAULT_MEMBERSHIP_FEES),
-    ])
-
-    const amountCents = resolveMembershipFeeCents(playerId, planType, players, teams, fees)
-    if (!amountCents || amountCents <= 0) {
-      return { ok: false, error: 'Membership fee could not be determined' }
-    }
-
-    const label = metadata.plan_label || (planType === 'monthly' ? 'Monthly membership' : 'One-time registration')
-    const imageFromClient = input.clientLineItems?.[0]?.imageUrl
-
-    metadata.player_id = playerId
-    metadata.plan_type = planType
-    metadata.plan_label = label
-
-    return {
-      ok: true,
-      checkout: {
-        lineItems: [{ name: label, amountCents, quantity: 1, imageUrl: imageFromClient }],
-        totalCents: amountCents,
-        metadata,
-      },
-    }
+    metadata.package_id = pkg.id
+    metadata.package_name = pkg.name
+    metadata.duration_months = String(pkg.duration_months)
+    metadata.profile_id = profile.id
+    metadata.plan_label = pkg.name
+    return { ok: true, checkout: { lineItems: [{ name: `${pkg.name}${metadata.child_name ? ` — ${metadata.child_name}` : ''}`, amountCents: pkg.price_cents, quantity: 1 }], totalCents: pkg.price_cents, metadata } }
   }
 
-  return { ok: false, error: 'Unsupported purchase type' }
+  if (input.purchaseType === 'lotto') {
+    const { data: draw } = await supabase.from('lotto_draws').select('*').eq('id', input.referenceId).maybeSingle()
+    if (!draw || draw.status !== 'open' || new Date(draw.draw_at) <= new Date()) return fail('This draw is closed')
+    const ids = (metadata.ticket_ids ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+    if (ids.length === 0 || ids.length > 50) return fail('Select between 1 and 50 lines')
+    const { data: profile } = await supabase.from('profiles').select('id').ilike('email', input.customerEmail).maybeSingle()
+    if (!profile) return fail('Member profile not found')
+    const { data: tickets } = await supabase.from('lotto_tickets').select('id, numbers, status, profile_id').in('id', ids).eq('draw_id', draw.id)
+    if (!tickets || tickets.length !== ids.length) return fail('Some lines could not be found')
+    for (const t of tickets) {
+      if (t.profile_id !== profile.id || t.status !== 'pending') return fail('Invalid lotto line')
+      const nums = t.numbers as number[]
+      if (nums.length !== draw.numbers_count || new Set(nums).size !== nums.length || nums.some((n) => n < 1 || n > draw.max_number)) return fail('A line has invalid numbers')
+    }
+    metadata.ticket_ids = ids.join(',')
+    metadata.draw_title = draw.title
+    return { ok: true, checkout: { lineItems: [{ name: `${draw.title} — lotto line`, amountCents: draw.ticket_price_cents, quantity: ids.length }], totalCents: draw.ticket_price_cents * ids.length, metadata } }
+  }
+
+  if (input.purchaseType === 'booking') {
+    const { data: booking } = await supabase.from('facility_bookings').select('*, facilities(*)').eq('id', input.referenceId).maybeSingle()
+    if (!booking || booking.status !== 'pending') return fail('Booking is not payable')
+    const facility = booking.facilities as { name: string; price_cents: number; active: boolean }
+    if (!facility?.active || facility.price_cents <= 0) return fail('Facility is not bookable')
+    const when = new Date(booking.starts_at).toLocaleString('en-IE', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Dublin' })
+    metadata.booking_id = booking.id
+    return { ok: true, checkout: { lineItems: [{ name: `${facility.name} — ${when}`, amountCents: facility.price_cents, quantity: 1 }], totalCents: facility.price_cents, metadata } }
+  }
+
+  return fail('Unsupported purchase type')
 }

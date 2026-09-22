@@ -1,51 +1,131 @@
-import { Routes, Route } from 'react-router-dom'
-import Layout from './components/Layout'
+import { useEffect } from 'react'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Loader2 } from 'lucide-react'
 import ErrorBoundary from './components/ErrorBoundary'
-import ProtectedRoute from './components/ProtectedRoute'
-import Home from './pages/Home'
-import Teams from './pages/Teams'
-import Fixtures from './pages/Fixtures'
-import Contact from './pages/Contact'
-import ManagerLogin from './pages/ManagerLogin'
-import ManagerDashboard from './pages/ManagerDashboard'
-import PlayerLogin from './pages/PlayerLogin'
-import Store from './pages/Store'
-import PlayerDashboard from './pages/PlayerDashboard'
-import PaymentSuccess, { PaymentCancel } from './pages/PaymentSuccess'
-import ResetPassword from './pages/ResetPassword'
-import Privacy from './pages/Privacy'
+import AppShell from './components/AppShell'
+import AdminShell from './components/AdminShell'
+import { useAuth } from './lib/AuthContext'
+import { useClub } from './lib/ClubContext'
+import { LoginPage, RegisterPage, ForgotPage, ResetPasswordPage } from './pages/auth/AuthPages'
+import HomeFeed, { NewsDetail } from './pages/member/HomeFeed'
+import EventsPage, { EventDetail } from './pages/member/Events'
+import FixturesPage, { FixtureDetail } from './pages/member/Fixtures'
+import ShopPage, { CartPage } from './pages/member/Shop'
+import MorePage, { InboxPage } from './pages/member/More'
+import MembershipPage from './pages/member/Membership'
+import LottoPage from './pages/member/Lotto'
+import BookingsPage from './pages/member/Bookings'
+import MessagesPage, { ChatThread } from './pages/member/Messages'
+import OrdersPage from './pages/member/Orders'
+import ProfilePage from './pages/member/Profile'
+import PaymentSuccess, { PaymentCancel, PrivacyPage } from './pages/PaymentResult'
+import AdminDashboard from './pages/admin/Dashboard'
+import { AdminNews, AdminEvents, AdminFixtures } from './pages/admin/Content'
+import { AdminMembers, AdminTeams } from './pages/admin/People'
+import { AdminMemberships, AdminLotto, AdminFacilities, AdminProducts } from './pages/admin/Commerce'
+import { AdminOrders } from './pages/admin/Orders'
+import { AdminNotifications } from './pages/admin/Notifications'
+import { AdminSettings, AdminReports } from './pages/admin/Settings'
+
+function Loading() {
+  return <div className="flex min-h-[100dvh] items-center justify-center bg-[#070C16]"><Loader2 size={32} className="animate-spin text-lions-400" /></div>
+}
+
+function RequireAuth({ children, admin }: { children: React.ReactNode; admin?: boolean }) {
+  const { user, role, loading } = useAuth()
+  const loc = useLocation()
+  if (loading || (user && !role)) return <Loading />
+  if (!user) return <Navigate to="/login" replace state={{ from: loc.pathname }} />
+  if (admin && role !== 'manager') return <Navigate to="/app" replace />
+  return <>{children}</>
+}
+
+function hexToRgb(hex: string): [number, number, number] | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+  if (!m) return null
+  const n = parseInt(m[1], 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+function mix(c: [number, number, number], to: number, t: number) { return c.map((v) => Math.round(v + (to - v) * t)).join(' ') }
+
+function BrandTheme() {
+  const { settings } = useClub()
+  useEffect(() => {
+    const rgb = hexToRgb(settings?.primary_color ?? '')
+    if (!rgb) return
+    const s = document.documentElement.style
+    s.setProperty('--brand-500', rgb.join(' '))
+    s.setProperty('--brand-600', mix(rgb, 0, 0.15))
+    s.setProperty('--brand-400', mix(rgb, 255, 0.2))
+    s.setProperty('--brand-300', mix(rgb, 255, 0.4))
+    s.setProperty('--brand-200', mix(rgb, 255, 0.6))
+    s.setProperty('--brand-100', mix(rgb, 255, 0.8))
+  }, [settings?.primary_color])
+  return null
+}
+
+function ScrollTop() {
+  const { pathname } = useLocation()
+  useEffect(() => { window.scrollTo(0, 0) }, [pathname])
+  return null
+}
 
 export default function App() {
+  const { user, role, loading } = useAuth()
   return (
     <ErrorBoundary>
+      <BrandTheme />
+      <ScrollTop />
       <Routes>
-        <Route path="/" element={<Layout><Home /></Layout>} />
-        <Route path="/teams" element={<Teams />} />
-        <Route path="/fixtures" element={<Fixtures />} />
-        <Route path="/contact" element={<Contact />} />
-        <Route path="/privacy" element={<Privacy />} />
-        <Route path="/store" element={<Layout><Store /></Layout>} />
-        <Route path="/payment/success" element={<Layout><PaymentSuccess /></Layout>} />
-        <Route path="/payment/cancel" element={<Layout><PaymentCancel /></Layout>} />
-        <Route path="/manager/login" element={<ManagerLogin />} />
-        <Route
-          path="/manager/dashboard"
-          element={
-            <ProtectedRoute role="manager">
-              <ManagerDashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="/player/login" element={<PlayerLogin />} />
-        <Route path="/reset-password" element={<ResetPassword />} />
-        <Route
-          path="/player/dashboard"
-          element={
-            <ProtectedRoute>
-              <PlayerDashboard />
-            </ProtectedRoute>
-          }
-        />
+        <Route path="/" element={loading || (user && !role) ? <Loading /> : <Navigate to={user ? (role === 'manager' ? '/admin' : '/app') : '/login'} replace />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/forgot" element={<ForgotPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/payment/success" element={<PaymentSuccess />} />
+        <Route path="/payment/cancel" element={<PaymentCancel />} />
+
+        <Route path="/app" element={<RequireAuth><AppShell /></RequireAuth>}>
+          <Route index element={<HomeFeed />} />
+          <Route path="news/:id" element={<NewsDetail />} />
+          <Route path="events" element={<EventsPage />} />
+          <Route path="events/:id" element={<EventDetail />} />
+          <Route path="fixtures" element={<FixturesPage />} />
+          <Route path="fixtures/:id" element={<FixtureDetail />} />
+          <Route path="shop" element={<ShopPage />} />
+          <Route path="shop/cart" element={<CartPage />} />
+          <Route path="more" element={<MorePage />} />
+          <Route path="membership" element={<MembershipPage />} />
+          <Route path="lotto" element={<LottoPage />} />
+          <Route path="bookings" element={<BookingsPage />} />
+          <Route path="messages" element={<MessagesPage />} />
+          <Route path="messages/:teamId" element={<ChatThread />} />
+          <Route path="orders" element={<OrdersPage />} />
+          <Route path="inbox" element={<InboxPage />} />
+          <Route path="profile" element={<ProfilePage />} />
+        </Route>
+
+        <Route path="/admin" element={<RequireAuth admin><AdminShell /></RequireAuth>}>
+          <Route index element={<AdminDashboard />} />
+          <Route path="news" element={<AdminNews />} />
+          <Route path="events" element={<AdminEvents />} />
+          <Route path="fixtures" element={<AdminFixtures />} />
+          <Route path="members" element={<AdminMembers />} />
+          <Route path="teams" element={<AdminTeams />} />
+          <Route path="memberships" element={<AdminMemberships />} />
+          <Route path="lotto" element={<AdminLotto />} />
+          <Route path="facilities" element={<AdminFacilities />} />
+          <Route path="products" element={<AdminProducts />} />
+          <Route path="orders" element={<AdminOrders />} />
+          <Route path="messages" element={<MessagesPage base="/admin/messages" />} />
+          <Route path="messages/:teamId" element={<ChatThread base="/admin/messages" />} />
+          <Route path="notifications" element={<AdminNotifications />} />
+          <Route path="reports" element={<AdminReports />} />
+          <Route path="settings" element={<AdminSettings />} />
+        </Route>
+
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </ErrorBoundary>
   )

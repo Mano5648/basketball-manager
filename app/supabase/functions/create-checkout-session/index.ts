@@ -9,8 +9,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-type LineItem = { name: string; amountCents: number; quantity: number; imageUrl?: string }
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -30,21 +28,15 @@ Deno.serve(async (req) => {
       purchaseType,
       referenceId,
       customerName,
-      customerEmail,
-      playerId,
-      lineItems,
       metadata = {},
       successPath = '/#/payment/success',
       cancelPath = '/#/payment/cancel',
       origin,
       turnstileToken,
     } = body as {
-      purchaseType: 'store' | 'ticket' | 'membership'
+      purchaseType: 'store' | 'ticket' | 'membership' | 'lotto' | 'booking'
       referenceId: string
       customerName: string
-      customerEmail: string
-      playerId?: string
-      lineItems: LineItem[]
       metadata?: Record<string, string>
       successPath?: string
       cancelPath?: string
@@ -52,7 +44,22 @@ Deno.serve(async (req) => {
       turnstileToken?: string
     }
 
-    if (!purchaseType || !referenceId || !customerEmail || !origin) {
+    // Caller must be a signed-in member — the email is taken from the verified JWT, never the body.
+    const authHeader = req.headers.get('Authorization') ?? ''
+    const userClient = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
+      global: { headers: { Authorization: authHeader } },
+    })
+    const { data: userData } = await userClient.auth.getUser()
+    const customerEmail = userData.user?.email?.toLowerCase()
+    if (!customerEmail) {
+      return new Response(JSON.stringify({ error: 'Please sign in to pay' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+    const playerId: string | undefined = userData.user?.id
+
+    if (!purchaseType || !referenceId || !origin) {
       return new Response(JSON.stringify({ error: 'Missing required checkout fields' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -90,9 +97,8 @@ Deno.serve(async (req) => {
     const validated = await validateCheckoutPricing(supabase, {
       purchaseType,
       referenceId,
-      playerId,
+      customerEmail,
       metadata,
-      clientLineItems: lineItems,
     })
     if (!validated.ok) {
       return new Response(JSON.stringify({ error: validated.error }), {
@@ -134,8 +140,8 @@ Deno.serve(async (req) => {
       metadata: {
         reference_id: referenceId,
         purchase_type: purchaseType,
-        customer_name: customerName,
-        player_id: purchaseMetadata.player_id ?? playerId ?? '',
+        customer_name: customerName || customerEmail,
+        player_id: playerId ?? '',
         verification_token: verificationToken,
       },
     })
@@ -143,9 +149,9 @@ Deno.serve(async (req) => {
     const { error: insertError } = await supabase.from('purchases').insert({
       reference_id: referenceId,
       purchase_type: purchaseType,
-      customer_name: customerName,
+      customer_name: customerName || customerEmail,
       customer_email: customerEmail,
-      player_id: purchaseMetadata.player_id ?? playerId ?? null,
+      player_id: playerId ?? null,
       amount_cents: totalCents,
       items: pricedItems,
       status: 'pending',

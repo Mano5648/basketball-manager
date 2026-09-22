@@ -1,13 +1,16 @@
 import path from "path"
+import { readFileSync } from "fs"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 
+const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf8')) as { version: string }
+
 export default defineConfig({
-  // Relative base so the built site works no matter what path GitHub Pages serves
-  // it from (e.g. username.github.io/<repo>/ OR a custom domain at root) without
-  // hardcoding the repo name. Safe because the app uses HashRouter (no server-side
-  // routing). The dev server overrides this with `--base /` (see supervisor).
+  // Relative base: works on GitHub Pages sub-paths AND inside the Capacitor
+  // native shell (file/asset served from app bundle). HashRouter means no
+  // server-side routing is required.
   base: './',
+  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   plugins: [react()],
   server: {
     host: '0.0.0.0',

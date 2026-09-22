@@ -1,98 +1,56 @@
 import { supabase, isSupabaseConfigured } from './supabase'
 import { hashReturnPath } from './routing'
+import { openExternal, publicSiteOrigin } from './native'
 
-export type StripeLineItem = { name: string; amountCents: number; quantity: number; imageUrl?: string }
+export type PurchaseType = 'store' | 'ticket' | 'membership' | 'lotto' | 'booking'
 
 export interface StartCheckoutInput {
-  purchaseType: 'store' | 'ticket' | 'membership'
+  purchaseType: PurchaseType
   referenceId: string
   customerName: string
   customerEmail: string
-  playerId?: string
-  lineItems: StripeLineItem[]
   metadata?: Record<string, string>
-  successPath?: string
-  cancelPath?: string
-  turnstileToken?: string
 }
 
 export function isStripeCheckoutConfigured(): boolean {
   return isSupabaseConfigured && Boolean(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY)
 }
 
-export async function startStripeCheckout(input: StartCheckoutInput): Promise<{ url: string; sessionId: string }> {
-  if (!supabase) {
-    throw new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env.local')
-  }
-
-  const origin = window.location.origin + (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
-
+/** Creates a Stripe Checkout session (server-priced) and opens it. */
+export async function startCheckout(input: StartCheckoutInput): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured')
   const { data, error } = await supabase.functions.invoke('create-checkout-session', {
     body: {
       ...input,
-      origin,
-      successPath: input.successPath ?? hashReturnPath('/payment/success'),
-      cancelPath: input.cancelPath ?? hashReturnPath('/payment/cancel'),
+      origin: publicSiteOrigin(),
+      successPath: hashReturnPath('/payment/success'),
+      cancelPath: hashReturnPath('/payment/cancel'),
     },
   })
-
-  if (error) throw new Error(error.message || 'Could not start Stripe checkout')
-  if (!data?.url) throw new Error(data?.error || 'Stripe checkout URL was not returned')
-
-  return { url: data.url as string, sessionId: data.sessionId as string }
+  if (error) throw new Error(error.message || 'Could not start checkout')
+  if (!data?.url) throw new Error(data?.error || 'Checkout URL was not returned')
+  await openExternal(data.url as string)
 }
 
 export interface VerifiedCheckout {
   status: string
   confirmed?: boolean
-  emailSent?: boolean
   reason?: string
-  purchase: {
-    reference_id: string
-    purchase_type: string
-    customer_name: string
-    customer_email: string
-    amount_cents: number
-    items: StripeLineItem[]
-    metadata?: Record<string, string>
-  } | null
-  metadata?: Record<string, string>
+  purchase: { reference_id: string; purchase_type: string; amount_cents: number; items: { name: string; quantity: number; amountCents: number }[] } | null
 }
 
-export async function redirectToStripeCheckout(input: StartCheckoutInput): Promise<boolean> {
-  if (!isStripeCheckoutConfigured()) return false
-  const { url } = await startStripeCheckout(input)
-  window.location.href = url
-  return true
-}
-
-export async function verifyStripeCheckout(sessionId: string, verificationToken: string): Promise<VerifiedCheckout> {
+export async function verifyCheckout(sessionId: string, verificationToken: string): Promise<VerifiedCheckout> {
   if (!supabase) throw new Error('Supabase is not configured')
-  if (!verificationToken) throw new Error('Missing payment verification token')
-
-  const { data, error } = await supabase.functions.invoke('get-checkout-session', {
-    body: { sessionId, verificationToken },
-  })
-
+  const { data, error } = await supabase.functions.invoke('get-checkout-session', { body: { sessionId, verificationToken } })
   if (error) throw new Error(error.message || 'Could not verify payment')
   const verified = data as VerifiedCheckout
-  if (!verified.confirmed || verified.status !== 'paid') {
-    throw new Error(verified.reason || 'Payment has not been received from Stripe yet.')
-  }
+  if (!verified.confirmed || verified.status !== 'paid') throw new Error(verified.reason || 'Payment has not been received yet.')
   return verified
 }
 
-/** Manager action — trigger a Stripe refund for a paid purchase.
- *  The edge function verifies is_manager() from the caller's JWT and returns
- *  403 otherwise. On success the `purchases` row flips to status='refunded'
- *  and every open client sees it via realtime. */
-export async function refundStripeCheckout(purchaseId: string, reason?: string): Promise<void> {
+export async function refundPurchase(purchaseId: string, reason?: string): Promise<void> {
   if (!supabase) throw new Error('Supabase is not configured')
-  const { data, error } = await supabase.functions.invoke('refund-checkout-session', {
-    body: { purchaseId, reason },
-  })
+  const { data, error } = await supabase.functions.invoke('refund-checkout-session', { body: { purchaseId, reason } })
   if (error) throw new Error(error.message || 'Could not issue refund')
-  if (data && (data as { error?: string }).error) {
-    throw new Error((data as { error: string }).error)
-  }
+  if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)
 }

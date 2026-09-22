@@ -1,122 +1,66 @@
 import { createContext, useContext, useEffect, useMemo, useCallback, useState, type ReactNode } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase, isSupabaseConfigured, isManagerEmail } from './supabase'
-import { upsertPlayerFromAuth, getRosterDisplayForEmail, isMembershipPaidForCurrentMonth, isMemberAccessRevoked, isPlayerAccountActive } from './clubData'
-import { getPasswordResetRedirectUrl } from './imageUrl'
+import type { MemberType, Profile } from './db'
+import { registerPushForUser } from './native'
+import { externalAppUrl } from './routing'
 
-export type Role = 'manager' | 'player'
+export type Role = 'manager' | 'member'
 
-export interface PlayerProfile {
-  name: string
-}
-
-// Compact shape mirrored into localStorage['dlbc_user'] so the rest of the app
-// (Navbar, dashboards) keeps reading auth state exactly as before.
-interface MirroredUser {
-  role: Role
+export interface SignUpInput {
   email: string
-  name: string
-  id?: number
-  team?: string
-  position?: string
-  jersey?: number
-  membershipStatus?: 'paid' | 'pending' | 'overdue'
-  paymentPlan?: 'monthly' | 'full' | 'per-session' | null
+  password: string
+  fullName: string
   phone?: string
-  emergencyContact?: string
-  jerseySize?: string
+  memberType: MemberType
 }
 
 interface AuthContextValue {
   user: User | null
   session: Session | null
+  profile: Profile | null
   role: Role | null
   loading: boolean
   configured: boolean
-  signIn: (email: string, password: string) => Promise<{ error: string | null; role: Role | null }>
-  signUp: (
-    email: string,
-    password: string,
-    profile: PlayerProfile,
-  ) => Promise<{ error: string | null; needsConfirmation: boolean }>
+  signIn: (email: string, password: string) => Promise<{ error: string | null }>
+  signUp: (input: SignUpInput) => Promise<{ error: string | null; needsConfirmation: boolean }>
   signOut: () => Promise<void>
   resetPassword: (email: string) => Promise<{ error: string | null }>
+  refreshProfile: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
-function roleForUser(user: User | null): Role | null {
-  if (!user) return null
-  if (isManagerEmail(user.email)) return 'manager'
-  return 'player'
-}
-
-// Derive a stable numeric id from the Supabase user id so the player dashboard
-// (which keys records by a numeric id) has something consistent to match on.
-function stableNumericId(uuid: string): number {
-  let hash = 0
-  for (let i = 0; i < uuid.length; i++) {
-    hash = (hash * 31 + uuid.charCodeAt(i)) | 0
-  }
-  return Math.abs(hash)
-}
-
-function clearLocalAuth() {
-  localStorage.removeItem('dlbc_user')
-  window.dispatchEvent(new Event('dlbc-auth-change'))
-  window.dispatchEvent(new Event('dlbc-cart-change'))
-}
-
-function mirrorUser(user: User | null, role: Role | null) {
-  if (!user || !role) {
-    localStorage.removeItem('dlbc_user')
-    window.dispatchEvent(new Event('dlbc-auth-change'))
-    return
-  }
-  const meta = user.user_metadata ?? {}
-  let mirrored: MirroredUser
-  if (role === 'manager') {
-    mirrored = { role: 'manager', email: user.email ?? '', name: (meta.name as string) || 'Club Manager' }
-  } else {
-    const id = typeof meta.playerId === 'number' ? meta.playerId : stableNumericId(user.id)
-    const email = user.email ?? ''
-    const roster = getRosterDisplayForEmail(email)
-    const monthlyPaid = isMembershipPaidForCurrentMonth(email)
-    mirrored = {
-      role: 'player',
-      id,
-      email,
-      name: (meta.name as string) || email || 'Player',
-      team: roster.teamName,
-      position: roster.position,
-      jersey: roster.jersey,
-      membershipStatus: monthlyPaid ? 'paid' : 'pending',
-      paymentPlan: (meta.paymentPlan as MirroredUser['paymentPlan']) ?? null,
-      phone: meta.phone as string | undefined,
-      emergencyContact: meta.emergencyContact as string | undefined,
-      jerseySize: meta.jerseySize as string | undefined,
-    }
-  }
-  localStorage.setItem('dlbc_user', JSON.stringify(mirrored))
-  window.dispatchEvent(new Event('dlbc-auth-change'))
+async function loadProfileAndRole(user: User): Promise<{ profile: Profile | null; role: Role }> {
+  const [{ data: profile }, { data: mgr }] = await Promise.all([
+    supabase!.from('profiles').select('*').eq('id', user.id).maybeSingle(),
+    supabase!.from('managers').select('email').eq('email', (user.email ?? '').toLowerCase()).maybeSingle(),
+  ])
+  const role: Role = mgr || isManagerEmail(user.email) ? 'manager' : 'member'
+  return { profile: (profile as Profile | null) ?? null, role }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [user, setUser] = useState<User | null>(null)
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [role, setRole] = useState<Role | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const forceSignOut = useCallback(async () => {
-    if (supabase) await supabase.auth.signOut()
-    setSession(null)
-    setUser(null)
-    clearLocalAuth()
-    // Clear dashboard-tab persistence so the next signed-in user starts on
-    // their Overview / Dashboard, not the previous user's last tab.
+  const hydrate = useCallback(async (u: User | null) => {
+    if (!u) {
+      setProfile(null)
+      setRole(null)
+      return
+    }
     try {
-      sessionStorage.removeItem('dlbc_player_tab')
-      sessionStorage.removeItem('dlbc_manager_view')
-    } catch { /* ignore */ }
+      const { profile: p, role: r } = await loadProfileAndRole(u)
+      setProfile(p)
+      setRole(r)
+      void registerPushForUser(u.id)
+    } catch {
+      setRole(isManagerEmail(u.email) ? 'manager' : 'member')
+    }
   }, [])
 
   useEffect(() => {
@@ -124,196 +68,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false)
       return
     }
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(async ({ data }) => {
       setSession(data.session)
       setUser(data.session?.user ?? null)
-      mirrorUser(data.session?.user ?? null, roleForUser(data.session?.user ?? null))
-      window.dispatchEvent(new Event('dlbc-cart-change'))
+      await hydrate(data.session?.user ?? null)
       setLoading(false)
     })
     const { data: sub } = supabase.auth.onAuthStateChange((event, newSession) => {
-      // Supabase fires this callback for many events — INITIAL_SESSION,
-      // SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED, USER_UPDATED, PASSWORD_RECOVERY.
-      // On TOKEN_REFRESHED (~every ~55 min) it hands us a NEW User object with
-      // the SAME identity — if we blindly setUser(newUser) every time, downstream
-      // memos that depend on user.user_metadata get a new reference, effects
-      // re-run, and in the worst case ProtectedRoute briefly renders <Navigate>
-      // → the whole dashboard remounts → activeTab resets to Overview → the user
-      // "gets bounced back to Dashboard while working on Schedule".
-      //
-      // Defense: only propagate a user change when the identity actually changed
-      // (SIGNED_IN, SIGNED_OUT, PASSWORD_RECOVERY, or a different user.id). For
-      // TOKEN_REFRESHED / USER_UPDATED with the same user, only update the
-      // session (needed for API calls) and refresh the local mirror — but do NOT
-      // replace the user reference or emit dlbc-auth-change.
       setSession(newSession)
       const nextUser = newSession?.user ?? null
-      setUser((prev) => {
-        if (prev?.id === nextUser?.id && prev?.email === nextUser?.email) {
-          return prev
-        }
-        return nextUser
-      })
-      const identityChanged =
-        event === 'SIGNED_IN' ||
-        event === 'SIGNED_OUT' ||
-        event === 'PASSWORD_RECOVERY' ||
-        event === 'INITIAL_SESSION'
-      if (identityChanged) {
-        mirrorUser(nextUser, roleForUser(nextUser))
-        window.dispatchEvent(new Event('dlbc-cart-change'))
+      setUser((prev) => (prev?.id === nextUser?.id ? prev : nextUser))
+      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'USER_UPDATED') {
+        void hydrate(nextUser)
       }
     })
     return () => sub.subscription.unsubscribe()
-  }, [])
+  }, [hydrate])
 
-  // Log out players removed from the roster (or deleted from Supabase Auth).
-  useEffect(() => {
-    if (!supabase || !user) return
-    const role = roleForUser(user)
-
-    // Only sign out on definitive auth failures. Transient network errors
-    // (offline, DNS blip, CORS preflight failure, 5xx) previously caused
-    // random logouts while the user was executing a task.
-    const isDefinitiveAuthError = (err: unknown): boolean => {
-      if (!err || typeof err !== 'object') return false
-      const anyErr = err as { name?: string; status?: number; message?: string }
-      if (anyErr.name === 'AuthSessionMissingError') return true
-      if (anyErr.status === 401 || anyErr.status === 403) return true
-      const msg = (anyErr.message ?? '').toLowerCase()
-      if (msg.includes('session') && msg.includes('missing')) return true
-      if (msg.includes('invalid') && (msg.includes('jwt') || msg.includes('token'))) return true
-      if (msg.includes('user not found')) return true
-      return false
-    }
-
-    const validate = async () => {
-      try {
-        const { error } = await supabase!.auth.getUser()
-        if (error && isDefinitiveAuthError(error)) {
-          await forceSignOut()
-          return
-        }
-        // Network/transient error: keep the session, try again later.
-        if (error) return
-      } catch {
-        // Fetch threw (offline etc.) — do NOT log the user out.
-        return
-      }
-      if (role === 'player' && !isPlayerAccountActive(user.email)) {
-        await forceSignOut()
-      }
-    }
-
-    void validate()
-    // Debounce so a burst of storage events from a single task doesn't
-    // fire multiple network validations (which also caused stutter).
-    let debounceTimer: number | null = null
-    const scheduleValidate = () => {
-      if (debounceTimer !== null) window.clearTimeout(debounceTimer)
-      debounceTimer = window.setTimeout(() => {
-        debounceTimer = null
-        void validate()
-      }, 1500)
-    }
-    const onDataChange = (e: StorageEvent) => {
-      // Only react to the roster/revocation lists — other dlbc_* writes
-      // (players' UI state, chat, images…) must not trigger auth checks.
-      if (e.key === 'dlbc_players' || e.key === 'dlbc_revoked_member_emails') {
-        scheduleValidate()
-      }
-    }
-    window.addEventListener('storage', onDataChange)
-    // Periodic revalidation kept, but at a calmer cadence.
-    const interval = window.setInterval(() => void validate(), 60_000)
-    return () => {
-      window.removeEventListener('storage', onDataChange)
-      window.clearInterval(interval)
-      if (debounceTimer !== null) window.clearTimeout(debounceTimer)
-    }
-  }, [user?.id, user?.email, forceSignOut])
-
-  const value = useMemo<AuthContextValue>(() => {
-    const role = roleForUser(user)
-    return {
-      user,
-      session,
-      role,
-      loading,
-      configured: isSupabaseConfigured,
-      async signIn(email, password) {
-        if (!supabase) return { error: 'Authentication is not configured.', role: null }
-        if (isMemberAccessRevoked(email)) {
-          return { error: 'Your account was removed from the club. Please contact your manager.', role: null }
-        }
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-        if (error) return { error: error.message, role: null }
-        const signedInUser = data.user
-        if (signedInUser?.email) {
-          const signedInRole = roleForUser(signedInUser)
-          if (signedInRole !== 'manager') {
-            const meta = signedInUser.user_metadata ?? {}
-            const linked = upsertPlayerFromAuth({
-              email: signedInUser.email,
-              name: (meta.name as string) || signedInUser.email,
-            })
-            if (!linked) {
-              await forceSignOut()
-              return { error: 'Your account was removed from the club. Please contact your manager.', role: null }
-            }
-          }
-        }
-        return { error: null, role: roleForUser(signedInUser) }
-      },
-      async signUp(email, password, profile) {
-        if (!supabase) return { error: 'Authentication is not configured.', needsConfirmation: false }
-        if (isMemberAccessRevoked(email)) {
-          return { error: 'This email was removed from the club. Please contact your manager to re-register.', needsConfirmation: false }
-        }
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            data: {
-              role: 'player',
-              name: profile.name,
-              playerId: Date.now(),
-              paymentPlan: null,
-            },
-          },
-        })
-        if (error) return { error: error.message, needsConfirmation: false }
-        if (isManagerEmail(email)) {
-          return {
-            error: 'Manager accounts are created by the club. Use the manager sign-in page instead.',
-            needsConfirmation: false,
-          }
-        }
-        const linked = upsertPlayerFromAuth({
-          email,
-          name: profile.name,
-        })
-        if (!linked) {
-          await forceSignOut()
-          return { error: 'This email was removed from the club. Please contact your manager to re-register.', needsConfirmation: false }
-        }
-        // When email confirmation is enabled, Supabase returns a user with no session.
-        const needsConfirmation = !data.session
-        return { error: null, needsConfirmation }
-      },
-      async signOut() {
-        await forceSignOut()
-        localStorage.removeItem('dlbc_remember_email')
-      },
-      async resetPassword(email) {
-        if (!supabase) return { error: 'Authentication is not configured.' }
-        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-          redirectTo: getPasswordResetRedirectUrl(),
-        })
-        return { error: error?.message ?? null }
-      },
-    }
-  }, [user, session, loading, forceSignOut])
+  const value = useMemo<AuthContextValue>(() => ({
+    user,
+    session,
+    profile,
+    role,
+    loading,
+    configured: isSupabaseConfigured,
+    async signIn(email, password) {
+      if (!supabase) return { error: 'Authentication is not configured.' }
+      const { error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password })
+      return { error: error?.message ?? null }
+    },
+    async signUp(input) {
+      if (!supabase) return { error: 'Authentication is not configured.', needsConfirmation: false }
+      const { data, error } = await supabase.auth.signUp({
+        email: input.email.trim().toLowerCase(),
+        password: input.password,
+        options: {
+          emailRedirectTo: externalAppUrl('/login'),
+          data: { full_name: input.fullName.trim(), phone: input.phone?.trim() || null, member_type: input.memberType },
+        },
+      })
+      if (error) return { error: error.message, needsConfirmation: false }
+      return { error: null, needsConfirmation: !data.session }
+    },
+    async signOut() {
+      if (supabase) await supabase.auth.signOut()
+      setSession(null)
+      setUser(null)
+      setProfile(null)
+      setRole(null)
+    },
+    async resetPassword(email) {
+      if (!supabase) return { error: 'Authentication is not configured.' }
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: externalAppUrl('/reset-password') })
+      return { error: error?.message ?? null }
+    },
+    async refreshProfile() {
+      if (user) await hydrate(user)
+    },
+  }), [user, session, profile, role, loading, hydrate])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
