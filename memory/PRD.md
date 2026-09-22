@@ -1,237 +1,74 @@
-# Dublin Lions Basketball Club — Manager/Member Portal
+# Dublin Lions BC — Club App (ClubSpot-style, Android + iOS + Web)
 
-Vite + React + TS SPA in `/app/app`. Supabase for auth + shared state; localStorage is the
-synchronous source of truth, mirrored to a Supabase `app_state` key/value table. Deployed to
-GitHub Pages from `/app/docs`. Runs in preview via supervisor program `app_vite` (port 3000);
-env in `/app/app/.env.local`.
+## Original problem statement (Jun 2026 rebuild)
+User: "convert this into an app for android and apple similar to the Neptune BC ClubSpot app, add all
+the features on that app and delete the ones we currently have, make sure everything works for a real
+audience and is secure, keep the shopping feature, make sure the admin can configure everything."
+Choices: all ClubSpot features (news, events, fixtures & results, memberships, lotto, push, facility
+booking, messaging); Capacitor native shell; open membership (adult / parent+children / supporter).
 
-## Bugs fixed (Jun 2026)
+## Architecture
+- `/app/app` — Vite + React 19 + TS + Tailwind, HashRouter. Supervisor program `app_vite` (port 3000).
+- Backend = Supabase project `neulcrpkroiyglgiywcp` (Postgres + RLS, Auth, Realtime, Storage bucket
+  `club-media`, Deno edge functions). No Python backend.
+- Payments = Stripe Checkout (claimable sandbox acct_1TwRcDD9voY0qukz, IE/EUR). Keys live only in
+  Supabase secrets + `.env.local`; agent copies in `/root/.secrets/`.
+- Native = Capacitor 8 (`android/`, `ios/`, `capacitor.config.ts`, appId `ie.dublinlions.app`).
+  Requires Node ≥22 for the Capacitor CLI (`/opt/node22/bin` in this pod).
+- Docs: `app/README.md` (Supabase/Stripe/Firebase setup), `app/MOBILE_APP_SETUP.md` (store publishing).
 
-### 1. Parent-registered children not visible to manager (+ delete not working)
-- RLS on `app_state` allowed only managers to write → parent child registrations were silently
-  rejected (RLS 403). Fixed in `supabase/app-data-setup.sql`: authenticated members can
-  INSERT/UPDATE (DELETE stays manager-only). USER RAN THIS SQL on the live project.
-- P2 hardening: members publish only their own rows to a private `dlbc_roster_contrib:<uid>`
-  row; managers aggregate. No cross-member clobbering.
-- ChildDobPicker bug (`BirthDateFields.tsx`): `onChange` was called inside the `setState`
-  updater, dropping the DOB → new child silently discarded. Fixed.
-- Delete durability (multiple root causes, all fixed in `clubData.ts`):
-  - `childrenUpdatedAt` timestamp on the parent row; LAST-WRITE-WINS everywhere
-    (`mergePlayersForSync`, `syncRegisteredChildrenFromAuthMetadata`, `mergeContributionIntoPlayers`)
-    instead of the old "largest children set wins" (which resurrected deleted kids on reload —
-    note the parent CAN read `dlbc_players` in this DB, so it pulls+merges on reload).
-  - `stripOrphanChildRosterRows()` applied after every merge → removes `child-*` roster rows
-    whose parent no longer lists them (fixes orphan child lingering on the manager).
-  - Debounced member contribution push + 4x retry on transient "Failed to fetch"; retrying
-    `updateAuthUserData()` for auth metadata.
-- VERIFIED end-to-end (iteration_7, 100%): add / delete-just-added / delete-pre-existing /
-  re-add all persist on the parent AND propagate to the manager Members list.
+## Data model (supabase/00-full-setup.sql — one paste, idempotent; APPLIED to prod 2026-06)
+managers (admin emails; `is_manager()` reads it) · profiles (auto-created by trigger; member_type) ·
+teams · children · team_members · `my_team_ids()` · club_settings (singleton: branding, features json,
+contact, lotto rules) · news_posts · events + event_rsvps · fixtures (scores, ticket prices) ·
+membership_packages + memberships · lotto_draws + lotto_tickets + `run_lotto_draw()` · facilities +
+facility_bookings (GiST no-overlap) · products · orders · notifications + notification_reads ·
+push_tokens · purchases (Stripe ledger; types store/ticket/membership/lotto/booking) · chat_messages
+(team_id = team uuid or 'club'; SELECT scoped to own teams). Realtime on all app tables.
+`admin_stats()` for the dashboard. Storage policies: admins write, members write `avatars/`.
 
-### 2. Static notifications → real data (`PlayerDashboard.tsx`)
-- Removed hardcoded `getMockNotifications` + hardcoded OverviewTab "Club news".
-- `buildPlayerNotifications(clubPlayer)` derives from: outstanding fee, next upcoming session,
-  and manager announcements (`getAnnouncements` status 'Sent'). Read/delete state persisted in
-  `dlbc_player_notif_read` / `dlbc_player_notif_deleted`. Empty state added. VERIFIED.
+## Edge functions (all DEPLOYED)
+create-checkout-session (JWT-required; server-side pricing in `_shared/catalog.ts`) ·
+get-checkout-session (verify + fulfil) · stripe-webhook (completed / expired / charge.refunded) ·
+refund-checkout-session (admin; reverses domain rows) · send-push (admin; inbox row + FCM v1 via
+`FIREBASE_SERVICE_ACCOUNT`) · delete-account (self or admin; GDPR). `_shared/fulfil.ts` applies /
+reverses / abandons purchases (order paid + stock decrement, membership row, lotto lines paid,
+booking confirmed).
+Secrets set: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, ALLOWED_CHECKOUT_ORIGINS (preview + localhost).
+Stripe webhook endpoint we_1UITIND9voY0qukzJEdnFCgW → supabase stripe-webhook.
 
-### 3. Manager Members page went blank/white
-- Cause: a malformed leftover 'probe' roster row (email=null, no teamIds) crashed
-  `MembersView`'s search filter (`p.email.toLowerCase()`); no error boundary → whole app white.
-- Fixes: cleaned bad data; null-safe MembersView filter+render; `stripOrphanChildRosterRows`
-  drops child rows whose parent is absent (both merge paths); NEW `ErrorBoundary`
-  (`src/components/ErrorBoundary.tsx`) wraps routes in `App.tsx`.
-- VERIFIED (iteration_8, 100%): Members renders (amu, john), survives search/filters/navigation;
-  error boundary never triggered.
+## Frontend map
+- `src/lib`: supabase.ts, db.ts (types + helpers), useLiveQuery.ts (fetch + realtime refresh),
+  AuthContext.tsx (role from `managers`), ClubContext.tsx (settings/teams/children/myTeamIds),
+  chat.ts, stripeCheckout.ts, native.ts (Capacitor: push, in-app browser, deep links), format.ts.
+- `src/components`: ui.tsx primitives, AdminCrud.tsx (schema-driven CRUD), AppShell (bottom tabs),
+  AdminShell (sidebar/drawer), ErrorBoundary.
+- Member `/#/app/*`: HomeFeed, NewsDetail, Events(+RSVP), Fixtures(+tickets), Shop(+Cart),
+  Membership, Lotto, Bookings, Messages/ChatThread, Orders, Inbox, Profile(+children, delete acct), More.
+- Admin `/#/admin/*`: Dashboard, News, Events, Fixtures, Members (team assignment, make admin,
+  remove), Teams, Memberships, Lotto (run draw), Facilities(+bookings), Products, Orders & payments
+  (fulfil, refund), Messages, Notifications, Reports, Settings (branding colour → CSS vars, features
+  on/off, contact, admins).
 
+## Verified (iteration_19 + self-test 2026-06)
+Testing agent ~95% pass across all member + admin flows. Self-tested full Stripe payment with test
+card → payment/success → order PAID, stock 100→99 → admin refund → order refunded. Membership checkout
+session creation OK. Fixed after test: notification_reads added to realtime (badge decrement),
+supporter packages visible to all, pending orders hidden from member purchases, GH-Pages sub-path
+origin bug in checkout/redirect URLs, login redirect waited for role.
 
-### 4. Random logouts + screen stutter while executing tasks (Jan 2026)
-- **Logout root cause** (`AuthContext.tsx`): `validate()` ran every 20s AND on every
-  same-window storage event (including `e.key === null`, and `dlbc_players` /
-  `dlbc_revoked_member_emails` writes fired synthetically by `setStore`). It called
-  `supabase.auth.getUser()` (a network call) and — critically — signed the user out
-  on ANY error, including transient network hiccups / 5xx / offline blips. Every
-  task the user executed touched localStorage via `setStore`, which dispatched a
-  storage event, which triggered a network validate, which occasionally errored →
-  instant, seemingly random logout.
-- **Fix**: `validate()` now only force-signs-out on definitive auth errors
-  (`AuthSessionMissingError`, 401/403, invalid JWT/token, "user not found"). All
-  other errors (network, 5xx, thrown fetch) leave the session intact. The storage
-  handler is debounced (1.5s) and no longer reacts to `e.key === null`. Periodic
-  revalidation moved 20s → 60s to reduce network chatter.
-- **Stutter root cause** (`ManagerDashboard.tsx` `useLiveData.refresh`): fired every
-  3s + every storage event, and unconditionally replaced 11 state slices with brand-new
-  array/object references from `JSON.parse` (via `getStore`). Every task cascaded a full
-  re-render through a 4,788-line component tree.
-- **Fix**: `refresh()` now `JSON.stringify`-compares each slice against previous
-  state and skips the setState if unchanged, so unchanged intervals no longer
-  bust downstream memos.
-- Verified with `tsc -b` (clean build); behavioural verification pending user test.
+## Known / user actions
+- Register: Supabase rejects obviously fake domains (example.com) — real emails work. Email
+  confirmation depends on Supabase Auth settings.
+- Push: needs Firebase project + `FIREBASE_SERVICE_ACCOUNT` secret (README §4). Inbox works regardless.
+- Stripe sandbox is unclaimed (no real money) — user must claim via Emergent Payments tab / onboarding link.
+- Web deploy: `/app/docs` rebuilt with new app (base './'). Set `VITE_PUBLIC_SITE_URL` + add the pages
+  URL (origin + sub-path) to `ALLOWED_CHECKOUT_ORIGINS`, then rebuild.
+- Native builds require Android Studio / Xcode on the user's machine (MOBILE_APP_SETUP.md).
 
-### 5. Image flash on Sign In / Register / Manager Login refresh (Jan 2026)
-- **Cause**: `ClubVideoBackground` rendered an `<img>` fallback (poster
-  `about-team-huddle.jpg`) AND set the `<video poster=…>` attribute, so on every
-  refresh the poster painted first (both from the React `<img>` and the browser's
-  native video poster) and then was abruptly replaced when the video finished
-  buffering. Also applied on Home, but most visible on Sign In / Register /
-  Manager Login where the card sits over the background.
-- **Fix**: `ClubVideoBackground.tsx` now only renders the poster `<img>` when we
-  are NOT going to play the video (reduced-motion / image mode). When video is
-  the intended background, the container's own dark `#070c16` shows until the
-  video's opacity transition fades it in — no photograph ever pops in first.
-  Also removed the native `poster={poster}` on the `<video>` tag to stop the
-  browser painting it before `canplay`.
-- Video background itself preserved; behaviour on Home unchanged.
-- Verified visually — initial frame on `/#/manager/login` is a clean dark canvas,
-  video fades in smoothly when ready.
-
-### 6. Dark "OR" chip on white portal card + agent handoff (Jan 2026)
-- **Cause**: `ManagerLogin.tsx` divider used `bg-[#151f30]` (dark navy) text chip
-  and `border-white/10` hairline — both are dark-theme values, but the surrounding
-  card is `rgba(255,255,255,0.97)` (white). Result: the "or" looked like a floating
-  dark blob on the card.
-- **Fix**: chip now `bg-white`, uppercase `OR` in `text-slate-400` with
-  `tracking-[0.18em]`; hairline switched to `border-slate-200`. Reads as a proper
-  form divider now.
-- Added `/app/memory/AGENT_HANDOFF.md` — full onboarding brief for the next agent
-  (stack, file map, auth rules, data model, known pitfalls, deploy flow).
-
-### 7. Player Dashboard redesign + video-freeze & white-flash bug fixes (Jan 2026)
-
-**A. Player Dashboard redesign (`src/index.css`, `.player-dash` block)**
-- Rewrote the `.player-dash` skin (JSX untouched, so all sub-components — OverviewTab,
-  PaymentsTab, ScheduleTab, ProfileTab, NotificationsTab, ChatTab, OnboardingScreen —
-  continue to work). Aesthetic: clean · modern · sporty.
-- Sidebar is now **dark navy** (`#0f1b33` → `#071021`) with an amber left-accent bar and
-  glowing amber underline on the active nav item. User chip and "Back to Site" pill
-  restyled for the dark background.
-- Content surface: light off-white (`#eef2f8`) with a **subtle 32px grid** masked to
-  fade at the edges — modern feel, no image download.
-- Topbar cleaner white/glass with dark text.
-- Buttons: amber-orange gradient for primary CTAs ("Pay Now", "Pay Membership")
-  reinforces the sporty pride vibe.
-
-**B. Video freeze fix (`src/components/ClubVideoBackground.tsx`)**
-- Added resilient playback: `visibilitychange`, `stalled`, `suspend`, `pause`, `waiting`
-  handlers, plus a 4s keep-alive tick that re-invokes `video.play()` if the browser
-  silently paused (backgrounded tab, mobile power-save, autoplay-policy re-arm).
-- `.catch(() => {})` swallows the harmless "still-suspended" rejection; the next tick
-  retries. Video also stops rendering the native `poster` attribute (kept from earlier
-  fix).
-
-**C. White-flash fix (`src/index.css`)**
-- Set `html, body { background-color: #0A1628; }` so any brief route transition /
-  component remount / mid-navigation gap paints the dark theme underneath instead of
-  the default white body.
-
-**D. Store & orders sync fix (`src/lib/clubData.ts`)**
-- `dlbc_products` and `dlbc_orders` are now in `KEYS` → included in `SYNCED_KEYS`.
-  Previously, manager-added store items and player orders stayed on the writing
-  device and never propagated. Now they mirror to Supabase `app_state` like every
-  other shared key.
-
-### 8. White-flash / app_state amplification loop fix (Jan 2026)
-- **Cause**: the Supabase `app_state` realtime handler in `clubData.ts` was calling
-  `ensureAppStateKeySynced(KEYS.players)` and `ensureAppStateKeySynced(KEYS.teams)`
-  **unconditionally on every incoming realtime event**. With N open clients each
-  doing the same, every write echoed back as a realtime event triggered another
-  write on every client → **ping-pong amplification storm** → browser socket pool
-  exhaustion (hundreds of `ERR_INSUFFICIENT_RESOURCES`) → React starved of paint
-  slots → **periodic all-white frame** as the browser's default background painted
-  through the gaps.
-- **Fix**:
-  - **A. Per-key byte dedup in `syncKeyToRemote`** (`lastPushedSnapshot` Map). If
-    the value we're about to push is `JSON.stringify`-identical to the last value
-    we pushed *or* received via realtime, skip the network write. Snapshot cleared
-    on delete AND on upsert error so retries after transient loss still fire.
-  - **B. `applyRemoteAppStateRow` now calls `markKeyInSyncWithRemote` BEFORE
-    dispatching the storage event**, so any listener that reacts to the storage
-    event and calls `setStore(sameValue)` gets deduped out.
-  - **C. Removed the two unconditional `ensureAppStateKeySynced` calls** from the
-    realtime channel handler. Only `reconcileClubRosterIfNeeded` still runs, and
-    it only pushes via `setStore` → deduped path.
-  - **D. Defensive `#root { background-color: #0A1628 }`** so any transient paint
-    gap paints dark navy instead of the browser's default white.
-- Verified end-to-end by testing agent (iteration_13): 60–70 s sit-still on both
-  player and manager dashboards — 0 pending network requests, 0
-  `[app_state] sync failed`, 0 `ERR_INSUFFICIENT_RESOURCES`, no white frames at
-  any t=0/30/60 sample. Legitimate writes still reach Supabase (child-name edit
-  round-trip verified via `app_state.dlbc_roster_contrib:*.updated_at` bump).
-
-## Open / Next action items
-- P0 (OPEN, needs user input): "two login panels" report is ambiguous — could not reproduce a
-  duplication on desktop (standard split-screen brand + form). Awaiting a user screenshot.
-- P1: In this live DB, `dlbc_players` is readable by ANY authenticated member (member PII —
-  names, guardian phone, DOB — exposed). The intended `security-hardening.sql` manager-only
-  read policy is NOT applied. Consider applying it (but note the client currently relies on
-  members reading `dlbc_players`; the contrib mechanism means members don't strictly need it —
-  worth a follow-up to lock reads down without breaking sync).
-- P1: Rebuild + redeploy `/app/docs` so all these client fixes ship to the live GitHub Pages site.
-- P2: `PlayerDashboard.tsx` (~2200 lines) and `clubData.ts` (~2500 lines) exceed guidelines —
-  split ProfileTab and the sync layer for maintainability.
-
-## 2026-07-25 — Chat migrated to per-row `chat_messages` table + delivery indicators
-
-**Trigger**: user reported group chat messages sometimes not sending, wanted WhatsApp-
-style delivery confirmation (✓✓), red warning + retry for failures, and asked whether
-the app would scale to 200 live users. Answer: not with the old JSON-blob chat.
-
-**Old model (removed)**
-- Entire chat history was a single JSON array under `app_state[dlbc_chat_messages]`.
-- Every send upserted the whole blob → last-writer-wins → group-chat message loss
-  during simultaneous sends.
-- 3-second polling per client on top of realtime blob broadcasts → doesn't scale.
-
-**New model (shipped)**
-- Dedicated `public.chat_messages` table (see `/app/app/supabase/chat-messages-setup.sql`).
-  Columns: id (uuid), team_id, user_id (auth.users FK), sender_name, sender_role,
-  text (1–4000 char), created_at. Indexes on (team_id, created_at desc) and (user_id).
-- RLS: SELECT open to authenticated (client filters by team); INSERT requires
-  `user_id = auth.uid()`; DELETE allowed to sender or `is_manager()`. No UPDATE.
-- Realtime publication `supabase_realtime` extended with `chat_messages`;
-  `replica identity full` so DELETE events carry the id.
-- Client: `sendChatMessageById` INSERTs one row; realtime `postgres_changes` handler
-  updates every open client (no polling needed — 30s pull kept as safety net).
-- Local-only per-message status map (`dlbc_chat_status`) tracks pending/sent/failed
-  without ever syncing status to the server. `markAllPendingChatAsSent` fires on any
-  successful push.
-- Auth for INSERT: `supabase.auth.getSession()` first (synchronous local read),
-  falls back to `getUser()` — fixed the "first-message-always-fails" bug where the
-  initial `getUser()` round-trip could return null before the session was warm.
-
-**UI (TeamChatUI.tsx)**
-- `StatusIndicator` renders ✓ (grey pending), ✓✓ (blue sent), ⚠+↻ (red failed) on
-  own messages only. Failed bubble gets a red border.
-- Retry handler resets to pending and re-publishes; any success flips ALL local
-  pending/failed to sent since the whole per-row queue is drained on the retry.
-- data-testids: chat-status-pending / chat-status-sent / chat-status-failed /
-  chat-composer-input / chat-composer-send / chat-thread-<id> / chat-msg-<id> /
-  chat-delete-<id>.
-
-**Regression fixed en-route** (iteration_14 → iteration_15)
-- ChatTab in PlayerDashboard was recomputing `clubPlayer` (an object from
-  `getClubPlayers().find(...)`) on every render → useCallback identity churn →
-  useEffect re-ran forever → `Maximum update depth exceeded` → messages 2+ failed
-  with `ERR_INSUFFICIENT_RESOURCES`.
-- Fix: `clubPlayer = useMemo(..., [user?.email])`; `refreshChatState` deps changed
-  to primitive `clubPlayerId`; shallow-equality guards on setMessages / setStatuses /
-  setMyTeams so identical arrays no longer schedule a re-render. Same equality
-  guards added to Manager ChatView for defence in depth (it wasn't looping).
-
-**Verified end-to-end** by testing agent (iteration_15):
-- Zero "Maximum update depth" warnings on ChatTab mount.
-- 3 sequential + 5 rapid-fire player sends all landed ✓✓ (8 successful 201 POSTs,
-  0 failures, 0 stuck pending).
-- Manager saw player messages within seconds via realtime; manager reply appeared
-  on player side same way.
-
-## Open / Next action items (updated)
-- P1: `/app/app/supabase/chat-messages-setup.sql` must be applied to any new
-  Supabase environment (already applied to prod project neulcrpkroiyglgiywcp).
-- P1: Rebuild + redeploy `/app/docs` so these client-side chat changes ship to
-  the live GitHub Pages site. User to trigger via **Save to GitHub**.
-- P2: PlayerDashboard.tsx (~2400) and ManagerDashboard.tsx (~4800) still oversized
-  — the chat regression risk we just hit is a symptom. Split ChatTab / ChatView
-  into dedicated files.
-- P2: Consider dropping the 30s pullMergedChatState safety-net polling now that
-  realtime is per-row (much smaller payloads and battle-tested at scale).
-- Old blob rows `app_state[dlbc_chat_messages]` and `app_state[dlbc_chat_deleted_ids]`
-  can be deleted from Supabase — the app no longer reads or writes them.
+## Backlog
+- P1: Firebase push setup once user provides service account; app icons/splash via @capacitor/assets.
+- P1: Receipt emails (RESEND_API_KEY) — function exists in `_shared/purchase-email.ts`.
+- P2: Instalment / recurring membership plans (Stripe subscriptions); membership expiry reminders.
+- P2: Product images for seeded products; richer match reports; event attendance export (CSV).
+- P2: Old `app_state` rows in Supabase can be dropped (legacy, unused).

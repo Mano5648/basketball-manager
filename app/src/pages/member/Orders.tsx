@@ -19,7 +19,7 @@ export default function OrdersPage() {
   }, ['orders', 'purchases'], [user?.id])
 
   const rows = [
-    ...(q.data?.orders ?? []).map((o) => ({ id: o.id, when: o.created_at, title: 'Shop order', lines: o.items.map((i) => `${i.quantity}× ${i.name}${i.size ? ` (${i.size})` : ''}`), amount: o.total_cents, status: o.status })),
+    ...(q.data?.orders ?? []).filter((o) => o.status !== 'pending').map((o) => ({ id: o.id, when: o.created_at, title: 'Shop order', lines: o.items.map((i) => `${i.quantity}× ${i.name}${i.size ? ` (${i.size})` : ''}`), amount: o.total_cents, status: o.status })),
     ...(q.data?.purchases ?? []).filter((p) => p.status !== 'pending').map((p) => ({ id: p.id, when: p.created_at, title: TYPE_LABEL[p.purchase_type] ?? p.purchase_type, lines: (p.items ?? []).map((i) => `${i.quantity}× ${i.name}`), amount: p.amount_cents, status: p.status })),
   ].sort((a, b) => b.when.localeCompare(a.when))
 

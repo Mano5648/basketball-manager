@@ -6,9 +6,9 @@ export function appRoute(path: string): string {
 
 /** Full browser URL for external redirects (Stripe, Supabase Auth). */
 export function externalAppUrl(path: string): string {
-  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
-  const route = appRoute(path)
-  return `${window.location.origin}${base}#${route}`
+  const configured = (import.meta.env.VITE_PUBLIC_SITE_URL as string | undefined)?.replace(/\/$/, '')
+  const base = configured ?? window.location.origin + window.location.pathname.replace(/\/[^/]*$/, '')
+  return `${base}/#${appRoute(path)}`
 }
 
 /** Path segment for Stripe / Supabase redirects: `/#/payment/success` */
@@ -17,6 +17,5 @@ export function hashReturnPath(path: string): string {
 }
 
 export function getAppBaseUrl(): string {
-  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
-  return `${window.location.origin}${base}`
+  return window.location.origin + window.location.pathname.replace(/\/[^/]*$/, '')
 }

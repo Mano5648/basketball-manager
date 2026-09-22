@@ -24,7 +24,7 @@ A ClubSpot-style club app built with React + Vite + Capacitor on a Supabase back
    | --- | --- |
    | `STRIPE_SECRET_KEY` | `sk_live_…` / `sk_test_…` from Stripe |
    | `STRIPE_WEBHOOK_SECRET` | `whsec_…` from the Stripe webhook you create in step 2 below |
-   | `ALLOWED_CHECKOUT_ORIGINS` | comma-separated web origins allowed to start a checkout, e.g. `https://<user>.github.io` |
+   | `ALLOWED_CHECKOUT_ORIGINS` | comma-separated web app URLs (origin + sub-path, no trailing slash) allowed to start a checkout, e.g. `https://<user>.github.io/<repo>` |
    | `FIREBASE_SERVICE_ACCOUNT` | (for push) the full JSON of a Firebase service-account key — see §4 |
    | `RESEND_API_KEY` | (optional) for receipt emails |
 

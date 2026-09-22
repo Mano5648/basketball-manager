@@ -107,7 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           data: { full_name: input.fullName.trim(), phone: input.phone?.trim() || null, member_type: input.memberType },
         },
       })
-      if (error) return { error: error.message, needsConfirmation: false }
+      if (error) return { error: /invalid/i.test(error.message) && /email/i.test(error.message) ? 'Please use a real, working email address.' : error.message, needsConfirmation: false }
       return { error: null, needsConfirmation: !data.session }
     },
     async signOut() {

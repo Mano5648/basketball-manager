@@ -1,0 +1,41 @@
+{
+  "summary": "Full E2E frontend + Supabase integration test of Dublin Lions club app (complete rebuild). Covered login/routing, member home feed, events RSVP w/ persistence, fixtures (upcoming/results), ticket + shop + lotto + booking Stripe checkout redirects, membership, messages (member+admin), profile, inbox, security redirect, and admin CRUD for news/events/fixtures/draws/settings/notifications/admins. ~95% of the spec's flows pass. Two functional gaps and one register blocker found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "Supabase auth signup", "issue": "Register at /#/register fails with 400 'Email address ... is invalid' for both example.com and freshly-invented .ie domains. Supabase project has strict email validation / disposable-domain blocking enabled. Cannot complete register flow in QA — need to allow-list test domains or use a real deliverable email."},
+      {"endpoint": "membership_packages", "issue": "Only 1 active package is visible on member membership page (as parent), but spec expects 3 seeded packages (child + adult + any). Seed script appears not to have inserted the other two packages (or they are inactive)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Inbox / notification click", "issue": "Clicking a single notification row does NOT decrement inbox-unread-badge (badge remains at 1). Only 'Mark all read' (inbox-mark-all) correctly clears the badge. Notification row click probably navigates without calling markRead().", "selector": "[data-testid^=\"notification-\"]", "priority": "LOW"},
+      {"component": "Shop products", "issue": "All 3 seeded products render only the fallback bag icon (no image_url in seed). Not broken, but visually poor. Consider seeding image_url or adding a nicer placeholder.", "selector": "[data-testid^=\"product-\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Investigate Supabase Auth email validation config (Auth > Settings > 'Enable email confirmations' + 'Blocked email providers'/HIBP). Test signup blocked for example.com and .ie test domains — recommend allow-listing a test domain or disabling third-party email validation for QA.",
+    "Re-run seed for membership_packages so parent sees the expected 3 packages (child + adult + any). Verify supabase/00-full-setup.sql actually inserts them and they are active=true.",
+    "Fix notification-row click to call markRead(id) so inbox-unread-badge decrements without needing 'Mark all read'.",
+    "Optional polish: seed product image_url values (or improve empty-image placeholder) so shop cards don't look broken."
+  ],
+  "critical_code_review_comments": [
+    "Register error surfaces raw Supabase message ('Email address \"xxx\" is invalid') — fine for QA, but consider mapping to a user-friendly message ('Please use a real email address').",
+    "Notification click handler seems to lack markRead — verify /app/app/src/pages/member/Inbox.tsx (or wherever notification-* rows are rendered) actually updates read state on tap.",
+    "packages array in Membership page apparently filters client-side by role — verify the filter doesn't accidentally hide 'any'-type packages for parents."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (Supabase-only)", "frontend": "~95%"},
+  "test_credentials": "Admin manager@dublinlions.ie / lions2025 works. Member cooler74.ea@gmail.com / test12 works. New registrations blocked by Supabase email validation.",
+  "seed_data_creation": "Created and then deleted: 'QA Test News' (news_posts), 'QA Test Draw' (lotto_draws — created, run to DRAWN status, then deleted). Also created 1 event RSVP as member cooler74 (still present — persisted going=1). Bookings/lotto/tickets attempted checkout but were left in pending state (Stripe redirect only, payment not completed). Seeded 'Weekly Club Lotto' draw, teams, products, and manager account left untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All data-testids in the spec exist and work. Admin CRUD uses generic AdminCrud with prefixes: news/events/fixtures/teams/packages/draws/facilities/products — each with -new-btn/-save-btn/-delete-btn/-row-<id>/-sheet. Members admin lives at /#/admin/members (no /#/admin/people). Settings has feature-* toggles: news/events/fixtures/shop/membership/lotto/booking/messages. Admin sidebar exposes: Dashboard, News, Events, Fixtures & Results, Members, Teams, Memberships, Club Lotto, Facilities, Shop Products, Orders & Payments, Messages, Notifications, Reports, Settings. Register is currently blocked by Supabase email validation — DO NOT waste cycles trying to fix in code; it's a Supabase project auth setting.",
+  "rca of the issue": {
+    "register_email_invalid": "Supabase Auth on project neulcrpkroiyglgiywcp has a domain/email validator (likely 'Blocked email providers' or an auth hook) that rejects both example.com and arbitrary .ie subdomains. Reproduce: POST to /auth/v1/signup with email=qa+xxx@example.com → 400 { code: 'email_address_invalid' }. Fix: in Supabase dashboard → Authentication → Providers → Email → disable strict email validation, or add a test allow-list.",
+    "membership_only_1_package": "Query on /rest/v1/membership_packages via anon key returns [] (RLS blocks anonymous read), but authenticated member sees 1 row. Spec expects 3 seeded packages. Likely the seed in supabase/00-full-setup.sql only inserts one, or the other two have active=false. Fix: verify insert statements in the seed for membership_packages."
+  }
+}

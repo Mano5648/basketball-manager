@@ -8,7 +8,7 @@ export const platform = Capacitor.getPlatform() as 'ios' | 'android' | 'web'
 export function publicSiteOrigin(): string {
   const configured = (import.meta.env.VITE_PUBLIC_SITE_URL as string | undefined)?.replace(/\/$/, '')
   if (isNative && configured) return configured
-  return window.location.origin + (import.meta.env.BASE_URL || '/').replace(/\/$/, '')
+  return window.location.origin + window.location.pathname.replace(/\/[^/]*$/, '')
 }
 
 /** Open an external URL: in-app browser on native, same-tab navigation on web. */

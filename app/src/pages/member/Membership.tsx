@@ -27,7 +27,7 @@ export default function MembershipPage() {
     if (p.audience === 'any') return true
     if (p.audience === 'child') return profile?.member_type === 'parent' || children.length > 0
     if (p.audience === 'adult') return profile?.member_type === 'adult'
-    return profile?.member_type === 'supporter'
+    return true
   })
   const childName = (id: string | null) => children.find((c) => c.id === id)?.full_name
   const today = new Date().toISOString().slice(0, 10)

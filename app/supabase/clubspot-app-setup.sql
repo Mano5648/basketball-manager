@@ -539,7 +539,7 @@ create policy "club_media_delete" on storage.objects for delete to authenticated
 do $$
 declare t text;
 begin
-  foreach t in array array['news_posts','events','event_rsvps','fixtures','orders','memberships','lotto_draws','lotto_tickets','facility_bookings','notifications','teams','team_members','children','profiles','products','club_settings']
+  foreach t in array array['news_posts','events','event_rsvps','fixtures','orders','memberships','lotto_draws','lotto_tickets','facility_bookings','notifications','notification_reads','teams','team_members','children','profiles','products','club_settings']
   loop
     if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename=t) then
       execute format('alter publication supabase_realtime add table public.%I', t);
