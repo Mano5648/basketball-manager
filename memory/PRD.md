@@ -14,7 +14,7 @@ booking, messaging); Capacitor native shell; open membership (adult / parent+chi
 - Payments = Stripe Checkout (claimable sandbox acct_1TwRcDD9voY0qukz, IE/EUR). Keys live only in
   Supabase secrets + `.env.local`; agent copies in `/root/.secrets/`.
 - Native = Capacitor 8 (`android/`, `ios/`, `capacitor.config.ts`, appId `ie.dublinlions.app`).
-  Requires Node ≥22 for the Capacitor CLI (`/opt/node22/bin` in this pod).
+  Requires Node ≥22 for the Capacitor CLI (`/root/tools/node22/bin` in this pod).
 - Docs: `app/README.md` (Supabase/Stripe/Firebase setup), `app/MOBILE_APP_SETUP.md` (store publishing).
 
 ## Data model (supabase/00-full-setup.sql — one paste, idempotent; APPLIED to prod 2026-06)
@@ -65,6 +65,18 @@ origin bug in checkout/redirect URLs, login redirect waited for role.
 - Web deploy: `/app/docs` rebuilt with new app (base './'). Set `VITE_PUBLIC_SITE_URL` + add the pages
   URL (origin + sub-path) to `ALLOWED_CHECKOUT_ORIGINS`, then rebuild.
 - Native builds require Android Studio / Xcode on the user's machine (MOBILE_APP_SETUP.md).
+
+## Added 2026-06 (round 2)
+- **Match Day Live** (`supabase/match-day-live.sql` APPLIED; `src/pages/member/MatchLive.tsx`): fixtures
+  status 'live' + `period`; `fixture_updates` table; `is_team_coach()`; coaches can UPDATE their team's
+  fixtures; MatchControl panel (start, +1/+2/+3, period, updates, finish) for admin/coach; LiveUpdates
+  timeline; team push at tip-off/final (send-push now allows team coach for target='team'). Verified
+  realtime member update in a second browser context.
+- **Icons & splash**: user's Lions crest → `resources/` (white background removed) → `@capacitor/assets`
+  generated Android adaptive icons, iOS AppIcon, splash screens, PWA `public/icons` + `manifest.webmanifest`.
+  Header logo `public/logo-lions-emblem.png` replaced; `club_settings.primary_color` set to #E63229 (red).
+- User declined membership reminders. Push still needs Firebase (explained: native push must go via
+  FCM/APNs; Supabase only triggers it). Node 22 + supabase CLI now at `/root/tools/node22/bin`.
 
 ## Backlog
 - P1: Firebase push setup once user provides service account; app icons/splash via @capacitor/assets.

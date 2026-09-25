@@ -36,13 +36,18 @@ Deno.serve(async (req) => {
   try {
     const authHeader = req.headers.get('Authorization') ?? ''
     const userClient = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, { global: { headers: { Authorization: authHeader } } })
-    const { data: isManager } = await userClient.rpc('is_manager')
-    if (!isManager) return json({ error: 'Only club admins can send notifications' }, 403)
-    const { data: me } = await userClient.auth.getUser()
-
     const { title, body, target = 'all', team_id = null, link = null } = await req.json()
     if (!title?.trim() || !body?.trim()) return json({ error: 'Title and message are required' }, 400)
     if (target === 'team' && !team_id) return json({ error: 'Pick a team' }, 400)
+
+    const { data: isManager } = await userClient.rpc('is_manager')
+    let allowed = Boolean(isManager)
+    if (!allowed && target === 'team') {
+      const { data: isCoach } = await userClient.rpc('is_team_coach', { p_team_id: team_id })
+      allowed = Boolean(isCoach)
+    }
+    if (!allowed) return json({ error: 'Only club admins (or the team coach) can send notifications' }, 403)
+    const { data: me } = await userClient.auth.getUser()
 
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 

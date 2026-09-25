@@ -9,6 +9,7 @@ import { fmtDateTime, money } from '@/lib/format'
 import { isStripeCheckoutConfigured, startCheckout } from '@/lib/stripeCheckout'
 import { Alert, Badge, Button, Card, Empty, PageHeader, Select, Spinner, cx } from '@/components/ui'
 import { FixtureRow } from './HomeFeed'
+import { LiveUpdates, MatchControl, useCanControlMatch } from './MatchLive'
 
 export default function FixturesPage() {
   const [tab, setTab] = useState<'upcoming' | 'results'>('upcoming')
@@ -17,7 +18,7 @@ export default function FixturesPage() {
   const q = useLiveQuery(async () => {
     const now = new Date().toISOString()
     return tab === 'upcoming'
-      ? listAll<Fixture>('fixtures', 'starts_at', true, (x) => x.gte('starts_at', now).neq('status', 'completed'))
+      ? listAll<Fixture>('fixtures', 'starts_at', true, (x) => x.or(`status.eq.live,and(status.neq.completed,starts_at.gte.${now})`))
       : listAll<Fixture>('fixtures', 'starts_at', false, (x) => x.or(`status.eq.completed,starts_at.lt.${now}`).limit(100))
   }, ['fixtures'], [tab])
   const teamName = useMemo(() => Object.fromEntries(teams.map((t) => [t.id, t.name])), [teams])
@@ -63,6 +64,7 @@ export function FixtureDetail() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const q = useLiveQuery(async () => (await listAll<Fixture>('fixtures', 'starts_at', true, (x) => x.eq('id', id)))[0] ?? null, ['fixtures'], [id])
+  const canControl = useCanControlMatch(q.data)
   if (q.loading && !q.data) return <Spinner />
   if (!q.data) return <Empty title="Fixture not found" />
   const fx = q.data
@@ -82,6 +84,8 @@ export function FixtureDetail() {
     <div className="space-y-4" data-testid="fixture-detail">
       <PageHeader title={`vs ${fx.opponent}`} subtitle={`${team?.name ?? 'Club'}${fx.competition ? ` · ${fx.competition}` : ''}`} back="/app/fixtures" />
       <FixtureRow fx={fx} teamName={team?.name} />
+      {canControl && <MatchControl fx={fx} onChanged={() => void q.refresh()} />}
+      <LiveUpdates fixtureId={fx.id} />
       <Card className="space-y-1 text-sm text-slate-300">
         <p><span className="text-slate-500">When:</span> {fmtDateTime(fx.starts_at)}</p>
         <p><span className="text-slate-500">Where:</span> {fx.venue ?? (fx.is_home ? 'Home venue' : 'Away')}</p>

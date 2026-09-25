@@ -42,9 +42,10 @@ export interface Rsvp { event_id: string; profile_id: string; status: 'going' | 
 export interface Fixture {
   id: string; team_id: string | null; opponent: string; competition: string | null; venue: string | null; is_home: boolean
   starts_at: string; home_score: number | null; away_score: number | null
-  status: 'scheduled' | 'completed' | 'postponed' | 'cancelled'
+  status: 'scheduled' | 'live' | 'completed' | 'postponed' | 'cancelled'; period: string | null
   tickets_enabled: boolean; adult_price_cents: number; kid_price_cents: number; notes: string | null
 }
+export interface FixtureUpdate { id: string; fixture_id: string; text: string; home_score: number | null; away_score: number | null; created_at: string }
 export interface MembershipPackage { id: string; name: string; description: string | null; price_cents: number; duration_months: number; audience: 'any' | 'adult' | 'child' | 'supporter'; active: boolean; sort_order: number }
 export interface Membership { id: string; profile_id: string; child_id: string | null; package_id: string | null; package_name: string; amount_cents: number; starts_at: string; expires_at: string; status: 'active' | 'expired' | 'cancelled'; created_at: string }
 export interface LottoDraw { id: string; title: string; ticket_price_cents: number; jackpot_cents: number; numbers_count: number; max_number: number; draw_at: string; status: 'open' | 'closed' | 'drawn' | 'cancelled'; winning_numbers: number[] | null; drawn_at: string | null }

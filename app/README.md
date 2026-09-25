@@ -73,4 +73,7 @@ rm -rf ../docs/* && cp -r dist/* ../docs/   # GitHub Pages serves /docs
 
 Admins send notifications from **Admin → Notifications** (everyone or one team). Every message also lands in the in-app inbox, even for members who declined push.
 
-## 5. Android & iOS builds — see `MOBILE_APP_SETUP.md`.
+## 5. Match Day Live
+Admins and team coaches (the *coach email* on a team) see a **Match control** panel on any fixture (Fixtures tab → open the game): start match, tap +1/+2/+3, set the period, post short updates, finish. Members see the LIVE badge, score and updates in real time; a team push goes out at tip-off and at the final score.
+
+## 6. Android & iOS builds — see `MOBILE_APP_SETUP.md`.
