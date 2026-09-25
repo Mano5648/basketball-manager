@@ -93,7 +93,7 @@ export function FixtureDetail() {
       </Card>
       {fx.tickets_enabled && upcoming && (
         <Card className="space-y-4" testId="ticket-card">
-          <div className="flex items-center gap-2"><Ticket size={18} className="text-lions-300" /><p className="font-semibold">Match tickets</p><Badge className="ml-auto">{money(fx.adult_price_cents)} adult</Badge></div>
+          <div className="flex items-center gap-2"><Ticket size={18} className="text-accent-400" /><p className="font-semibold">Match tickets</p><Badge tone="amber" className="ml-auto">{money(fx.adult_price_cents)} adult</Badge></div>
           <div className="flex items-center justify-between text-sm"><span>Adult · {money(fx.adult_price_cents)}</span><Qty value={adult} onChange={setAdult} testId="ticket-adult-qty" /></div>
           {fx.kid_price_cents > 0 && <div className="flex items-center justify-between text-sm"><span>Child · {money(fx.kid_price_cents)}</span><Qty value={kid} onChange={setKid} testId="ticket-kid-qty" /></div>}
           {err && <Alert testId="ticket-error">{err}</Alert>}

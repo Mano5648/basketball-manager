@@ -23,7 +23,7 @@ export function LiveUpdates({ fixtureId }: { fixtureId: string }) {
   if (!q.data?.length) return null
   return (
     <Card className="space-y-2" testId="live-updates">
-      <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-400"><Radio size={13} className="text-rose-400" /> Match updates</p>
+      <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-400"><Radio size={13} className="text-accent-400" /> Match updates</p>
       {q.data.map((u) => (
         <div key={u.id} data-testid={`live-update-${u.id}`} className="flex gap-3 border-l-2 border-white/10 pl-3">
           <span className="w-12 shrink-0 text-xs tabular-nums text-slate-500">{fmtTime(u.created_at)}</span>
@@ -64,8 +64,8 @@ export function MatchControl({ fx, onChanged }: { fx: Fixture; onChanged: () => 
   const theirs = fx.is_home ? away : home
 
   return (
-    <Card className="space-y-4 border-rose-500/30" testId="match-control">
-      <div className="flex items-center justify-between"><p className="flex items-center gap-2 text-sm font-bold"><Radio size={16} className="text-rose-400" /> Match control</p><span className="text-[11px] uppercase tracking-wider text-slate-400">{fx.status}</span></div>
+    <Card className="space-y-4 border-accent-500/30" testId="match-control">
+      <div className="flex items-center justify-between"><p className="flex items-center gap-2 text-sm font-bold"><Radio size={16} className="text-accent-400" /> Match control</p><span className="text-[11px] uppercase tracking-wider text-slate-400">{fx.status}</span></div>
       {fx.status === 'scheduled' && <Button data-testid="match-start" className="w-full" loading={busy} onClick={() => patch({ status: 'live', period: 'Q1', home_score: home, away_score: away }, 'Tip-off!', { title: `Tip-off: ${label}`, body: 'Follow the live score in the app.' })}><Play size={16} /> Start match</Button>}
       {fx.status === 'live' && (
         <>

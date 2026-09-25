@@ -56,12 +56,12 @@ export function FixtureRow({ fx, teamName }: { fx: Fixture; teamName?: string })
       <div className="mb-2 flex items-center justify-between text-[11px] text-slate-400">
         <span>{teamName ?? 'Club'}{fx.competition ? ` · ${fx.competition}` : ''}</span>
         {done ? <Badge tone={won ? 'green' : (ourScore === theirScore ? 'slate' : 'red')}>{won ? 'Win' : ourScore === theirScore ? 'Draw' : 'Loss'}</Badge>
-          : fx.status === 'live' ? <Badge tone="red" className="animate-pulse">● Live{fx.period ? ` · ${fx.period}` : ''}</Badge>
+          : fx.status === 'live' ? <Badge tone="amber" className="animate-pulse">● Live{fx.period ? ` · ${fx.period}` : ''}</Badge>
           : fx.status !== 'scheduled' ? <Badge tone="amber">{fx.status}</Badge> : <span>{fmtDateTime(fx.starts_at)}</span>}
       </div>
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-semibold text-white">{fx.is_home ? 'Home' : 'Away'} vs {fx.opponent}</p>
-        {done || fx.status === 'live' ? <p data-testid={`fixture-score-${fx.id}`} className="font-display text-xl font-bold tabular-nums text-white">{ourScore ?? 0} <span className="text-slate-500">–</span> {theirScore ?? 0}</p> : fx.tickets_enabled ? <Badge>Tickets</Badge> : null}
+        {done || fx.status === 'live' ? <p data-testid={`fixture-score-${fx.id}`} className="font-display text-xl font-bold tabular-nums text-white">{ourScore ?? 0} <span className="text-slate-500">–</span> {theirScore ?? 0}</p> : fx.tickets_enabled ? <Badge tone="amber">Tickets</Badge> : null}
       </div>
       {fx.venue && <p className="mt-1 flex items-center gap-1 text-xs text-slate-500"><MapPin size={11} /> {fx.venue}</p>}
     </Card>

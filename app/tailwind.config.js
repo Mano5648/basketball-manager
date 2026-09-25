@@ -5,7 +5,7 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        "deep-navy": "#0A0A0C", gold: "#FEBD15",
+        "deep-navy": "#0A0A0C",
         lions: {
           50: "#EEF4FF",
           100: "rgb(var(--brand-100) / <alpha-value>)",
@@ -16,7 +16,17 @@ module.exports = {
           600: "rgb(var(--brand-600) / <alpha-value>)",
           700: "#163FB4",
         },
-        warn: { 400: "#FEBD15", 500: "#E5A800", 600: "#C48F00" },
+        accent: {
+          300: "rgb(var(--accent-300) / <alpha-value>)",
+          400: "rgb(var(--accent-400) / <alpha-value>)",
+          500: "rgb(var(--accent-500) / <alpha-value>)",
+          600: "rgb(var(--accent-600) / <alpha-value>)",
+        },
+        warn: {
+          400: "rgb(var(--accent-400) / <alpha-value>)",
+          500: "rgb(var(--accent-500) / <alpha-value>)",
+          600: "rgb(var(--accent-600) / <alpha-value>)",
+        },
       },
       fontFamily: {
         display: ['Space Grotesk', 'system-ui', 'sans-serif'],

@@ -47,7 +47,7 @@ export default function AppShell() {
             )}
             <button data-testid="header-inbox-btn" onClick={() => nav('/app/inbox')} className="relative rounded-full p-2 text-slate-300 hover:bg-white/10" aria-label="Notifications">
               <Bell size={20} />
-              {unread > 0 && <span data-testid="inbox-unread-badge" className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold">{unread > 9 ? '9+' : unread}</span>}
+              {unread > 0 && <span data-testid="inbox-unread-badge" className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent-500 px-1 text-[10px] font-bold">{unread > 9 ? '9+' : unread}</span>}
             </button>
           </div>
         </div>

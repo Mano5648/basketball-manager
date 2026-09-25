@@ -5,7 +5,6 @@ import ErrorBoundary from './components/ErrorBoundary'
 import AppShell from './components/AppShell'
 import AdminShell from './components/AdminShell'
 import { useAuth } from './lib/AuthContext'
-import { useClub } from './lib/ClubContext'
 import { LoginPage, RegisterPage, ForgotPage, ResetPasswordPage } from './pages/auth/AuthPages'
 import HomeFeed, { NewsDetail } from './pages/member/HomeFeed'
 import EventsPage, { EventDetail } from './pages/member/Events'
@@ -39,30 +38,6 @@ function RequireAuth({ children, admin }: { children: React.ReactNode; admin?: b
   return <>{children}</>
 }
 
-function hexToRgb(hex: string): [number, number, number] | null {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
-  if (!m) return null
-  const n = parseInt(m[1], 16)
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
-}
-function mix(c: [number, number, number], to: number, t: number) { return c.map((v) => Math.round(v + (to - v) * t)).join(' ') }
-
-function BrandTheme() {
-  const { settings } = useClub()
-  useEffect(() => {
-    const rgb = hexToRgb(settings?.primary_color ?? '')
-    if (!rgb) return
-    const s = document.documentElement.style
-    s.setProperty('--brand-500', rgb.join(' '))
-    s.setProperty('--brand-600', mix(rgb, 0, 0.15))
-    s.setProperty('--brand-400', mix(rgb, 255, 0.2))
-    s.setProperty('--brand-300', mix(rgb, 255, 0.4))
-    s.setProperty('--brand-200', mix(rgb, 255, 0.6))
-    s.setProperty('--brand-100', mix(rgb, 255, 0.8))
-  }, [settings?.primary_color])
-  return null
-}
-
 function ScrollTop() {
   const { pathname } = useLocation()
   useEffect(() => { window.scrollTo(0, 0) }, [pathname])
@@ -73,7 +48,6 @@ export default function App() {
   const { user, role, loading } = useAuth()
   return (
     <ErrorBoundary>
-      <BrandTheme />
       <ScrollTop />
       <Routes>
         <Route path="/" element={loading || (user && !role) ? <Loading /> : <Navigate to={user ? (role === 'manager' ? '/admin' : '/app') : '/login'} replace />} />
