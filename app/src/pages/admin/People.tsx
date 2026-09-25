@@ -124,6 +124,29 @@ export function AdminMembers() {
   )
 }
 
+function TeamRoster({ team, members }: { team: Team; members: Profile[] }) {
+  const q = useLiveQuery(async () => {
+    const [tm, kids] = await Promise.all([
+      listAll<TeamMember>('team_members', 'created_at', true, (x) => x.eq('team_id', team.id)),
+      listAll<Child>('children', 'full_name', true, (x) => x.eq('team_id', team.id)),
+    ])
+    return { tm, kids }
+  }, ['team_members', 'children'], [team.id])
+  const who = (id: string | null) => members.find((p) => p.id === id)
+  const adults = (q.data?.tm ?? []).filter((t) => t.profile_id).map((t) => ({ t, p: who(t.profile_id) }))
+  const kids = q.data?.kids ?? []
+  const total = adults.length + kids.length
+  return (
+    <div className="space-y-2 rounded-xl border border-white/10 p-3" data-testid="team-roster">
+      <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Roster · {total} {total === 1 ? 'member' : 'members'}</p>
+      {team.coach_email && <p className="text-sm text-slate-300">Coach: <b>{team.coach_name || team.coach_email}</b></p>}
+      {total === 0 && <p className="text-sm text-slate-500">Nobody assigned yet. Go to Members → open a person → tap this team (adults) or pick it for their child.</p>}
+      {adults.map(({ t, p }) => <p key={t.id} className="text-sm" data-testid={`roster-adult-${t.id}`}>{p?.full_name || p?.email || 'Member'} <span className="text-xs text-slate-500">· {t.role}{p?.phone ? ` · ${p.phone}` : ''}</span></p>)}
+      {kids.map((c) => { const parent = who(c.parent_id); return <p key={c.id} className="text-sm" data-testid={`roster-child-${c.id}`}>{c.full_name} <span className="text-xs text-slate-500">· player{c.dob ? ` · born ${c.dob}` : ''} · parent {parent?.full_name || parent?.email}{parent?.phone ? ` · ${parent.phone}` : ''}</span></p> })}
+    </div>
+  )
+}
+
 export function AdminTeams() {
   const members = useLiveQuery(() => listAll<Profile>('profiles', 'full_name', true), ['profiles'])
   const fields: FieldDef[] = useMemo(() => [
@@ -136,7 +159,7 @@ export function AdminTeams() {
   return (
     <div>
       <PageHeader title="Teams" subtitle="Squads for fixtures and rosters. Assign players in the Members page." />
-      <AdminCrud<Team> table="teams" fields={fields} orderBy="sort_order" ascending newLabel="New team" transformOut={(f) => ({ ...f, coach_name: coachName((f.coach_email as string | null) ?? null) })} itemTitle={(r) => r.name} itemSubtitle={(r) => [r.age_group, r.coach_email && `Coach ${coachName(r.coach_email) || r.coach_email}`].filter(Boolean).join(' · ')} testPrefix="teams" />
+      <AdminCrud<Team> table="teams" fields={fields} orderBy="sort_order" ascending newLabel="New team" transformOut={(f) => ({ ...f, coach_name: coachName((f.coach_email as string | null) ?? null) })} extraActions={(row) => row && <TeamRoster team={row} members={members.data ?? []} />} itemTitle={(r) => r.name} itemSubtitle={(r) => [r.age_group, r.coach_email && `Coach ${coachName(r.coach_email) || r.coach_email}`].filter(Boolean).join(' · ')} testPrefix="teams" />
     </div>
   )
 }

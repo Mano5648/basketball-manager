@@ -105,6 +105,8 @@ origin bug in checkout/redirect URLs, login redirect waited for role.
   to members (needed to identify coach; staff contact).
 - Removed: sort_order field from Teams & Sponsors forms; logo + brand colour from Settings (fixed to crest).
 
+- Team roster view inside Admin → Teams (tap a team): adults, children + parent contact, coach.
+
 ## Backlog
 - P1: Firebase push setup once user provides service account; app icons/splash via @capacitor/assets.
 - P1: Receipt emails (RESEND_API_KEY) — function exists in `_shared/purchase-email.ts`.
