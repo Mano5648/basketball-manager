@@ -18,7 +18,7 @@ npx cap sync            # copies dist/ + plugins into android/ and ios/
 App identity is in `capacitor.config.ts` (`appId: ie.dublinlions.app`, `appName: Dublin Lions BC`). Change once before the first store upload — it can't be changed afterwards.
 
 ### Icons & splash
-Already generated from the club crest (`app/resources/icon.png`, `icon-foreground.png`, `icon-background.png`, `splash.png`) into both native projects and `public/icons` (PWA). To regenerate after changing the crest:
+Already generated from the original club crest (`app/resources/logo-original.png` → `icon.png`, `icon-foreground.png`, `icon-background.png`, `splash.png`) into both native projects and `public/icons` (PWA). To regenerate after changing the crest:
 ```bash
 npx @capacitor/assets generate --iconBackgroundColor '#070C16' --splashBackgroundColor '#070C16'
 ```

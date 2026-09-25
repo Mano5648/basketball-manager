@@ -15,6 +15,7 @@ export interface FieldDef {
   hint?: string
   folder?: string
   half?: boolean
+  nullable?: boolean
 }
 
 export interface CrudProps<T extends { id: string }> {
@@ -55,7 +56,7 @@ function fromForm(form: Record<string, unknown>, fields: FieldDef[]): Record<str
   for (const fd of fields) {
     const v = form[fd.key]
     if (fd.type === 'money') out[fd.key] = Math.round(parseFloat(String(v || '0')) * 100)
-    else if (fd.type === 'number') out[fd.key] = v === '' || v == null ? null : Number(v)
+    else if (fd.type === 'number') { if (v === '' || v == null) { if (fd.nullable) out[fd.key] = null } else out[fd.key] = Number(v) }
     else if (fd.type === 'datetime') out[fd.key] = v ? new Date(String(v)).toISOString() : null
     else if (fd.type === 'tags') out[fd.key] = String(v || '').split(',').map((s) => s.trim()).filter(Boolean)
     else if (fd.type === 'toggle') out[fd.key] = Boolean(v)
@@ -122,12 +123,12 @@ export function AdminCrud<T extends { id: string }>(p: CrudProps<T>) {
       if (p.transformOut) payload = p.transformOut(payload)
       await upsertRow(p.table, payload as Partial<T>)
       close(); void refresh()
-    } catch (ex) { setErr(ex instanceof Error ? ex.message : 'Save failed') } finally { setSaving(false) }
+    } catch (ex) { setErr((ex as { message?: string })?.message || 'Save failed') } finally { setSaving(false) }
   }
   const remove = async () => {
     if (!editing?.id || !confirm('Delete this item? This cannot be undone.')) return
     setSaving(true)
-    try { await deleteRow(p.table, String(editing.id)); close(); void refresh() } catch (ex) { setErr(ex instanceof Error ? ex.message : 'Delete failed') } finally { setSaving(false) }
+    try { await deleteRow(p.table, String(editing.id)); close(); void refresh() } catch (ex) { setErr((ex as { message?: string })?.message || 'Delete failed') } finally { setSaving(false) }
   }
 
   return (

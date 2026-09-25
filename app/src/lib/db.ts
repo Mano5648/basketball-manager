@@ -34,8 +34,15 @@ export interface ClubSettings {
   lotto_rules: string | null
   terms_url: string | null
   privacy_url: string | null
+  about_text: string | null
+  privacy_text: string | null
+  welcome_title: string | null
+  register_title: string | null
+  sponsors_title: string | null
+  home_greeting: string | null
 }
-export type FeatureKey = 'news' | 'events' | 'fixtures' | 'shop' | 'membership' | 'lotto' | 'booking' | 'messages'
+export type FeatureKey = 'news' | 'events' | 'fixtures' | 'shop' | 'membership' | 'lotto' | 'booking' | 'sponsors'
+export interface Sponsor { id: string; name: string; logo_url: string | null; website_url: string | null; tier: string; blurb: string | null; active: boolean; sort_order: number }
 export interface NewsPost { id: string; title: string; body: string; image_url: string | null; published: boolean; pinned: boolean; created_at: string }
 export interface ClubEvent { id: string; title: string; description: string | null; location: string | null; starts_at: string; ends_at: string | null; team_id: string | null; image_url: string | null; rsvp_enabled: boolean }
 export interface Rsvp { event_id: string; profile_id: string; status: 'going' | 'maybe' | 'not_going' }

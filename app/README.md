@@ -4,8 +4,8 @@ A ClubSpot-style club app built with React + Vite + Capacitor on a Supabase back
 
 | Area | Where |
 | --- | --- |
-| Member app (bottom tabs) | `src/pages/member/*` — News feed, Events + RSVP, Fixtures & results + match tickets, Shop + cart, Membership packages, Club Lotto, Facility booking, Team messaging, Purchases, Notifications inbox, Profile + children |
-| Admin console | `src/pages/admin/*` — Dashboard, News, Events, Fixtures, Members (team assignment, make admin, remove), Teams, Memberships, Lotto (run draw), Facilities + bookings, Products, Orders & refunds, Messages, Push notifications, Reports, Settings (branding, features on/off, contact, admins) |
+| Member app (bottom tabs) | `src/pages/member/*` — News feed, Events + RSVP, Fixtures & results + match tickets, Shop + cart, Membership packages, Club Lotto, Facility booking, Sponsors, Purchases, Notifications inbox, Profile + children |
+| Admin console | `src/pages/admin/*` — Dashboard, News, Events, Fixtures, Members (team assignment, make admin, remove), Teams, Memberships, Lotto (run draw), Facilities + bookings, Products, Sponsors, Orders & refunds, Push notifications, Reports, Settings (branding, features on/off, contact, all app text, admins) |
 | Database | `supabase/00-full-setup.sql` — one paste, safe to re-run |
 | Edge functions | `supabase/functions/*` — Stripe checkout / verify / webhook / refund, `send-push`, `delete-account` |
 | Native shell | `capacitor.config.ts`, `android/`, `ios/` |
@@ -64,14 +64,16 @@ cd app && yarn build          # outputs app/dist
 rm -rf ../docs/* && cp -r dist/* ../docs/   # GitHub Pages serves /docs
 ```
 
-## 4. Push notifications (Firebase)
+## 4. Push notifications (Firebase) — CONFIGURED
+Firebase project `dublin-lions` is connected: the service account is stored as the `FIREBASE_SERVICE_ACCOUNT` Supabase secret (verified against the FCM v1 API), and the client config files are in place locally:
+- `app/android/app/google-services.json` — Android (Gradle applies the google-services plugin automatically).
+- `app/ios/App/App/GoogleService-Info.plist` — iOS.
 
-1. https://console.firebase.google.com → Add project → add an **Android app** with package `ie.dublinlions.app` → download `google-services.json` → put it in `app/android/app/`.
-2. Add an **iOS app** with bundle id `ie.dublinlions.app` → download `GoogleService-Info.plist` → add to `app/ios/App/App/` in Xcode. In Firebase → Cloud Messaging → upload your **APNs key** (from Apple Developer → Keys).
-3. Project settings → Service accounts → **Generate new private key** → paste the whole JSON as the `FIREBASE_SERVICE_ACCOUNT` secret in Supabase.
-4. iOS only: in Xcode enable *Push Notifications* and *Background Modes → Remote notifications* capabilities.
+Both files are **git-ignored** (Google API keys trigger GitHub push protection). When you clone the repo on your build machine, copy them back from the Firebase console (*Project settings → Your apps → download*).
 
-Admins send notifications from **Admin → Notifications** (everyone or one team). Every message also lands in the in-app inbox, even for members who declined push.
+iOS extra steps (once, in Xcode): **File → Add Package Dependencies → `https://github.com/firebase/firebase-ios-sdk`** → add `FirebaseMessaging` to the *App* target; drag `GoogleService-Info.plist` into the *App* group; enable *Push Notifications* + *Background Modes → Remote notifications*; in Firebase → *Cloud Messaging* upload your **APNs key** (Apple Developer → Keys). `AppDelegate.swift` already forwards the APNs token to Firebase and the FCM token to Capacitor.
+
+Admins send from **Admin → Notifications** (everyone or one team); Match Day Live sends team pushes automatically. Members' devices register on first login (`push_tokens`), and dead tokens are pruned automatically.
 
 ## 5. Match Day Live
 Admins and team coaches (the *coach email* on a team) see a **Match control** panel on any fixture (Fixtures tab → open the game): start match, tap +1/+2/+3, set the period, post short updates, finish. Members see the LIVE badge, score and updates in real time; a team push goes out at tip-off and at the final score.

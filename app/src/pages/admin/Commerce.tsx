@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Trophy } from 'lucide-react'
-import { listAll, sb, type Booking, type Facility, type LottoDraw, type LottoTicket, type Membership, type MembershipPackage, type Product, type Profile } from '@/lib/db'
+import { listAll, sb, type Booking, type Facility, type LottoDraw, type LottoTicket, type Membership, type MembershipPackage, type Product, type Profile, type Sponsor } from '@/lib/db'
 import { useLiveQuery } from '@/lib/useLiveQuery'
 import { fmtDate, fmtDateTime, fmtTime, money } from '@/lib/format'
 import { AdminCrud, type FieldDef } from '@/components/AdminCrud'
@@ -147,7 +147,7 @@ export function AdminProducts() {
     { key: 'description', label: 'Description', type: 'textarea' },
     { key: 'image_url', label: 'Photo', type: 'image', folder: 'products' },
     { key: 'sizes', label: 'Sizes (comma separated, optional)', type: 'tags' },
-    { key: 'stock', label: 'Stock (blank = unlimited)', type: 'number', half: true },
+    { key: 'stock', label: 'Stock (blank = unlimited)', type: 'number', half: true, nullable: true },
     { key: 'sort_order', label: 'Order', type: 'number', half: true },
     { key: 'active', label: 'Visible in shop', type: 'toggle' },
   ], [])
@@ -155,6 +155,24 @@ export function AdminProducts() {
     <div>
       <PageHeader title="Shop products" subtitle="Merchandise sold through the app" />
       <AdminCrud<Product> table="products" fields={fields} orderBy="sort_order" ascending newLabel="New product" defaults={{ active: true, category: 'Merchandise' } as Partial<Product>} itemTitle={(r) => r.name} itemSubtitle={(r) => `${money(r.price_cents)}${r.category ? ` · ${r.category}` : ''}${r.stock != null ? ` · ${r.stock} in stock` : ''}`} itemBadge={(r) => (r.active ? (r.stock != null && r.stock <= 0 ? <Badge tone="red">Sold out</Badge> : <Badge tone="green">Live</Badge>) : <Badge tone="slate">Hidden</Badge>)} testPrefix="products" />
+    </div>
+  )
+}
+
+export function AdminSponsors() {
+  const fields: FieldDef[] = [
+    { key: 'name', label: 'Sponsor name', type: 'text', required: true },
+    { key: 'tier', label: 'Tier / level', type: 'text', half: true, hint: 'e.g. Main sponsor, Kit partner' },
+    { key: 'sort_order', label: 'Order', type: 'number', half: true },
+    { key: 'logo_url', label: 'Logo', type: 'image', folder: 'sponsors' },
+    { key: 'website_url', label: 'Website (https://…)', type: 'text' },
+    { key: 'blurb', label: 'Short description', type: 'textarea' },
+    { key: 'active', label: 'Visible to members', type: 'toggle' },
+  ]
+  return (
+    <div>
+      <PageHeader title="Sponsors" subtitle="Shown on the member home screen and the Sponsors page" />
+      <AdminCrud<Sponsor> table="sponsors" fields={fields} orderBy="sort_order" ascending newLabel="New sponsor" defaults={{ active: true, tier: 'Club partner' } as Partial<Sponsor>} itemTitle={(r) => r.name} itemSubtitle={(r) => [r.tier, r.website_url].filter(Boolean).join(' · ')} itemBadge={(r) => (r.active ? <Badge tone="green">Live</Badge> : <Badge tone="slate">Hidden</Badge>)} testPrefix="sponsors" />
     </div>
   )
 }

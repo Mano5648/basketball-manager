@@ -10,9 +10,9 @@ import { useClub } from '@/lib/ClubContext'
 function Frame({ children }: { children: React.ReactNode }) {
   const { settings } = useClub()
   return (
-    <div className="flex min-h-[100dvh] items-center justify-center bg-[#070C16] px-6 text-white">
+    <div className="flex min-h-[100dvh] items-center justify-center bg-[#0A0A0C] px-6 text-white">
       <div className="w-full max-w-sm space-y-6 text-center">
-        <img src={settings?.logo_url || './logo-lions-emblem.png'} alt="" className="mx-auto h-16 w-16 rounded-2xl object-cover" />
+        <img src={settings?.logo_url || './logo-lions-emblem.png'} alt="" className="mx-auto h-16 w-16 rounded-2xl bg-white object-contain" />
         {children}
       </div>
     </div>
@@ -85,14 +85,14 @@ export function PrivacyPage() {
     <div className="mx-auto max-w-2xl px-6 py-12 text-slate-200">
       <h1 className="font-display text-3xl font-bold text-white">Privacy policy</h1>
       <p className="mt-2 text-sm text-slate-400">{settings?.club_name} · club app</p>
-      <div className="mt-6 space-y-4 text-sm leading-relaxed">
-        <p><b>What we collect.</b> Your name, email, phone number (optional), member type, the names and dates of birth of children you register, team assignments, event RSVPs, chat messages you send, lotto entries, bookings and purchase records.</p>
+      {settings?.privacy_text ? <div className="mt-6 whitespace-pre-wrap text-sm leading-relaxed">{settings.privacy_text}</div> : <div className="mt-6 space-y-4 text-sm leading-relaxed">
+        <p><b>What we collect.</b> Your name, email, phone number (optional), member type, the names and dates of birth of children you register, team assignments, event RSVPs, lotto entries, bookings and purchase records.</p>
         <p><b>Why.</b> To run the club: communicate news and events, organise teams and fixtures, process payments for memberships, shop orders, tickets, lotto and bookings, and to send you notifications you've opted into.</p>
         <p><b>Payments.</b> Card details are handled entirely by Stripe. We never see or store your card number.</p>
         <p><b>Push notifications.</b> If you allow notifications, a device token is stored so the club can send you messages. You can revoke this in your device settings at any time.</p>
         <p><b>Sharing.</b> Data is stored with Supabase (EU region) and payments with Stripe. We do not sell your data or share it with advertisers.</p>
         <p><b>Your rights.</b> You can update your profile at any time and delete your account and data from <i>Profile → Delete my account</i>, or contact {settings?.contact_email ?? 'the club'}.</p>
-      </div>
+      </div>}
       <Link to="/app" className="mt-8 inline-block text-sm text-lions-300 underline">Back to the app</Link>
     </div>
   )

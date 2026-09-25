@@ -14,7 +14,7 @@ interface ClubContextValue {
 
 const ClubContext = createContext<ClubContextValue | null>(null)
 
-const DEFAULT_FEATURES: Record<FeatureKey, boolean> = { news: true, events: true, fixtures: true, shop: true, membership: true, lotto: true, booking: true, messages: true }
+const DEFAULT_FEATURES: Record<FeatureKey, boolean> = { news: true, events: true, fixtures: true, shop: true, membership: true, lotto: true, booking: true, sponsors: true }
 
 export function ClubProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()

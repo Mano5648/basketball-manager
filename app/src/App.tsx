@@ -11,24 +11,23 @@ import HomeFeed, { NewsDetail } from './pages/member/HomeFeed'
 import EventsPage, { EventDetail } from './pages/member/Events'
 import FixturesPage, { FixtureDetail } from './pages/member/Fixtures'
 import ShopPage, { CartPage } from './pages/member/Shop'
-import MorePage, { InboxPage } from './pages/member/More'
+import MorePage, { InboxPage, SponsorsPage } from './pages/member/More'
 import MembershipPage from './pages/member/Membership'
 import LottoPage from './pages/member/Lotto'
 import BookingsPage from './pages/member/Bookings'
-import MessagesPage, { ChatThread } from './pages/member/Messages'
 import OrdersPage from './pages/member/Orders'
 import ProfilePage from './pages/member/Profile'
 import PaymentSuccess, { PaymentCancel, PrivacyPage } from './pages/PaymentResult'
 import AdminDashboard from './pages/admin/Dashboard'
 import { AdminNews, AdminEvents, AdminFixtures } from './pages/admin/Content'
 import { AdminMembers, AdminTeams } from './pages/admin/People'
-import { AdminMemberships, AdminLotto, AdminFacilities, AdminProducts } from './pages/admin/Commerce'
+import { AdminMemberships, AdminLotto, AdminFacilities, AdminProducts, AdminSponsors } from './pages/admin/Commerce'
 import { AdminOrders } from './pages/admin/Orders'
 import { AdminNotifications } from './pages/admin/Notifications'
 import { AdminSettings, AdminReports } from './pages/admin/Settings'
 
 function Loading() {
-  return <div className="flex min-h-[100dvh] items-center justify-center bg-[#070C16]"><Loader2 size={32} className="animate-spin text-lions-400" /></div>
+  return <div className="flex min-h-[100dvh] items-center justify-center bg-[#0A0A0C]"><Loader2 size={32} className="animate-spin text-lions-400" /></div>
 }
 
 function RequireAuth({ children, admin }: { children: React.ReactNode; admin?: boolean }) {
@@ -99,10 +98,9 @@ export default function App() {
           <Route path="membership" element={<MembershipPage />} />
           <Route path="lotto" element={<LottoPage />} />
           <Route path="bookings" element={<BookingsPage />} />
-          <Route path="messages" element={<MessagesPage />} />
-          <Route path="messages/:teamId" element={<ChatThread />} />
           <Route path="orders" element={<OrdersPage />} />
           <Route path="inbox" element={<InboxPage />} />
+          <Route path="sponsors" element={<SponsorsPage />} />
           <Route path="profile" element={<ProfilePage />} />
         </Route>
 
@@ -117,9 +115,8 @@ export default function App() {
           <Route path="lotto" element={<AdminLotto />} />
           <Route path="facilities" element={<AdminFacilities />} />
           <Route path="products" element={<AdminProducts />} />
+          <Route path="sponsors" element={<AdminSponsors />} />
           <Route path="orders" element={<AdminOrders />} />
-          <Route path="messages" element={<MessagesPage base="/admin/messages" />} />
-          <Route path="messages/:teamId" element={<ChatThread base="/admin/messages" />} />
           <Route path="notifications" element={<AdminNotifications />} />
           <Route path="reports" element={<AdminReports />} />
           <Route path="settings" element={<AdminSettings />} />

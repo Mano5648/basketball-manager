@@ -1,8 +1,8 @@
 import { useNavigate } from 'react-router-dom'
-import { Bell, CalendarCheck, ChevronRight, CreditCard, Dumbbell, Mail, MessageSquare, Phone, Receipt, ShieldCheck, Ticket, UserCircle2, type LucideIcon } from 'lucide-react'
+import { Bell, CalendarCheck, ChevronRight, CreditCard, Dumbbell, ExternalLink, Handshake, Mail, Phone, Receipt, ShieldCheck, Ticket, UserCircle2, type LucideIcon } from 'lucide-react'
 import { useAuth } from '@/lib/AuthContext'
 import { useClub } from '@/lib/ClubContext'
-import { listAll, sb, type Notification } from '@/lib/db'
+import { listAll, sb, type Notification, type Sponsor } from '@/lib/db'
 import { useLiveQuery } from '@/lib/useLiveQuery'
 import { fmtDateTime } from '@/lib/format'
 import { Card, Empty, PageHeader, Spinner, cx } from '@/components/ui'
@@ -15,7 +15,7 @@ export default function MorePage() {
   type Item = { to: string; label: string; hint: string; icon: LucideIcon; feature?: FeatureKey; testId: string }
   const all: Item[] = [
     { to: '/app/membership', label: 'Membership', hint: 'Join, renew & view status', icon: CreditCard, feature: 'membership', testId: 'more-membership' },
-    { to: '/app/messages', label: 'Messages', hint: 'Team & club chat', icon: MessageSquare, feature: 'messages', testId: 'more-messages' },
+    { to: '/app/sponsors', label: 'Sponsors', hint: 'The partners who back the club', icon: Handshake, feature: 'sponsors', testId: 'more-sponsors' },
     { to: '/app/lotto', label: 'Club Lotto', hint: 'Play & see results', icon: Ticket, feature: 'lotto', testId: 'more-lotto' },
     { to: '/app/bookings', label: 'Facility booking', hint: 'Book courts & halls', icon: Dumbbell, feature: 'booking', testId: 'more-bookings' },
     { to: '/app/orders', label: 'Purchases', hint: 'Orders, tickets & receipts', icon: Receipt, testId: 'more-orders' },
@@ -41,6 +41,7 @@ export default function MorePage() {
           </Card>
         ))}
       </div>
+      {settings?.about_text && <Card className="text-sm leading-relaxed text-slate-300"><p className="mb-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-400">About the club</p><p className="whitespace-pre-wrap">{settings.about_text}</p></Card>}
       {(settings?.contact_email || settings?.contact_phone) && (
         <Card className="space-y-2 text-sm">
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Contact the club</p>
@@ -90,6 +91,34 @@ export function InboxPage() {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+export function useSponsors() {
+  return useLiveQuery(() => listAll<Sponsor>('sponsors', 'sort_order', true, (x) => x.eq('active', true)), ['sponsors'])
+}
+
+export function SponsorCard({ s }: { s: Sponsor }) {
+  const inner = (
+    <>
+      {s.logo_url ? <img src={s.logo_url} alt={s.name} className="h-14 w-14 shrink-0 rounded-xl bg-white object-contain p-1" /> : <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] text-slate-400"><Handshake size={20} /></div>}
+      <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{s.name}</p><p className="text-xs text-warn-400">{s.tier}</p>{s.blurb && <p className="mt-1 text-xs text-slate-400">{s.blurb}</p>}</div>
+      {s.website_url && <ExternalLink size={16} className="text-slate-500" />}
+    </>
+  )
+  return s.website_url
+    ? <a data-testid={`sponsor-${s.id}`} href={s.website_url} target="_blank" rel="noreferrer" className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-[#161618] p-4 hover:border-white/20">{inner}</a>
+    : <Card testId={`sponsor-${s.id}`} className="flex items-center gap-3">{inner}</Card>
+}
+
+export function SponsorsPage() {
+  const { settings } = useClub()
+  const q = useSponsors()
+  return (
+    <div>
+      <PageHeader title={settings?.sponsors_title || 'Our sponsors'} subtitle="Thank you for backing the club" back="/app/more" />
+      {q.loading && !q.data ? <Spinner /> : !q.data?.length ? <Empty icon={<Handshake />} title="No sponsors listed yet" /> : <div className="space-y-2">{q.data.map((s) => <SponsorCard key={s.id} s={s} />)}</div>}
     </div>
   )
 }

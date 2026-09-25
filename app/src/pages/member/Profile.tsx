@@ -65,7 +65,7 @@ export default function ProfilePage() {
 
       <section className="space-y-2">
         <div className="flex items-center justify-between"><h2 className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">My children</h2><Button data-testid="add-child-btn" size="sm" variant="secondary" onClick={() => setAddChild(true)}><Plus size={14} /> Add child</Button></div>
-        {children.length === 0 ? <p className="text-sm text-slate-500">Add your children to buy their membership and see their team chats.</p> : children.map((c) => (
+        {children.length === 0 ? <p className="text-sm text-slate-500">Add your children to buy their membership and get them assigned to a team.</p> : children.map((c) => (
           <Card key={c.id} testId={`child-${c.id}`} className="flex items-center gap-3 py-3">
             <Baby size={18} className="text-lions-300" />
             <div className="flex-1"><p className="text-sm font-semibold">{c.full_name}</p><p className="text-xs text-slate-400">{c.team_id ? teams.find((t) => t.id === c.team_id)?.name ?? 'Team' : 'Awaiting team assignment'}{c.dob ? ` · born ${c.dob}` : ''}</p></div>

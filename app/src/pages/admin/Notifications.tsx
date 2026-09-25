@@ -9,7 +9,7 @@ import { Alert, Badge, Button, Card, Empty, Field, Input, PageHeader, Select, Sp
 const LINKS = [
   { value: '', label: 'Open the app home' }, { value: '/app/events', label: 'Events' }, { value: '/app/fixtures', label: 'Fixtures' },
   { value: '/app/shop', label: 'Shop' }, { value: '/app/membership', label: 'Membership' }, { value: '/app/lotto', label: 'Lotto' },
-  { value: '/app/bookings', label: 'Bookings' }, { value: '/app/messages', label: 'Messages' },
+  { value: '/app/bookings', label: 'Bookings' }, { value: '/app/sponsors', label: 'Sponsors' },
 ]
 
 export function AdminNotifications() {

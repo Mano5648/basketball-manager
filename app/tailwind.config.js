@@ -5,7 +5,7 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        "deep-navy": "#070C16",
+        "deep-navy": "#0A0A0C", gold: "#FEBD15",
         lions: {
           50: "#EEF4FF",
           100: "rgb(var(--brand-100) / <alpha-value>)",
@@ -16,7 +16,7 @@ module.exports = {
           600: "rgb(var(--brand-600) / <alpha-value>)",
           700: "#163FB4",
         },
-        warn: { 400: "#FBBF24", 500: "#F59E0B", 600: "#D97706" },
+        warn: { 400: "#FEBD15", 500: "#E5A800", 600: "#C48F00" },
       },
       fontFamily: {
         display: ['Space Grotesk', 'system-ui', 'sans-serif'],

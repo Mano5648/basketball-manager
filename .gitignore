@@ -26,3 +26,7 @@ app/ios/App/Pods/
 app/ios/App/build/
 app/ios/App/App/public/
 app/android/app/src/main/assets/public/
+
+# Firebase client config (Google API keys trip GitHub push protection) — keep local, see README §4
+app/android/app/google-services.json
+app/ios/App/App/GoogleService-Info.plist

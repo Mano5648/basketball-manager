@@ -4,20 +4,20 @@ const config: CapacitorConfig = {
   appId: 'ie.dublinlions.app',
   appName: 'Dublin Lions BC',
   webDir: 'dist',
-  backgroundColor: '#070C16',
+  backgroundColor: '#0A0A0C',
   android: {
     allowMixedContent: false,
-    backgroundColor: '#070C16',
+    backgroundColor: '#0A0A0C',
   },
   ios: {
     contentInset: 'automatic',
-    backgroundColor: '#070C16',
+    backgroundColor: '#0A0A0C',
   },
   plugins: {
     SplashScreen: {
       launchShowDuration: 1500,
       launchAutoHide: true,
-      backgroundColor: '#070C16',
+      backgroundColor: '#0A0A0C',
       androidScaleType: 'CENTER_CROP',
       showSpinner: false,
     },
@@ -26,7 +26,7 @@ const config: CapacitorConfig = {
     },
     StatusBar: {
       style: 'DARK',
-      backgroundColor: '#070C16',
+      backgroundColor: '#0A0A0C',
     },
   },
 }

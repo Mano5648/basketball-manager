@@ -125,18 +125,19 @@ export function AdminMembers() {
 }
 
 export function AdminTeams() {
-  const fields: FieldDef[] = [
+  const members = useLiveQuery(() => listAll<Profile>('profiles', 'full_name', true), ['profiles'])
+  const fields: FieldDef[] = useMemo(() => [
     { key: 'name', label: 'Team name', type: 'text', required: true },
     { key: 'age_group', label: 'Age group', type: 'text', half: true, hint: 'e.g. U12, U16, Senior Men' },
     { key: 'sort_order', label: 'Order', type: 'number', half: true },
-    { key: 'coach_name', label: 'Coach name', type: 'text', half: true },
-    { key: 'coach_email', label: 'Coach email', type: 'text', half: true, hint: 'Coach gets access to this team chat' },
+    { key: 'coach_email', label: 'Coach (from members)', type: 'select', hint: 'Coach can run Match Day Live for this team', options: (members.data ?? []).map((p) => ({ value: p.email, label: `${p.full_name || '(no name)'} · ${p.email}` })) },
     { key: 'description', label: 'Description', type: 'textarea' },
-  ]
+  ], [members.data])
+  const coachName = (email: string | null) => (members.data ?? []).find((p) => p.email === email)?.full_name || null
   return (
     <div>
-      <PageHeader title="Teams" subtitle="Squads for fixtures, chats and rosters. Assign members in the Members page." />
-      <AdminCrud<Team> table="teams" fields={fields} orderBy="sort_order" ascending newLabel="New team" itemTitle={(r) => r.name} itemSubtitle={(r) => [r.age_group, r.coach_name && `Coach ${r.coach_name}`].filter(Boolean).join(' · ')} testPrefix="teams" />
+      <PageHeader title="Teams" subtitle="Squads for fixtures and rosters. Assign players in the Members page." />
+      <AdminCrud<Team> table="teams" fields={fields} orderBy="sort_order" ascending newLabel="New team" transformOut={(f) => ({ ...f, coach_name: coachName((f.coach_email as string | null) ?? null) })} itemTitle={(r) => r.name} itemSubtitle={(r) => [r.age_group, r.coach_email && `Coach ${coachName(r.coach_email) || r.coach_email}`].filter(Boolean).join(' · ')} testPrefix="teams" />
     </div>
   )
 }

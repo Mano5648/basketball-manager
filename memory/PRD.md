@@ -78,6 +78,24 @@ origin bug in checkout/redirect URLs, login redirect waited for role.
 - User declined membership reminders. Push still needs Firebase (explained: native push must go via
   FCM/APNs; Supabase only triggers it). Node 22 + supabase CLI now at `/root/tools/node22/bin`.
 
+## Added 2026-06 (round 3)
+- Logo: original crest used untouched everywhere (white bg kept; icon/splash white bg; header/auth show it
+  in a white rounded tile). Palette re-themed to crest colours: black surfaces (#0A0A0C/#161618), brand red
+  #E00000 (`club_settings.primary_color`), gold accent `warn` #FEBD15. PWA icons in `public/icons` + manifest.
+- **Sponsors** (`supabase/sponsors-setup.sql` APPLIED): table + admin CRUD (/admin/sponsors) + member
+  home strip + /app/sponsors page; feature flag `sponsors`.
+- **Nothing static**: club_settings gained about_text, privacy_text, welcome_title, register_title,
+  sponsors_title, home_greeting ({name}); all editable in Admin → Settings → App text.
+- **Team messaging removed** (UI + routes + feature flag; `chat_messages` table left in DB, unused).
+- **Coach picker**: Teams admin selects coach from members list (coach_name auto-filled).
+- AdminCrud: number fields omit empty values unless `nullable` (fixed sponsor save failure); error text
+  now shows PostgREST message.
+- **Firebase push CONFIGURED**: project `dublin-lions`; service account → Supabase secret
+  FIREBASE_SERVICE_ACCOUNT (copy in /root/.secrets/firebase-service-account.json), FCM v1 auth verified;
+  google-services.json + GoogleService-Info.plist placed in native projects (git-ignored; copies in
+  /root/.secrets). AppDelegate.swift has Firebase/APNs forwarding guarded by #if canImport. Remaining
+  user steps: add firebase-ios-sdk SPM package in Xcode + APNs key (needs Apple Developer account).
+
 ## Backlog
 - P1: Firebase push setup once user provides service account; app icons/splash via @capacitor/assets.
 - P1: Receipt emails (RESEND_API_KEY) — function exists in `_shared/purchase-email.ts`.

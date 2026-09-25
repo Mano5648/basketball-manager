@@ -37,7 +37,7 @@ export function Card({ className, children, onClick, testId }: { className?: str
     <div
       data-testid={testId}
       onClick={onClick}
-      className={cx('rounded-2xl border border-white/[0.08] bg-[#0f1a2e] p-4 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset]', onClick && 'cursor-pointer hover:border-white/20 transition-colors', className)}
+      className={cx('rounded-2xl border border-white/[0.08] bg-[#161618] p-4 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset]', onClick && 'cursor-pointer hover:border-white/20 transition-colors', className)}
     >
       {children}
     </div>
@@ -93,7 +93,7 @@ export function Sheet({ open, onClose, title, children, testId }: { open: boolea
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <div data-testid={testId} className="relative flex max-h-[92dvh] w-full max-w-lg flex-col rounded-t-3xl border border-white/10 bg-[#0c1526] shadow-2xl sm:rounded-3xl animate-in slide-in-from-bottom-8 fade-in duration-200">
+      <div data-testid={testId} className="relative flex max-h-[92dvh] w-full max-w-lg flex-col rounded-t-3xl border border-white/10 bg-[#141416] shadow-2xl sm:rounded-3xl animate-in slide-in-from-bottom-8 fade-in duration-200">
         <div className="flex items-center justify-between border-b border-white/[0.08] px-5 py-4">
           <h2 className="text-base font-bold text-white">{title}</h2>
           <button data-testid="sheet-close" onClick={onClose} className="rounded-full p-2 text-slate-400 hover:bg-white/10 hover:text-white" aria-label="Close"><X size={18} /></button>

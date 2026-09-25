@@ -10,7 +10,7 @@ import { isStripeCheckoutConfigured } from '@/lib/stripeCheckout'
 const FEATURES: { key: FeatureKey; label: string }[] = [
   { key: 'news', label: 'Club news feed' }, { key: 'events', label: 'Events & RSVP' }, { key: 'fixtures', label: 'Fixtures & results' },
   { key: 'shop', label: 'Club shop' }, { key: 'membership', label: 'Membership packages' }, { key: 'lotto', label: 'Club lotto' },
-  { key: 'booking', label: 'Facility booking' }, { key: 'messages', label: 'Team messaging' },
+  { key: 'booking', label: 'Facility booking' }, { key: 'sponsors', label: 'Sponsors' },
 ]
 
 export function AdminSettings() {
@@ -79,6 +79,17 @@ export function AdminSettings() {
           <div className="grid gap-2 sm:grid-cols-2">
             {FEATURES.map((f) => <Toggle key={f.key} testId={`feature-${f.key}`} label={f.label} checked={form.features?.[f.key] !== false} onChange={(v) => set('features', { ...form.features, [f.key]: v })} />)}
           </div>
+        </section>
+        <section className="space-y-3">
+          <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">App text</h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Home greeting" hint="{name} is replaced with the member's first name"><Input data-testid="settings-greeting" value={form.home_greeting ?? ''} onChange={(e) => set('home_greeting', e.target.value)} /></Field>
+            <Field label="Sponsors section title"><Input data-testid="settings-sponsors-title" value={form.sponsors_title ?? ''} onChange={(e) => set('sponsors_title', e.target.value)} /></Field>
+            <Field label="Login screen title"><Input value={form.welcome_title ?? ''} onChange={(e) => set('welcome_title', e.target.value)} /></Field>
+            <Field label="Register screen title"><Input value={form.register_title ?? ''} onChange={(e) => set('register_title', e.target.value)} /></Field>
+          </div>
+          <Field label="About the club (shown in More)"><Textarea data-testid="settings-about" value={form.about_text ?? ''} onChange={(e) => set('about_text', e.target.value)} /></Field>
+          <Field label="Privacy policy text" hint="Leave blank to use the built-in default policy"><Textarea value={form.privacy_text ?? ''} onChange={(e) => set('privacy_text', e.target.value)} /></Field>
         </section>
         <section className="space-y-3">
           <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Lotto rules / legal text</h2>

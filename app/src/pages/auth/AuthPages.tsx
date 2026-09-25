@@ -10,11 +10,11 @@ import { supabase } from '@/lib/supabase'
 function AuthFrame({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
   const { settings } = useClub()
   return (
-    <div className="relative min-h-[100dvh] overflow-hidden bg-[#070C16] text-white">
+    <div className="relative min-h-[100dvh] overflow-hidden bg-[#0A0A0C] text-white">
       <div className="pointer-events-none absolute -top-32 left-1/2 h-72 w-[140%] -translate-x-1/2 rounded-[100%] bg-lions-500/25 blur-3xl" />
       <div className="relative mx-auto flex min-h-[100dvh] max-w-md flex-col px-6 pb-10 pt-[calc(env(safe-area-inset-top)+3.5rem)]">
         <div className="mb-8 flex flex-col items-start gap-4">
-          <img src={settings?.logo_url || './logo-lions-emblem.png'} alt="" className="h-16 w-16 rounded-2xl object-cover shadow-lg" />
+          <img src={settings?.logo_url || './logo-lions-emblem.png'} alt="" className="h-20 w-20 rounded-2xl bg-white object-contain shadow-lg" />
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-lions-300">{settings?.club_name ?? 'Club app'}</p>
             <h1 className="font-display mt-1 text-3xl font-bold tracking-tight">{title}</h1>
@@ -39,6 +39,7 @@ function PasswordInput({ value, onChange, testId, placeholder = 'Password', auto
 
 export function LoginPage() {
   const { signIn, user, role, loading } = useAuth()
+  const { settings } = useClub()
   const nav = useNavigate()
   const [email, setEmail] = useState(() => localStorage.getItem('club_last_email') ?? '')
   const [password, setPassword] = useState('')
@@ -57,7 +58,7 @@ export function LoginPage() {
   }
 
   return (
-    <AuthFrame title="Welcome back" subtitle="Sign in to your club account">
+    <AuthFrame title={settings?.welcome_title || 'Welcome back'} subtitle="Sign in to your club account">
       <form onSubmit={submit} className="space-y-4" data-testid="login-form">
         <Field label="Email"><Input data-testid="login-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoComplete="email" placeholder="you@example.com" /></Field>
         <Field label="Password"><PasswordInput testId="login-password" value={password} onChange={setPassword} /></Field>
@@ -80,6 +81,7 @@ const MEMBER_TYPES: { value: MemberType; label: string; hint: string }[] = [
 
 export function RegisterPage() {
   const { signUp } = useAuth()
+  const { settings } = useClub()
   const nav = useNavigate()
   const [form, setForm] = useState({ fullName: '', email: '', phone: '', password: '', memberType: 'parent' as MemberType, agree: false })
   const [busy, setBusy] = useState(false)
@@ -110,7 +112,7 @@ export function RegisterPage() {
   }
 
   return (
-    <AuthFrame title="Join the club" subtitle="Create your member account">
+    <AuthFrame title={settings?.register_title || 'Join the club'} subtitle="Create your member account">
       <form onSubmit={submit} className="space-y-4" data-testid="register-form">
         <div className="grid grid-cols-3 gap-2">
           {MEMBER_TYPES.map((t) => (

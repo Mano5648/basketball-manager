@@ -56,7 +56,7 @@ export async function initNativeShell(): Promise<void> {
   try {
     const { StatusBar, Style } = await import('@capacitor/status-bar')
     await StatusBar.setStyle({ style: Style.Dark })
-    if (platform === 'android') await StatusBar.setBackgroundColor({ color: '#070C16' })
+    if (platform === 'android') await StatusBar.setBackgroundColor({ color: '#0A0A0C' })
   } catch { /* plugin not available */ }
   try {
     const { SplashScreen } = await import('@capacitor/splash-screen')

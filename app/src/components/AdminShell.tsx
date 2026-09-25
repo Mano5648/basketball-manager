@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { BarChart3, Bell, CalendarDays, Dumbbell, Home, LayoutDashboard, LogOut, Menu, MessageSquare, Newspaper, Package, Settings, ShoppingBag, Ticket, Trophy, UserCog, Users, X, CreditCard } from 'lucide-react'
+import { BarChart3, Bell, CalendarDays, Dumbbell, Home, LayoutDashboard, Handshake, LogOut, Menu, Newspaper, Package, Settings, ShoppingBag, Ticket, Trophy, UserCog, Users, X, CreditCard } from 'lucide-react'
 import { useAuth } from '@/lib/AuthContext'
 import { useClub } from '@/lib/ClubContext'
 import { cx } from './ui'
@@ -16,8 +16,8 @@ const NAV = [
   { to: '/admin/lotto', label: 'Club Lotto', icon: Ticket },
   { to: '/admin/facilities', label: 'Facilities', icon: Dumbbell },
   { to: '/admin/products', label: 'Shop Products', icon: ShoppingBag },
+  { to: '/admin/sponsors', label: 'Sponsors', icon: Handshake },
   { to: '/admin/orders', label: 'Orders & Payments', icon: Package },
-  { to: '/admin/messages', label: 'Messages', icon: MessageSquare },
   { to: '/admin/notifications', label: 'Notifications', icon: Bell },
   { to: '/admin/reports', label: 'Reports', icon: BarChart3 },
   { to: '/admin/settings', label: 'Settings', icon: Settings },
@@ -45,10 +45,10 @@ export default function AdminShell() {
   )
 
   return (
-    <div className="flex min-h-[100dvh] bg-[#070C16] text-white">
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-white/[0.06] bg-[#0a1120] lg:flex">
+    <div className="flex min-h-[100dvh] bg-[#0A0A0C] text-white">
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-white/[0.06] bg-[#101012] lg:flex">
         <div className="flex items-center gap-3 px-5 py-5">
-          <img src={settings?.logo_url || './logo-lions-emblem.png'} alt="" className="h-9 w-9 rounded-full object-cover" />
+          <img src={settings?.logo_url || './logo-lions-emblem.png'} alt="" className="h-9 w-9 rounded-lg bg-white object-contain" />
           <div><p className="font-display text-sm font-bold">{settings?.club_name}</p><p className="text-[11px] uppercase tracking-widest text-lions-300">Admin</p></div>
         </div>
         {menu}
@@ -57,7 +57,7 @@ export default function AdminShell() {
       {open && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="absolute inset-0 bg-black/70" onClick={() => setOpen(false)} />
-          <aside className="absolute inset-y-0 left-0 flex w-72 flex-col bg-[#0a1120] pt-[env(safe-area-inset-top)]">
+          <aside className="absolute inset-y-0 left-0 flex w-72 flex-col bg-[#101012] pt-[env(safe-area-inset-top)]">
             <div className="flex items-center justify-between px-4 py-4"><p className="font-display font-bold">Admin</p><button onClick={() => setOpen(false)} className="p-2 text-slate-400"><X size={20} /></button></div>
             {menu}
           </aside>
@@ -65,7 +65,7 @@ export default function AdminShell() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-white/[0.06] bg-[#070C16]/85 px-4 backdrop-blur-xl pt-[env(safe-area-inset-top)] lg:hidden">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-white/[0.06] bg-[#0A0A0C]/85 px-4 backdrop-blur-xl pt-[env(safe-area-inset-top)] lg:hidden">
           <button data-testid="admin-menu-btn" onClick={() => setOpen(true)} className="rounded-full p-2 text-slate-300 hover:bg-white/10" aria-label="Menu"><Menu size={22} /></button>
           <p className="font-display text-sm font-bold">{settings?.club_name} · Admin</p>
         </header>

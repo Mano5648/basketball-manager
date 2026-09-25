@@ -7,6 +7,8 @@ import { useClub } from '@/lib/ClubContext'
 import { useAuth } from '@/lib/AuthContext'
 import { fmtDate, fmtDateTime, fmtTime, timeAgo } from '@/lib/format'
 import { Badge, Card, Empty, PageHeader, Spinner } from '@/components/ui'
+import { useSponsors } from './More'
+import { Handshake } from 'lucide-react'
 
 export function NewsCard({ post, compact }: { post: NewsPost; compact?: boolean }) {
   const nav = useNavigate()
@@ -80,13 +82,15 @@ export default function HomeFeed() {
   }, ['news_posts', 'events', 'fixtures'])
 
   const teamName = useMemo(() => Object.fromEntries(teams.map((t) => [t.id, t.name])), [teams])
-  const firstName = profile?.full_name?.split(' ')[0]
+  const firstName = profile?.full_name?.split(' ')[0] || 'there'
+  const greeting = (settings?.home_greeting || 'Hey {name}').replace('{name}', firstName)
+  const sponsors = useSponsors()
 
   return (
     <div className="space-y-7">
       <div>
         <p className="text-sm text-slate-400">{new Date().toLocaleDateString('en-IE', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
-        <h1 className="font-display mt-1 text-3xl font-bold tracking-tight">{firstName ? `Hey ${firstName}` : settings?.club_name}</h1>
+        <h1 className="font-display mt-1 text-3xl font-bold tracking-tight">{greeting}</h1>
         {settings?.tagline && <p className="mt-1 text-sm text-slate-400">{settings.tagline}</p>}
       </div>
 
@@ -103,6 +107,20 @@ export default function HomeFeed() {
             <section className="space-y-2">
               <SectionTitle icon={<CalendarDays size={15} />} title="Upcoming events" to="/app/events" />
               {q.data.events.map((ev) => <EventRow key={ev.id} ev={ev} />)}
+            </section>
+          ) : null}
+
+          {isFeatureOn('sponsors') && sponsors.data?.length ? (
+            <section className="space-y-2">
+              <SectionTitle icon={<Handshake size={15} />} title={settings?.sponsors_title || 'Our sponsors'} to="/app/sponsors" />
+              <div className="flex gap-3 overflow-x-auto pb-1">
+                {sponsors.data.map((s) => (
+                  <a key={s.id} data-testid={`home-sponsor-${s.id}`} href={s.website_url ?? undefined} target={s.website_url ? '_blank' : undefined} rel="noreferrer" className="flex w-32 shrink-0 flex-col items-center gap-2 rounded-2xl border border-white/[0.08] bg-[#161618] p-3 text-center">
+                    {s.logo_url ? <img src={s.logo_url} alt={s.name} className="h-14 w-full rounded-lg bg-white object-contain p-1" /> : <div className="flex h-14 w-full items-center justify-center rounded-lg bg-white/[0.06] text-slate-500"><Handshake size={18} /></div>}
+                    <p className="w-full truncate text-xs font-semibold">{s.name}</p>
+                  </a>
+                ))}
+              </div>
             </section>
           ) : null}
 
