@@ -96,6 +96,15 @@ origin bug in checkout/redirect URLs, login redirect waited for role.
   /root/.secrets). AppDelegate.swift has Firebase/APNs forwarding guarded by #if canImport. Remaining
   user steps: add firebase-ios-sdk SPM package in Xcode + APNs key (needs Apple Developer account).
 
+## Added 2026-06 (round 4) — security audit
+- security_audit_agent run: CONDITIONAL PASS → all findings fixed in `supabase/security-hardening.sql`
+  (APPLIED): bookings/RSVP SELECT now own-or-admin; anonymous `facility_busy_slots` view + `event_rsvp_counts()`
+  for the UI; dropped open `purchases_public_insert` (only service-role edge fn inserts); lotto draw uses
+  gen_random_bytes with rejection sampling; dropped legacy tables chat_messages, app_state, site_images.
+  Left as-is (accepted): wildcard CORS on edge functions (bearer-JWT auth, no cookies); coach_email visible
+  to members (needed to identify coach; staff contact).
+- Removed: sort_order field from Teams & Sponsors forms; logo + brand colour from Settings (fixed to crest).
+
 ## Backlog
 - P1: Firebase push setup once user provides service account; app icons/splash via @capacitor/assets.
 - P1: Receipt emails (RESEND_API_KEY) — function exists in `_shared/purchase-email.ts`.

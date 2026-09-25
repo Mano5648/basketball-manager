@@ -45,18 +45,19 @@ export function EventDetail() {
   const { teams } = useClub()
   const [busy, setBusy] = useState(false)
   const q = useLiveQuery(async () => {
-    const [ev, rsvps] = await Promise.all([
+    const [ev, mine, counts] = await Promise.all([
       listAll<ClubEvent>('events', 'starts_at', true, (x) => x.eq('id', id)),
-      listAll<Rsvp>('event_rsvps', 'updated_at', false, (x) => x.eq('event_id', id)),
+      user ? listAll<Rsvp>('event_rsvps', 'updated_at', false, (x) => x.eq('event_id', id).eq('profile_id', user.id)) : Promise.resolve([] as Rsvp[]),
+      sb().rpc('event_rsvp_counts', { p_event_id: id }),
     ])
-    return { ev: ev[0] ?? null, rsvps }
-  }, ['events', 'event_rsvps'], [id])
+    return { ev: ev[0] ?? null, mine: mine[0]?.status, going: Number((counts.data as { going?: number } | null)?.going ?? 0) }
+  }, ['events', 'event_rsvps'], [id, user?.id])
 
   if (q.loading && !q.data) return <Spinner />
   if (!q.data?.ev) return <Empty title="Event not found" />
   const ev = q.data.ev
-  const mine = q.data.rsvps.find((r) => r.profile_id === user?.id)?.status
-  const going = q.data.rsvps.filter((r) => r.status === 'going').length
+  const mine = q.data.mine
+  const going = q.data.going
   const team = ev.team_id ? teams.find((t) => t.id === ev.team_id) : null
 
   const setRsvp = async (status: Rsvp['status']) => {

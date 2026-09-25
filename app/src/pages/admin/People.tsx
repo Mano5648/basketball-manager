@@ -128,8 +128,7 @@ export function AdminTeams() {
   const members = useLiveQuery(() => listAll<Profile>('profiles', 'full_name', true), ['profiles'])
   const fields: FieldDef[] = useMemo(() => [
     { key: 'name', label: 'Team name', type: 'text', required: true },
-    { key: 'age_group', label: 'Age group', type: 'text', half: true, hint: 'e.g. U12, U16, Senior Men' },
-    { key: 'sort_order', label: 'Order', type: 'number', half: true },
+    { key: 'age_group', label: 'Age group', type: 'text', hint: 'e.g. U12, U16, Senior Men' },
     { key: 'coach_email', label: 'Coach (from members)', type: 'select', hint: 'Coach can run Match Day Live for this team', options: (members.data ?? []).map((p) => ({ value: p.email, label: `${p.full_name || '(no name)'} · ${p.email}` })) },
     { key: 'description', label: 'Description', type: 'textarea' },
   ], [members.data])

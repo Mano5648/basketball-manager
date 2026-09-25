@@ -162,8 +162,7 @@ export function AdminProducts() {
 export function AdminSponsors() {
   const fields: FieldDef[] = [
     { key: 'name', label: 'Sponsor name', type: 'text', required: true },
-    { key: 'tier', label: 'Tier / level', type: 'text', half: true, hint: 'e.g. Main sponsor, Kit partner' },
-    { key: 'sort_order', label: 'Order', type: 'number', half: true },
+    { key: 'tier', label: 'Tier / level', type: 'text', hint: 'e.g. Main sponsor, Kit partner' },
     { key: 'logo_url', label: 'Logo', type: 'image', folder: 'sponsors' },
     { key: 'website_url', label: 'Website (https://…)', type: 'text' },
     { key: 'blurb', label: 'Short description', type: 'textarea' },

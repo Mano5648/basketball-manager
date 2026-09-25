@@ -4,7 +4,7 @@ import { useAuth } from '@/lib/AuthContext'
 import { useClub } from '@/lib/ClubContext'
 import { sb, type ClubSettings, type FeatureKey } from '@/lib/db'
 import { useLiveQuery } from '@/lib/useLiveQuery'
-import { Alert, Button, Card, Field, ImageUpload, Input, PageHeader, Textarea, Toggle } from '@/components/ui'
+import { Alert, Button, Card, Field, Input, PageHeader, Textarea, Toggle } from '@/components/ui'
 import { isStripeCheckoutConfigured } from '@/lib/stripeCheckout'
 
 const FEATURES: { key: FeatureKey; label: string }[] = [
@@ -62,8 +62,6 @@ export function AdminSettings() {
             <Field label="Club name"><Input data-testid="settings-club-name" value={form.club_name} onChange={(e) => set('club_name', e.target.value)} required /></Field>
             <Field label="Tagline"><Input data-testid="settings-tagline" value={form.tagline ?? ''} onChange={(e) => set('tagline', e.target.value)} /></Field>
           </div>
-          <ImageUpload label="Club logo" value={form.logo_url} folder="branding" onChange={(u) => set('logo_url', u)} />
-          <Field label="Brand colour"><div className="flex items-center gap-3"><input data-testid="settings-color" type="color" value={form.primary_color} onChange={(e) => set('primary_color', e.target.value)} className="h-10 w-14 rounded-lg border border-white/10 bg-transparent" /><span className="text-sm text-slate-400">{form.primary_color}</span></div></Field>
         </section>
         <section className="space-y-3">
           <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Contact</h2>

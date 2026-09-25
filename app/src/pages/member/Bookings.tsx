@@ -32,7 +32,7 @@ export default function BookingsPage() {
     const dayEnd = new Date(`${date}T23:59:59`).toISOString()
     const [facilities, bookings, mine] = await Promise.all([
       listAll<Facility>('facilities', 'name', true, (x) => x.eq('active', true)),
-      listAll<Booking>('facility_bookings', 'starts_at', true, (x) => x.gte('starts_at', dayStart).lte('starts_at', dayEnd).neq('status', 'cancelled')),
+      listAll<{ facility_id: string; starts_at: string; ends_at: string }>('facility_busy_slots', 'starts_at', true, (x) => x.gte('starts_at', dayStart).lte('starts_at', dayEnd)),
       user ? listAll<Booking>('facility_bookings', 'starts_at', true, (x) => x.eq('profile_id', user.id).gte('ends_at', new Date().toISOString()).neq('status', 'cancelled')) : Promise.resolve([] as Booking[]),
     ])
     return { facilities, bookings, mine }
