@@ -13,13 +13,51 @@
   --accent-400: 251 146 60;
   --accent-500: 249 115 22;
   --accent-600: 234 88 12;
+}
+
+/* Surface + text tokens. Every surface, text and border colour in the app
+   resolves through these, so flipping the theme is a matter of swapping the
+   values rather than touching components. */
+:root, [data-theme='dark'] {
+  --bg: 10 10 12;
+  --surface: 22 22 24;
+  --surface-2: 16 16 18;
+  --surface-3: 20 20 22;
+  --fg: 245 248 255;
+  --muted: 148 163 184;
+  --subtle: 100 116 139;
+  /* Hairlines and translucent fills are tinted with this, so they stay
+     light-on-dark and dark-on-light without per-component overrides. */
+  --line: 255 255 255;
   color-scheme: dark;
+}
+
+[data-theme='light'] {
+  /* The brand and accent ramps are tuned as light-on-dark. Their low numbers
+     are used as text, so on a light background they must darken instead —
+     lions-300 at #93C5FD is about 1.7:1 on white and unreadable. 500/600 stay
+     put: they are solid fills carrying white text in both themes. */
+  --brand-100: 30 58 138;
+  --brand-200: 30 64 175;
+  --brand-300: 29 78 216;
+  --brand-400: 37 99 235;
+  --accent-300: 154 52 18;
+  --accent-400: 194 65 12;
+  --bg: 247 249 252;
+  --surface: 255 255 255;
+  --surface-2: 241 245 249;
+  --surface-3: 255 255 255;
+  --fg: 15 23 42;
+  --muted: 71 85 105;
+  --subtle: 100 116 139;
+  --line: 15 23 42;
+  color-scheme: light;
 }
 
 html, body, #root {
   min-height: 100%;
-  background-color: #0A0A0C;
-  color: #f5f8ff;
+  background-color: rgb(var(--bg));
+  color: rgb(var(--fg));
 }
 
 body {
@@ -44,8 +82,8 @@ input[type='date'], input[type='time'], input[type='datetime-local'] { color-sch
 /* The select's translucent background makes Chrome paint the popup near-white,
    which hid the white option text. Options need an opaque colour of their own. */
 select option, select optgroup {
-  background-color: #161618;
-  color: #f5f8ff;
+  background-color: rgb(var(--surface));
+  color: rgb(var(--fg));
 }
 input[type='number']::-webkit-inner-spin-button { opacity: 0.4; }
 

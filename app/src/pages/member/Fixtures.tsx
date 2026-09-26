@@ -27,9 +27,9 @@ export default function FixturesPage() {
   return (
     <div>
       <PageHeader title="Fixtures" subtitle="Games & results" />
-      <div className="mb-3 flex gap-1 rounded-full bg-white/[0.05] p-1">
+      <div className="mb-3 flex gap-1 rounded-full bg-line/[0.05] p-1">
         {(['upcoming', 'results'] as const).map((t) => (
-          <button key={t} data-testid={`fixtures-tab-${t}`} onClick={() => setTab(t)} className={cx('flex-1 rounded-full py-2 text-sm font-semibold capitalize transition-colors', tab === t ? 'bg-lions-500 text-white' : 'text-slate-400')}>{t}</button>
+          <button key={t} data-testid={`fixtures-tab-${t}`} onClick={() => setTab(t)} className={cx('flex-1 rounded-full py-2 text-sm font-semibold capitalize transition-colors', tab === t ? 'bg-lions-500 text-white' : 'text-muted')}>{t}</button>
         ))}
       </div>
       {teams.length > 0 && (
@@ -48,9 +48,9 @@ export default function FixturesPage() {
 function Qty({ value, onChange, testId }: { value: number; onChange: (v: number) => void; testId: string }) {
   return (
     <div className="flex items-center gap-2">
-      <button type="button" data-testid={`${testId}-minus`} onClick={() => onChange(Math.max(0, value - 1))} className="rounded-full bg-white/10 p-1.5"><Minus size={14} /></button>
+      <button type="button" data-testid={`${testId}-minus`} onClick={() => onChange(Math.max(0, value - 1))} className="rounded-full bg-line/10 p-1.5"><Minus size={14} /></button>
       <span data-testid={testId} className="w-6 text-center font-semibold tabular-nums">{value}</span>
-      <button type="button" data-testid={`${testId}-plus`} onClick={() => onChange(Math.min(20, value + 1))} className="rounded-full bg-white/10 p-1.5"><Plus size={14} /></button>
+      <button type="button" data-testid={`${testId}-plus`} onClick={() => onChange(Math.min(20, value + 1))} className="rounded-full bg-line/10 p-1.5"><Plus size={14} /></button>
     </div>
   )
 }
@@ -86,10 +86,10 @@ export function FixtureDetail() {
       <FixtureRow fx={fx} teamName={team?.name} />
       {canControl && <MatchControl fx={fx} onChanged={() => void q.refresh()} />}
       <LiveUpdates fixtureId={fx.id} />
-      <Card className="space-y-1 text-sm text-slate-300">
-        <p><span className="text-slate-500">When:</span> {fmtDateTime(fx.starts_at)}</p>
-        <p><span className="text-slate-500">Where:</span> {fx.venue ?? (fx.is_home ? 'Home venue' : 'Away')}</p>
-        {fx.notes && <p className="pt-1 whitespace-pre-wrap text-slate-200">{fx.notes}</p>}
+      <Card className="space-y-1 text-sm text-muted">
+        <p><span className="text-subtle">When:</span> {fmtDateTime(fx.starts_at)}</p>
+        <p><span className="text-subtle">Where:</span> {fx.venue ?? (fx.is_home ? 'Home venue' : 'Away')}</p>
+        {fx.notes && <p className="pt-1 whitespace-pre-wrap text-fg">{fx.notes}</p>}
       </Card>
       {fx.tickets_enabled && upcoming && (
         <Card className="space-y-4" testId="ticket-card">
@@ -99,7 +99,7 @@ export function FixtureDetail() {
           {err && <Alert testId="ticket-error">{err}</Alert>}
           {!isStripeCheckoutConfigured() && <Alert tone="blue">Online payments aren't configured yet.</Alert>}
           <Button data-testid="ticket-buy-btn" className="w-full" size="lg" disabled={total <= 0 || !isStripeCheckoutConfigured()} loading={busy} onClick={buy}>Pay {money(total)}</Button>
-          <p className="text-center text-[11px] text-slate-500">Secure checkout by Stripe · Apple Pay & Google Pay supported</p>
+          <p className="text-center text-[11px] text-subtle">Secure checkout by Stripe · Apple Pay & Google Pay supported</p>
         </Card>
       )}
     </div>

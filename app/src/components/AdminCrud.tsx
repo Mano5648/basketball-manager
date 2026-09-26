@@ -143,8 +143,8 @@ export function AdminCrud<T extends { id: string }>(p: CrudProps<T>) {
           {rows.map((row) => (
             <Card key={row.id} testId={`${prefix}-row-${row.id}`} onClick={() => openEdit(row)} className="flex items-center gap-3 py-3">
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-white">{p.itemTitle(row)}</p>
-                {p.itemSubtitle && <p className="mt-0.5 truncate text-xs text-slate-400">{p.itemSubtitle(row)}</p>}
+                <p className="truncate text-sm font-semibold text-fg">{p.itemTitle(row)}</p>
+                {p.itemSubtitle && <p className="mt-0.5 truncate text-xs text-muted">{p.itemSubtitle(row)}</p>}
               </div>
               {p.itemBadge?.(row)}
             </Card>

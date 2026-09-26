@@ -74,7 +74,7 @@ export default function BookingsPage() {
           {facility && (
             <Card className="space-y-3">
               <div className="flex items-center justify-between"><p className="font-semibold">{facility.name}</p><Badge tone={facility.price_cents > 0 ? 'blue' : 'green'}>{facility.price_cents > 0 ? `${money(facility.price_cents)} / slot` : 'Free'}</Badge></div>
-              {facility.description && <p className="text-xs text-slate-400">{facility.description}</p>}
+              {facility.description && <p className="text-xs text-muted">{facility.description}</p>}
               {err && <Alert testId="booking-error">{err}</Alert>}
               <div className="grid grid-cols-3 gap-2">
                 {slots.map((s) => {
@@ -82,20 +82,20 @@ export default function BookingsPage() {
                   const key = s.start.toISOString()
                   return (
                     <button key={key} data-testid={`slot-${fmtTime(key).replace(':', '')}`} disabled={isTaken || busy !== null || (facility.price_cents > 0 && !isStripeCheckoutConfigured())} onClick={() => book(s)}
-                      className={cx('rounded-xl border py-2.5 text-sm font-semibold tabular-nums transition-colors', isTaken ? 'border-white/5 text-slate-600 line-through' : 'border-lions-500/40 bg-lions-500/10 text-lions-100 hover:bg-lions-500/20', busy === key && 'animate-pulse')}>
+                      className={cx('rounded-xl border py-2.5 text-sm font-semibold tabular-nums transition-colors', isTaken ? 'border-line/5 text-subtle line-through' : 'border-lions-500/40 bg-lions-500/10 text-lions-100 hover:bg-lions-500/20', busy === key && 'animate-pulse')}>
                       {fmtTime(key)}
                     </button>
                   )
                 })}
               </div>
-              <p className="text-[11px] text-slate-500">{fmtDate(date, { weekday: 'long', day: 'numeric', month: 'long' })} · {facility.slot_minutes} min slots</p>
+              <p className="text-[11px] text-subtle">{fmtDate(date, { weekday: 'long', day: 'numeric', month: 'long' })} · {facility.slot_minutes} min slots</p>
             </Card>
           )}
           <section className="space-y-2">
-            <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">My bookings</h2>
+            <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-muted">My bookings</h2>
             {q.data.mine.length === 0 ? <Empty icon={<CalendarCheck />} title="No upcoming bookings" /> : q.data.mine.map((b) => (
               <Card key={b.id} testId={`my-booking-${b.id}`} className="flex items-center gap-3">
-                <div className="flex-1"><p className="text-sm font-semibold">{q.data!.facilities.find((f) => f.id === b.facility_id)?.name ?? 'Facility'}</p><p className="text-xs text-slate-400">{fmtDateTime(b.starts_at)} – {fmtTime(b.ends_at)}</p></div>
+                <div className="flex-1"><p className="text-sm font-semibold">{q.data!.facilities.find((f) => f.id === b.facility_id)?.name ?? 'Facility'}</p><p className="text-xs text-muted">{fmtDateTime(b.starts_at)} – {fmtTime(b.ends_at)}</p></div>
                 <Badge tone={b.status === 'confirmed' ? 'green' : 'amber'}>{b.status}</Badge>
                 <Button size="sm" variant="ghost" onClick={() => cancel(b)} data-testid={`cancel-booking-${b.id}`}>Cancel</Button>
               </Card>

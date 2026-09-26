@@ -23,11 +23,11 @@ export function LiveUpdates({ fixtureId }: { fixtureId: string }) {
   if (!q.data?.length) return null
   return (
     <Card className="space-y-2" testId="live-updates">
-      <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-400"><Radio size={13} className="text-accent-400" /> Match updates</p>
+      <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-muted"><Radio size={13} className="text-accent-400" /> Match updates</p>
       {q.data.map((u) => (
-        <div key={u.id} data-testid={`live-update-${u.id}`} className="flex gap-3 border-l-2 border-white/10 pl-3">
-          <span className="w-12 shrink-0 text-xs tabular-nums text-slate-500">{fmtTime(u.created_at)}</span>
-          <p className="flex-1 text-sm text-slate-200">{u.text}{u.home_score != null && <span className="ml-2 text-xs font-bold text-slate-400">{u.home_score}–{u.away_score}</span>}</p>
+        <div key={u.id} data-testid={`live-update-${u.id}`} className="flex gap-3 border-l-2 border-line/10 pl-3">
+          <span className="w-12 shrink-0 text-xs tabular-nums text-subtle">{fmtTime(u.created_at)}</span>
+          <p className="flex-1 text-sm text-fg">{u.text}{u.home_score != null && <span className="ml-2 text-xs font-bold text-muted">{u.home_score}–{u.away_score}</span>}</p>
         </div>
       ))}
     </Card>
@@ -65,18 +65,18 @@ export function MatchControl({ fx, onChanged }: { fx: Fixture; onChanged: () => 
 
   return (
     <Card className="space-y-4 border-accent-500/30" testId="match-control">
-      <div className="flex items-center justify-between"><p className="flex items-center gap-2 text-sm font-bold"><Radio size={16} className="text-accent-400" /> Match control</p><span className="text-[11px] uppercase tracking-wider text-slate-400">{fx.status}</span></div>
+      <div className="flex items-center justify-between"><p className="flex items-center gap-2 text-sm font-bold"><Radio size={16} className="text-accent-400" /> Match control</p><span className="text-[11px] uppercase tracking-wider text-muted">{fx.status}</span></div>
       {fx.status === 'scheduled' && <Button data-testid="match-start" className="w-full" loading={busy} onClick={() => patch({ status: 'live', period: 'Q1', home_score: home, away_score: away }, 'Tip-off!', { title: `Tip-off: ${label}`, body: 'Follow the live score in the app.' })}><Play size={16} /> Start match</Button>}
       {fx.status === 'live' && (
         <>
           <div className="grid grid-cols-2 gap-3">
             {(['home', 'away'] as const).map((side) => (
-              <div key={side} className="rounded-xl bg-white/[0.04] p-3 text-center">
-                <p className="truncate text-xs text-slate-400">{side === 'home' ? (fx.is_home ? teamName : fx.opponent) : (fx.is_home ? fx.opponent : teamName)}</p>
+              <div key={side} className="rounded-xl bg-line/[0.04] p-3 text-center">
+                <p className="truncate text-xs text-muted">{side === 'home' ? (fx.is_home ? teamName : fx.opponent) : (fx.is_home ? fx.opponent : teamName)}</p>
                 <p data-testid={`score-${side}`} className="font-display my-1 text-4xl font-bold tabular-nums">{side === 'home' ? home : away}</p>
                 <div className="flex justify-center gap-1.5">
                   {[1, 2, 3].map((n) => <button key={n} data-testid={`score-${side}-plus${n}`} disabled={busy} onClick={() => score(side, n)} className="h-9 w-9 rounded-full bg-lions-500 text-sm font-bold text-white active:scale-95">+{n}</button>)}
-                  <button data-testid={`score-${side}-minus1`} disabled={busy} onClick={() => score(side, -1)} className="h-9 w-9 rounded-full bg-white/10 text-sm font-bold">−1</button>
+                  <button data-testid={`score-${side}-minus1`} disabled={busy} onClick={() => score(side, -1)} className="h-9 w-9 rounded-full bg-line/10 text-sm font-bold">−1</button>
                 </div>
               </div>
             ))}

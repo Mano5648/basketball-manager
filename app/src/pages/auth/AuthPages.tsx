@@ -10,7 +10,7 @@ import { supabase } from '@/lib/supabase'
 function AuthFrame({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
   const { settings } = useClub()
   return (
-    <div className="relative min-h-[100dvh] overflow-hidden bg-[#0A0A0C] text-white">
+    <div className="relative min-h-[100dvh] overflow-hidden bg-app text-fg">
       <div className="pointer-events-none absolute -top-32 left-1/2 h-72 w-[140%] -translate-x-1/2 rounded-[100%] bg-lions-500/25 blur-3xl" />
       <div className="relative mx-auto flex min-h-[100dvh] max-w-md flex-col px-6 pb-10 pt-[calc(env(safe-area-inset-top)+3.5rem)]">
         <div className="mb-8 flex flex-col items-start gap-4">
@@ -18,7 +18,7 @@ function AuthFrame({ title, subtitle, children }: { title: string; subtitle?: st
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-lions-300">{settings?.club_name ?? 'Club app'}</p>
             <h1 className="font-display mt-1 text-3xl font-bold tracking-tight">{title}</h1>
-            {subtitle && <p className="mt-1 text-sm text-slate-400">{subtitle}</p>}
+            {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
           </div>
         </div>
         {children}
@@ -32,7 +32,7 @@ function PasswordInput({ value, onChange, testId, placeholder = 'Password', auto
   return (
     <div className="relative">
       <Input data-testid={testId} type={show ? 'text' : 'password'} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} required minLength={6} autoComplete={autoComplete} className="pr-11" />
-      <button type="button" onClick={() => setShow(!show)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" aria-label="Toggle password">{show ? <EyeOff size={18} /> : <Eye size={18} />}</button>
+      <button type="button" onClick={() => setShow(!show)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" aria-label="Toggle password">{show ? <EyeOff size={18} /> : <Eye size={18} />}</button>
     </div>
   )
 }
@@ -65,7 +65,7 @@ export function LoginPage() {
         {err && <Alert testId="login-error">{err}</Alert>}
         <Button data-testid="login-submit" type="submit" loading={busy} size="lg" className="w-full">Sign in</Button>
         <div className="flex items-center justify-between text-sm">
-          <Link to="/forgot" data-testid="login-forgot-link" className="text-slate-400 hover:text-white">Forgot password?</Link>
+          <Link to="/forgot" data-testid="login-forgot-link" className="text-muted hover:text-fg">Forgot password?</Link>
           <Link to="/register" data-testid="login-register-link" className="font-semibold text-lions-300 hover:text-lions-200">Create account</Link>
         </div>
       </form>
@@ -104,7 +104,7 @@ export function RegisterPage() {
       <AuthFrame title="Check your inbox">
         <div data-testid="register-confirm" className="space-y-4">
           <CheckCircle2 className="text-emerald-400" size={40} />
-          <p className="text-sm text-slate-300">We sent a confirmation link to <b className="text-white">{form.email}</b>. Tap it, then come back and sign in.</p>
+          <p className="text-sm text-muted">We sent a confirmation link to <b className="text-fg">{form.email}</b>. Tap it, then come back and sign in.</p>
           <Button onClick={() => nav('/login')} className="w-full">Back to sign in</Button>
         </div>
       </AuthFrame>
@@ -117,9 +117,9 @@ export function RegisterPage() {
         <div className="grid grid-cols-3 gap-2">
           {MEMBER_TYPES.map((t) => (
             <button type="button" key={t.value} data-testid={`register-type-${t.value}`} onClick={() => setForm({ ...form, memberType: t.value })}
-              className={cx('rounded-2xl border p-3 text-left transition-colors', form.memberType === t.value ? 'border-lions-400 bg-lions-500/15' : 'border-white/10 bg-white/[0.03] hover:border-white/25')}>
+              className={cx('rounded-2xl border p-3 text-left transition-colors', form.memberType === t.value ? 'border-lions-400 bg-lions-500/15' : 'border-line/10 bg-line/[0.03] hover:border-line/25')}>
               <p className="text-[13px] font-semibold leading-tight">{t.label}</p>
-              <p className="mt-1 text-[11px] leading-tight text-slate-400">{t.hint}</p>
+              <p className="mt-1 text-[11px] leading-tight text-muted">{t.hint}</p>
             </button>
           ))}
         </div>
@@ -127,13 +127,13 @@ export function RegisterPage() {
         <Field label="Email"><Input data-testid="register-email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required autoComplete="email" /></Field>
         <Field label="Phone (optional)"><Input data-testid="register-phone" type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} autoComplete="tel" /></Field>
         <Field label="Password" hint="At least 6 characters"><PasswordInput testId="register-password" value={form.password} onChange={(v) => setForm({ ...form, password: v })} autoComplete="new-password" /></Field>
-        <label className="flex items-start gap-3 text-sm text-slate-300">
+        <label className="flex items-start gap-3 text-sm text-muted">
           <input data-testid="register-agree" type="checkbox" checked={form.agree} onChange={(e) => setForm({ ...form, agree: e.target.checked })} className="mt-1 h-4 w-4 accent-lions-500" />
           <span>I agree to the <Link to="/privacy" className="text-lions-300 underline">privacy policy</Link> and consent to the club storing my details.</span>
         </label>
         {err && <Alert testId="register-error">{err}</Alert>}
         <Button data-testid="register-submit" type="submit" loading={busy} size="lg" className="w-full">Create account</Button>
-        <p className="text-center text-sm text-slate-400">Already a member? <Link to="/login" data-testid="register-login-link" className="font-semibold text-lions-300">Sign in</Link></p>
+        <p className="text-center text-sm text-muted">Already a member? <Link to="/login" data-testid="register-login-link" className="font-semibold text-lions-300">Sign in</Link></p>
       </form>
     </AuthFrame>
   )
@@ -156,7 +156,7 @@ export function ForgotPage() {
         <Field label="Email"><Input data-testid="forgot-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field>
         {msg && <Alert tone={msg.ok ? 'green' : 'red'} testId="forgot-msg">{msg.text}</Alert>}
         <Button data-testid="forgot-submit" type="submit" loading={busy} className="w-full">Send reset link</Button>
-        <p className="text-center text-sm"><Link to="/login" className="text-slate-400 hover:text-white">Back to sign in</Link></p>
+        <p className="text-center text-sm"><Link to="/login" className="text-muted hover:text-fg">Back to sign in</Link></p>
       </form>
     </AuthFrame>
   )

@@ -6,6 +6,14 @@ module.exports = {
     extend: {
       colors: {
         "deep-navy": "#0A0A0C",
+        app: "rgb(var(--bg) / <alpha-value>)",
+        surface: "rgb(var(--surface) / <alpha-value>)",
+        surface2: "rgb(var(--surface-2) / <alpha-value>)",
+        surface3: "rgb(var(--surface-3) / <alpha-value>)",
+        fg: "rgb(var(--fg) / <alpha-value>)",
+        muted: "rgb(var(--muted) / <alpha-value>)",
+        subtle: "rgb(var(--subtle) / <alpha-value>)",
+        line: "rgb(var(--line) / <alpha-value>)",
         lions: {
           50: "#EEF4FF",
           100: "rgb(var(--brand-100) / <alpha-value>)",

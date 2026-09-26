@@ -36,8 +36,8 @@ export default function AppShell() {
   ].filter((t) => t.show)
 
   return (
-    <div className="min-h-[100dvh] bg-[#0A0A0C] text-white">
-      <header className="sticky top-0 z-30 border-b border-white/[0.06] bg-[#0A0A0C]/85 backdrop-blur-xl pt-[calc(env(safe-area-inset-top)+0.75rem)]">
+    <div className="min-h-[100dvh] bg-app text-fg">
+      <header className="sticky top-0 z-30 border-b border-line/[0.06] bg-app/85 backdrop-blur-xl pt-[calc(env(safe-area-inset-top)+0.75rem)]">
         <div className="mx-auto flex h-14 max-w-3xl items-center justify-between px-4">
           <button data-testid="header-club" onClick={() => nav('/app')} className="flex items-center gap-2.5">
             <img src={settings?.logo_url || './logo-lions-emblem.png'} alt="" className="h-9 w-9 rounded-lg bg-white object-contain" />
@@ -45,9 +45,9 @@ export default function AppShell() {
           </button>
           <div className="flex items-center gap-1">
             {role === 'manager' && (
-              <button data-testid="header-admin-btn" onClick={() => nav('/admin')} className="rounded-full p-2 text-lions-300 hover:bg-white/10" aria-label="Admin"><ShieldCheck size={20} /></button>
+              <button data-testid="header-admin-btn" onClick={() => nav('/admin')} className="rounded-full p-2 text-lions-300 hover:bg-line/10" aria-label="Admin"><ShieldCheck size={20} /></button>
             )}
-            <button data-testid="header-inbox-btn" onClick={() => nav('/app/inbox')} className="relative rounded-full p-2 text-slate-300 hover:bg-white/10" aria-label="Notifications">
+            <button data-testid="header-inbox-btn" onClick={() => nav('/app/inbox')} className="relative rounded-full p-2 text-muted hover:bg-line/10" aria-label="Notifications">
               <Bell size={20} />
               {unread > 0 && <span data-testid="inbox-unread-badge" className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent-500 px-1 text-[10px] font-bold">{unread > 9 ? '9+' : unread}</span>}
             </button>
@@ -66,10 +66,10 @@ export default function AppShell() {
         </motion.div>
       </main>
 
-      <nav data-testid="bottom-tabs" className="fixed inset-x-0 bottom-0 z-30 border-t border-white/[0.06] bg-[#101012]/95 backdrop-blur-xl pb-[env(safe-area-inset-bottom)]">
+      <nav data-testid="bottom-tabs" className="fixed inset-x-0 bottom-0 z-30 border-t border-line/[0.06] bg-surface2/95 backdrop-blur-xl pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto flex max-w-3xl items-stretch justify-around">
           {tabs.map((t) => (
-            <NavLink key={t.to} to={t.to} end={t.end} data-testid={`tab-${t.label.toLowerCase()}`} className={({ isActive }) => cx('flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] font-semibold transition-colors duration-300', isActive ? 'text-lions-300' : 'text-slate-500 hover:text-slate-300')}>
+            <NavLink key={t.to} to={t.to} end={t.end} data-testid={`tab-${t.label.toLowerCase()}`} className={({ isActive }) => cx('flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] font-semibold transition-colors duration-300', isActive ? 'text-lions-300' : 'text-subtle hover:text-muted')}>
               {({ isActive }) => (
                 <>
                   <span className="relative inline-flex rounded-full px-4 py-1">

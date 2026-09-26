@@ -66,7 +66,7 @@ export function AdminFixtures() {
         itemTitle={(r) => `${teamName[r.team_id ?? ''] ?? 'Club'} vs ${r.opponent}`}
         itemSubtitle={(r) => `${fmtDateTime(r.starts_at)}${r.competition ? ` · ${r.competition}` : ''}${r.tickets_enabled ? ` · tickets ${money(r.adult_price_cents)}` : ''}`}
         itemBadge={(r) => (r.status === 'completed' && r.home_score != null ? <Badge tone="blue">{r.home_score}–{r.away_score}</Badge> : r.status === 'live' ? <Badge tone="amber">● Live {r.home_score ?? 0}–{r.away_score ?? 0}</Badge> : <Badge tone={r.status === 'scheduled' ? 'green' : 'amber'}>{r.status}</Badge>)} testPrefix="fixtures" />
-      <p className="mt-4 text-xs text-slate-500">Tip: open any fixture in the member view (Fixtures tab) to use <b>Match control</b> — start the game, tap scores live, post updates and finish. The team's coach gets the same controls.</p>
+      <p className="mt-4 text-xs text-subtle">Tip: open any fixture in the member view (Fixtures tab) to use <b>Match control</b> — start the game, tap scores live, post updates and finish. The team's coach gets the same controls.</p>
     </div>
   )
 }

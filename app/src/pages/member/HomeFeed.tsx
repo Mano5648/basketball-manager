@@ -16,12 +16,12 @@ export function NewsCard({ post, compact }: { post: NewsPost; compact?: boolean 
     <Card testId={`news-card-${post.id}`} onClick={() => nav(`/app/news/${post.id}`)} className="overflow-hidden p-0">
       {post.image_url && !compact && <img src={post.image_url} alt="" className="aspect-[16/9] w-full object-cover" />}
       <div className="p-4">
-        <div className="mb-1.5 flex items-center gap-2 text-[11px] text-slate-400">
+        <div className="mb-1.5 flex items-center gap-2 text-[11px] text-muted">
           {post.pinned && <Pin size={12} className="text-lions-300" />}
           <span>{timeAgo(post.created_at)}</span>
         </div>
-        <h3 className="font-display text-base font-bold leading-snug text-white">{post.title}</h3>
-        {!compact && <p className="mt-1.5 line-clamp-2 text-sm text-slate-400">{post.body}</p>}
+        <h3 className="font-display text-base font-bold leading-snug text-fg">{post.title}</h3>
+        {!compact && <p className="mt-1.5 line-clamp-2 text-sm text-muted">{post.body}</p>}
       </div>
     </Card>
   )
@@ -37,10 +37,10 @@ export function EventRow({ ev }: { ev: ClubEvent }) {
         <span className="font-display text-xl font-bold leading-none">{d.getDate()}</span>
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-semibold text-white">{ev.title}</p>
-        <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-slate-400">{fmtTime(ev.starts_at)}{ev.location && <><span>·</span><MapPin size={11} />{ev.location}</>}</p>
+        <p className="truncate text-sm font-semibold text-fg">{ev.title}</p>
+        <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted">{fmtTime(ev.starts_at)}{ev.location && <><span>·</span><MapPin size={11} />{ev.location}</>}</p>
       </div>
-      <ChevronRight size={18} className="text-slate-600" />
+      <ChevronRight size={18} className="text-subtle" />
     </Card>
   )
 }
@@ -53,17 +53,17 @@ export function FixtureRow({ fx, teamName }: { fx: Fixture; teamName?: string })
   const won = done && (ourScore ?? 0) > (theirScore ?? 0)
   return (
     <Card testId={`fixture-row-${fx.id}`} onClick={() => nav(`/app/fixtures/${fx.id}`)} className="py-3">
-      <div className="mb-2 flex items-center justify-between text-[11px] text-slate-400">
+      <div className="mb-2 flex items-center justify-between text-[11px] text-muted">
         <span>{teamName ?? 'Club'}{fx.competition ? ` · ${fx.competition}` : ''}</span>
         {done ? <Badge tone={won ? 'green' : (ourScore === theirScore ? 'slate' : 'red')}>{won ? 'Win' : ourScore === theirScore ? 'Draw' : 'Loss'}</Badge>
           : fx.status === 'live' ? <Badge tone="amber" className="animate-pulse">● Live{fx.period ? ` · ${fx.period}` : ''}</Badge>
           : fx.status !== 'scheduled' ? <Badge tone="amber">{fx.status}</Badge> : <span>{fmtDateTime(fx.starts_at)}</span>}
       </div>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-semibold text-white">{fx.is_home ? 'Home' : 'Away'} vs {fx.opponent}</p>
-        {done || fx.status === 'live' ? <p data-testid={`fixture-score-${fx.id}`} className="font-display text-xl font-bold tabular-nums text-white">{ourScore ?? 0} <span className="text-slate-500">–</span> {theirScore ?? 0}</p> : fx.tickets_enabled ? <Badge tone="amber">Tickets</Badge> : null}
+        <p className="text-sm font-semibold text-fg">{fx.is_home ? 'Home' : 'Away'} vs {fx.opponent}</p>
+        {done || fx.status === 'live' ? <p data-testid={`fixture-score-${fx.id}`} className="font-display text-xl font-bold tabular-nums text-fg">{ourScore ?? 0} <span className="text-subtle">–</span> {theirScore ?? 0}</p> : fx.tickets_enabled ? <Badge tone="amber">Tickets</Badge> : null}
       </div>
-      {fx.venue && <p className="mt-1 flex items-center gap-1 text-xs text-slate-500"><MapPin size={11} /> {fx.venue}</p>}
+      {fx.venue && <p className="mt-1 flex items-center gap-1 text-xs text-subtle"><MapPin size={11} /> {fx.venue}</p>}
     </Card>
   )
 }
@@ -89,9 +89,9 @@ export default function HomeFeed() {
   return (
     <div className="space-y-7">
       <div>
-        <p className="text-sm text-slate-400">{new Date().toLocaleDateString('en-IE', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+        <p className="text-sm text-muted">{new Date().toLocaleDateString('en-IE', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
         <h1 className="font-display mt-1 text-3xl font-bold tracking-tight">{greeting}</h1>
-        {settings?.tagline && <p className="mt-1 text-sm text-slate-400">{settings.tagline}</p>}
+        {settings?.tagline && <p className="mt-1 text-sm text-muted">{settings.tagline}</p>}
       </div>
 
       {q.loading && !q.data ? <Spinner /> : (
@@ -115,8 +115,8 @@ export default function HomeFeed() {
               <SectionTitle icon={<Handshake size={15} />} title={settings?.sponsors_title || 'Our sponsors'} to="/app/sponsors" />
               <div className="flex gap-3 overflow-x-auto pb-1">
                 {sponsors.data.map((s) => (
-                  <a key={s.id} data-testid={`home-sponsor-${s.id}`} href={s.website_url ?? undefined} target={s.website_url ? '_blank' : undefined} rel="noreferrer" className="flex w-32 shrink-0 flex-col items-center gap-2 rounded-2xl border border-white/[0.08] bg-[#161618] p-3 text-center">
-                    {s.logo_url ? <img src={s.logo_url} alt={s.name} className="h-14 w-full rounded-lg bg-white object-contain p-1" /> : <div className="flex h-14 w-full items-center justify-center rounded-lg bg-white/[0.06] text-slate-500"><Handshake size={18} /></div>}
+                  <a key={s.id} data-testid={`home-sponsor-${s.id}`} href={s.website_url ?? undefined} target={s.website_url ? '_blank' : undefined} rel="noreferrer" className="flex w-32 shrink-0 flex-col items-center gap-2 rounded-2xl border border-line/[0.08] bg-surface p-3 text-center">
+                    {s.logo_url ? <img src={s.logo_url} alt={s.name} className="h-14 w-full rounded-lg bg-white object-contain p-1" /> : <div className="flex h-14 w-full items-center justify-center rounded-lg bg-line/[0.06] text-subtle"><Handshake size={18} /></div>}
                     <p className="w-full truncate text-xs font-semibold">{s.name}</p>
                   </a>
                 ))}
@@ -139,7 +139,7 @@ export default function HomeFeed() {
 function SectionTitle({ icon, title, to }: { icon: React.ReactNode; title: string; to?: string }) {
   return (
     <div className="flex items-center justify-between">
-      <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-400">{icon}{title}</h2>
+      <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-muted">{icon}{title}</h2>
       {to && <Link to={to} className="text-xs font-semibold text-lions-300">See all</Link>}
     </div>
   )
@@ -155,7 +155,7 @@ export function NewsDetail() {
     <article className="space-y-4" data-testid="news-detail">
       <PageHeader title={p.title} subtitle={fmtDate(p.created_at, { day: 'numeric', month: 'long', year: 'numeric' })} back="/app" />
       {p.image_url && <img src={p.image_url} alt="" className="w-full rounded-2xl object-cover" />}
-      <div className="whitespace-pre-wrap text-[15px] leading-relaxed text-slate-200">{p.body}</div>
+      <div className="whitespace-pre-wrap text-[15px] leading-relaxed text-fg">{p.body}</div>
     </article>
   )
 }

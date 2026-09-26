@@ -44,7 +44,7 @@ export default function AdminDashboard() {
               <Card key={t.label} testId={`stat-${t.label.toLowerCase().replace(/[^a-z]+/g, '-')}`} onClick={() => nav(t.to)} className="space-y-2">
                 <t.icon size={18} className="text-lions-300" />
                 <p className="font-display text-2xl font-bold">{t.value}</p>
-                <p className="text-xs text-slate-400">{t.label}</p>
+                <p className="text-xs text-muted">{t.label}</p>
               </Card>
             ))}
           </div>
@@ -52,10 +52,10 @@ export default function AdminDashboard() {
             {quick.map((qk) => <button key={qk.label} data-testid={`quick-${qk.label.toLowerCase().replace(/[^a-z]+/g, '-')}`} onClick={() => nav(qk.to)} className="flex items-center gap-2 rounded-xl border border-lions-500/30 bg-lions-500/10 px-3 py-2.5 text-sm font-semibold text-lions-100 hover:bg-lions-500/20"><qk.icon size={16} /> {qk.label}</button>)}
           </div>
           <section className="space-y-2">
-            <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Recent payments</h2>
-            {!q.data?.purchases.length ? <p className="text-sm text-slate-500">No payments yet.</p> : q.data.purchases.map((p) => (
+            <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-muted">Recent payments</h2>
+            {!q.data?.purchases.length ? <p className="text-sm text-subtle">No payments yet.</p> : q.data.purchases.map((p) => (
               <Card key={p.id} className="flex items-center gap-3 py-3">
-                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{p.customer_name} <span className="text-slate-500">· {p.customer_email}</span></p><p className="text-xs text-slate-400">{p.purchase_type} · {fmtDateTime(p.paid_at ?? p.created_at)}</p></div>
+                <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{p.customer_name} <span className="text-subtle">· {p.customer_email}</span></p><p className="text-xs text-muted">{p.purchase_type} · {fmtDateTime(p.paid_at ?? p.created_at)}</p></div>
                 <Badge tone="green">{money(p.amount_cents)}</Badge>
               </Card>
             ))}

@@ -69,15 +69,15 @@ export function AdminMembers() {
   return (
     <div>
       <PageHeader title="Members" subtitle={`${q.data?.profiles.length ?? 0} accounts · ${q.data?.children.length ?? 0} children`} />
-      <div className="relative mb-4"><Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" /><Input data-testid="members-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, email or child…" className="pl-10" /></div>
+      <div className="relative mb-4"><Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-subtle" /><Input data-testid="members-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, email or child…" className="pl-10" /></div>
       {q.loading && !q.data ? <Spinner /> : rows.length === 0 ? <Empty title="No members found" /> : (
         <div className="space-y-2">
           {rows.map((p) => (
             <Card key={p.id} testId={`member-${p.id}`} onClick={() => { setErr(null); setSel(p) }} className="flex items-center gap-3 py-3">
               <div className="min-w-0 flex-1">
                 <p className="flex items-center gap-2 truncate text-sm font-semibold">{p.full_name || '(no name)'}{q.data?.managers.includes(p.email) && <ShieldCheck size={14} className="text-lions-300" />}</p>
-                <p className="truncate text-xs text-slate-400">{p.email} · {TYPE_LABEL[p.member_type]}{kidsOf(p.id).length ? ` · ${kidsOf(p.id).length} child${kidsOf(p.id).length > 1 ? 'ren' : ''}` : ''}</p>
-                <p className="truncate text-xs text-slate-500">{[...teamsOf(p).map((t) => teamName[t]), ...kidsOf(p.id).filter((c) => c.team_id).map((c) => `${c.full_name} → ${teamName[c.team_id!]}`)].join(' · ') || 'No team'}</p>
+                <p className="truncate text-xs text-muted">{p.email} · {TYPE_LABEL[p.member_type]}{kidsOf(p.id).length ? ` · ${kidsOf(p.id).length} child${kidsOf(p.id).length > 1 ? 'ren' : ''}` : ''}</p>
+                <p className="truncate text-xs text-subtle">{[...teamsOf(p).map((t) => teamName[t]), ...kidsOf(p.id).filter((c) => c.team_id).map((c) => `${c.full_name} → ${teamName[c.team_id!]}`)].join(' · ') || 'No team'}</p>
               </div>
               {hasMembership(p.id) ? <Badge tone="green">Member</Badge> : <Badge tone="slate">No membership</Badge>}
             </Card>
@@ -87,33 +87,33 @@ export function AdminMembers() {
       <Sheet open={!!sel} onClose={() => setSel(null)} title={sel?.full_name || sel?.email || ''} testId="member-sheet">
         {sel && (
           <div className="space-y-5">
-            <div className="text-sm text-slate-300"><p>{sel.email}</p>{sel.phone && <p>{sel.phone}</p>}<p className="text-xs text-slate-500">{TYPE_LABEL[sel.member_type]} · joined {fmtDate(sel.created_at)}</p></div>
+            <div className="text-sm text-muted"><p>{sel.email}</p>{sel.phone && <p>{sel.phone}</p>}<p className="text-xs text-subtle">{TYPE_LABEL[sel.member_type]} · joined {fmtDate(sel.created_at)}</p></div>
             {err && <Alert testId="member-error">{err}</Alert>}
             <div>
-              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Teams ({sel.member_type === 'adult' ? 'plays for' : 'follows'})</p>
+              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Teams ({sel.member_type === 'adult' ? 'plays for' : 'follows'})</p>
               <div className="flex flex-wrap gap-2">
-                {teams.map((t) => { const on = teamsOf(sel).includes(t.id); return <button key={t.id} data-testid={`member-team-${t.id}`} onClick={() => setProfileTeam(t.id, !on)} className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${on ? 'border-lions-400 bg-lions-500/20 text-lions-100' : 'border-white/10 text-slate-400'}`}>{t.name}</button> })}
-                {teams.length === 0 && <p className="text-xs text-slate-500">Create teams first.</p>}
+                {teams.map((t) => { const on = teamsOf(sel).includes(t.id); return <button key={t.id} data-testid={`member-team-${t.id}`} onClick={() => setProfileTeam(t.id, !on)} className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${on ? 'border-lions-400 bg-lions-500/20 text-lions-100' : 'border-line/10 text-muted'}`}>{t.name}</button> })}
+                {teams.length === 0 && <p className="text-xs text-subtle">Create teams first.</p>}
               </div>
             </div>
             {kidsOf(sel.id).length > 0 && (
               <div className="space-y-2">
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Children</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-muted">Children</p>
                 {kidsOf(sel.id).map((c) => (
-                  <div key={c.id} className="flex items-center gap-3 rounded-xl bg-white/[0.04] p-3">
+                  <div key={c.id} className="flex items-center gap-3 rounded-xl bg-line/[0.04] p-3">
                     <Baby size={16} className="text-lions-300" />
-                    <div className="flex-1 text-sm"><p className="font-semibold">{c.full_name}</p>{c.dob && <p className="text-xs text-slate-500">born {c.dob}</p>}</div>
+                    <div className="flex-1 text-sm"><p className="font-semibold">{c.full_name}</p>{c.dob && <p className="text-xs text-subtle">born {c.dob}</p>}</div>
                     <Select data-testid={`child-team-${c.id}`} value={c.team_id ?? ''} onChange={(e) => setChildTeam(c, e.target.value)} className="w-40 py-1.5 text-sm"><option value="">No team</option>{teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</Select>
                   </div>
                 ))}
               </div>
             )}
             <div>
-              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Memberships</p>
-              {(q.data?.memberships ?? []).filter((m) => m.profile_id === sel.id).map((m) => <p key={m.id} className="text-sm text-slate-300">{m.package_name} · until {fmtDate(m.expires_at)}</p>)}
-              {!hasMembership(sel.id) && <p className="text-sm text-slate-500">None active.</p>}
+              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-muted">Memberships</p>
+              {(q.data?.memberships ?? []).filter((m) => m.profile_id === sel.id).map((m) => <p key={m.id} className="text-sm text-muted">{m.package_name} · until {fmtDate(m.expires_at)}</p>)}
+              {!hasMembership(sel.id) && <p className="text-sm text-subtle">None active.</p>}
             </div>
-            <div className="flex flex-wrap gap-2 border-t border-white/10 pt-4">
+            <div className="flex flex-wrap gap-2 border-t border-line/10 pt-4">
               <Button data-testid="member-toggle-admin" size="sm" variant="secondary" onClick={() => toggleAdmin(sel)}>{q.data?.managers.includes(sel.email) ? <><ShieldOff size={14} /> Remove admin</> : <><ShieldCheck size={14} /> Make admin</>}</Button>
               <Button data-testid="member-remove" size="sm" variant="danger" onClick={() => removeMember(sel)}>Remove from club</Button>
             </div>
@@ -137,12 +137,12 @@ function TeamRoster({ team, members }: { team: Team; members: Profile[] }) {
   const kids = q.data?.kids ?? []
   const total = adults.length + kids.length
   return (
-    <div className="space-y-2 rounded-xl border border-white/10 p-3" data-testid="team-roster">
-      <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Roster · {total} {total === 1 ? 'member' : 'members'}</p>
-      {team.coach_email && <p className="text-sm text-slate-300">Coach: <b>{team.coach_name || team.coach_email}</b></p>}
-      {total === 0 && <p className="text-sm text-slate-500">Nobody assigned yet. Go to Members → open a person → tap this team (adults) or pick it for their child.</p>}
-      {adults.map(({ t, p }) => <p key={t.id} className="text-sm" data-testid={`roster-adult-${t.id}`}>{p?.full_name || p?.email || 'Member'} <span className="text-xs text-slate-500">· {t.role}{p?.phone ? ` · ${p.phone}` : ''}</span></p>)}
-      {kids.map((c) => { const parent = who(c.parent_id); return <p key={c.id} className="text-sm" data-testid={`roster-child-${c.id}`}>{c.full_name} <span className="text-xs text-slate-500">· player{c.dob ? ` · born ${c.dob}` : ''} · parent {parent?.full_name || parent?.email}{parent?.phone ? ` · ${parent.phone}` : ''}</span></p> })}
+    <div className="space-y-2 rounded-xl border border-line/10 p-3" data-testid="team-roster">
+      <p className="text-xs font-bold uppercase tracking-wider text-muted">Roster · {total} {total === 1 ? 'member' : 'members'}</p>
+      {team.coach_email && <p className="text-sm text-muted">Coach: <b>{team.coach_name || team.coach_email}</b></p>}
+      {total === 0 && <p className="text-sm text-subtle">Nobody assigned yet. Go to Members → open a person → tap this team (adults) or pick it for their child.</p>}
+      {adults.map(({ t, p }) => <p key={t.id} className="text-sm" data-testid={`roster-adult-${t.id}`}>{p?.full_name || p?.email || 'Member'} <span className="text-xs text-subtle">· {t.role}{p?.phone ? ` · ${p.phone}` : ''}</span></p>)}
+      {kids.map((c) => { const parent = who(c.parent_id); return <p key={c.id} className="text-sm" data-testid={`roster-child-${c.id}`}>{c.full_name} <span className="text-xs text-subtle">· player{c.dob ? ` · born ${c.dob}` : ''} · parent {parent?.full_name || parent?.email}{parent?.phone ? ` · ${parent.phone}` : ''}</span></p> })}
     </div>
   )
 }

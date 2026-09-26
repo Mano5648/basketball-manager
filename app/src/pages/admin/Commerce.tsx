@@ -9,8 +9,8 @@ import { Balls } from '@/pages/member/Lotto'
 
 function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: T; label: string }[]; value: T; onChange: (v: T) => void }) {
   return (
-    <div className="mb-4 flex gap-1 rounded-full bg-white/[0.05] p-1">
-      {tabs.map((t) => <button key={t.id} data-testid={`tab-${t.id}`} onClick={() => onChange(t.id)} className={cx('flex-1 rounded-full py-2 text-sm font-semibold transition-colors', value === t.id ? 'bg-lions-500 text-white' : 'text-slate-400')}>{t.label}</button>)}
+    <div className="mb-4 flex gap-1 rounded-full bg-line/[0.05] p-1">
+      {tabs.map((t) => <button key={t.id} data-testid={`tab-${t.id}`} onClick={() => onChange(t.id)} className={cx('flex-1 rounded-full py-2 text-sm font-semibold transition-colors', value === t.id ? 'bg-lions-500 text-white' : 'text-muted')}>{t.label}</button>)}
     </div>
   )
 }
@@ -42,7 +42,7 @@ export function AdminMemberships() {
         <div className="space-y-2">
           {q.data.memberships.map((m) => (
             <Card key={m.id} testId={`membership-row-${m.id}`} className="flex items-center gap-3 py-3">
-              <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{who(m.profile_id)?.full_name || who(m.profile_id)?.email}</p><p className="text-xs text-slate-400">{m.package_name} · {money(m.amount_cents)} · {fmtDate(m.starts_at)} → {fmtDate(m.expires_at)}</p></div>
+              <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{who(m.profile_id)?.full_name || who(m.profile_id)?.email}</p><p className="text-xs text-muted">{m.package_name} · {money(m.amount_cents)} · {fmtDate(m.starts_at)} → {fmtDate(m.expires_at)}</p></div>
               <Badge tone={m.expires_at >= today && m.status === 'active' ? 'green' : 'slate'}>{m.expires_at >= today && m.status === 'active' ? 'Active' : 'Expired'}</Badge>
             </Card>
           ))}
@@ -84,12 +84,12 @@ export function AdminLotto() {
         itemTitle={(r) => r.title} itemSubtitle={(r) => `${money(r.jackpot_cents)} jackpot · ${money(r.ticket_price_cents)}/line · ${fmtDateTime(r.draw_at)} · ${ticketsFor(r.id).length} lines sold (${money(ticketsFor(r.id).length * r.ticket_price_cents)})`}
         itemBadge={(r) => (r.status === 'drawn' ? <Badge tone="blue">Drawn</Badge> : <Badge tone={r.status === 'open' ? 'green' : 'slate'}>{r.status}</Badge>)}
         extraActions={(d, close) => d && (
-          <div className="space-y-3 rounded-xl border border-white/10 p-3">
-            <p className="text-xs font-bold uppercase tracking-wider text-slate-400">{ticketsFor(d.id).length} paid lines · {money(ticketsFor(d.id).length * d.ticket_price_cents)} taken</p>
+          <div className="space-y-3 rounded-xl border border-line/10 p-3">
+            <p className="text-xs font-bold uppercase tracking-wider text-muted">{ticketsFor(d.id).length} paid lines · {money(ticketsFor(d.id).length * d.ticket_price_cents)} taken</p>
             {d.status === 'drawn' ? (
               <>
                 <div className="flex items-center gap-2"><Trophy size={16} className="text-warn-400" /><Balls nums={d.winning_numbers ?? []} /></div>
-                {ticketsFor(d.id).filter((t) => t.is_winner).length === 0 ? <p className="text-sm text-slate-400">No jackpot winner. {ticketsFor(d.id).filter((t) => t.matched === d.numbers_count - 1).length} matched {d.numbers_count - 1}.</p>
+                {ticketsFor(d.id).filter((t) => t.is_winner).length === 0 ? <p className="text-sm text-muted">No jackpot winner. {ticketsFor(d.id).filter((t) => t.matched === d.numbers_count - 1).length} matched {d.numbers_count - 1}.</p>
                   : ticketsFor(d.id).filter((t) => t.is_winner).map((t) => { const p = q.data?.profiles.find((x) => x.id === t.profile_id); return <p key={t.id} className="text-sm text-emerald-300" data-testid="lotto-winner">Winner: {p?.full_name} · {p?.email}{p?.phone ? ` · ${p.phone}` : ''}</p> })}
               </>
             ) : <Button type="button" data-testid="lotto-run-draw" size="sm" loading={busy === d.id} onClick={() => runDraw(d, close)}><Trophy size={14} /> Run draw now</Button>}
@@ -128,7 +128,7 @@ export function AdminFacilities() {
         <div className="space-y-2">
           {q.data.bookings.map((b) => { const p = q.data!.profiles.find((x) => x.id === b.profile_id); return (
             <Card key={b.id} testId={`booking-row-${b.id}`} className="flex items-center gap-3 py-3">
-              <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{q.data!.facilities.find((f) => f.id === b.facility_id)?.name} · {fmtDateTime(b.starts_at)}–{fmtTime(b.ends_at)}</p><p className="text-xs text-slate-400">{p?.full_name || p?.email}</p></div>
+              <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{q.data!.facilities.find((f) => f.id === b.facility_id)?.name} · {fmtDateTime(b.starts_at)}–{fmtTime(b.ends_at)}</p><p className="text-xs text-muted">{p?.full_name || p?.email}</p></div>
               <Badge tone={b.status === 'confirmed' ? 'green' : 'amber'}>{b.status}</Badge>
               <Button size="sm" variant="ghost" onClick={() => cancel(b)}>Cancel</Button>
             </Card>

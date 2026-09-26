@@ -55,29 +55,29 @@ export default function MembershipPage() {
       {q.loading && !q.data ? <Spinner /> : (
         <>
           <section className="space-y-2">
-            <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Your memberships</h2>
+            <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-muted">Your memberships</h2>
             {active.length === 0 ? <Empty icon={<ShieldCheck />} title="No active membership" hint="Pick a package below to join." /> : active.map((m) => (
               <Card key={m.id} testId={`membership-${m.id}`} className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-300"><ShieldCheck size={18} /></div>
-                <div className="flex-1"><p className="text-sm font-semibold">{m.package_name}</p><p className="text-xs text-slate-400">{m.child_id ? `${childName(m.child_id) ?? 'Child'} · ` : ''}Valid until {fmtDate(m.expires_at, { day: 'numeric', month: 'short', year: 'numeric' })}</p></div>
+                <div className="flex-1"><p className="text-sm font-semibold">{m.package_name}</p><p className="text-xs text-muted">{m.child_id ? `${childName(m.child_id) ?? 'Child'} · ` : ''}Valid until {fmtDate(m.expires_at, { day: 'numeric', month: 'short', year: 'numeric' })}</p></div>
                 <Badge tone="green">Active</Badge>
               </Card>
             ))}
             {(q.data?.mine ?? []).filter((m) => !active.includes(m)).slice(0, 3).map((m) => (
-              <Card key={m.id} className="flex items-center gap-3 opacity-60"><div className="flex-1"><p className="text-sm font-semibold">{m.package_name}</p><p className="text-xs text-slate-400">Expired {fmtDate(m.expires_at)}</p></div><Badge tone="slate">Expired</Badge></Card>
+              <Card key={m.id} className="flex items-center gap-3 opacity-60"><div className="flex-1"><p className="text-sm font-semibold">{m.package_name}</p><p className="text-xs text-muted">Expired {fmtDate(m.expires_at)}</p></div><Badge tone="slate">Expired</Badge></Card>
             ))}
           </section>
           <section className="space-y-2">
-            <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Packages</h2>
+            <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-muted">Packages</h2>
             {err && !buying && <Alert testId="membership-error">{err}</Alert>}
             {visible.length === 0 ? <Empty icon={<CreditCard />} title="No packages available" /> : visible.map((p) => (
               <Card key={p.id} testId={`package-${p.id}`} className="space-y-2">
                 <div className="flex items-start justify-between gap-3">
-                  <div><p className="font-semibold">{p.name}</p>{p.description && <p className="mt-0.5 text-xs text-slate-400">{p.description}</p>}</div>
+                  <div><p className="font-semibold">{p.name}</p>{p.description && <p className="mt-0.5 text-xs text-muted">{p.description}</p>}</div>
                   <p className="font-display text-xl font-bold text-lions-200">{money(p.price_cents)}</p>
                 </div>
                 <div className="flex items-center justify-between">
-                  <p className="text-xs text-slate-500">{p.duration_months} month{p.duration_months === 1 ? '' : 's'} · {p.audience === 'any' ? 'All members' : p.audience}</p>
+                  <p className="text-xs text-subtle">{p.duration_months} month{p.duration_months === 1 ? '' : 's'} · {p.audience === 'any' ? 'All members' : p.audience}</p>
                   <Button data-testid={`package-buy-${p.id}`} size="sm" onClick={() => openBuy(p)}>{p.audience === 'child' && <Baby size={14} />} Buy</Button>
                 </div>
               </Card>
@@ -94,7 +94,7 @@ export default function MembershipPage() {
             ) : buying.audience === 'any' && children.length > 0 ? (
               <Field label="Who is this for?"><Select data-testid="membership-child" value={forChild} onChange={(e) => setForChild(e.target.value)}><option value="">Myself</option>{children.map((c) => <option key={c.id} value={c.id}>{c.full_name}</option>)}</Select></Field>
             ) : null}
-            <p className="text-sm text-slate-400">Valid for {buying.duration_months} months from today. You'll get a receipt by email.</p>
+            <p className="text-sm text-muted">Valid for {buying.duration_months} months from today. You'll get a receipt by email.</p>
             {err && <Alert testId="membership-error">{err}</Alert>}
             {!isStripeCheckoutConfigured() && <Alert tone="blue">Online payments aren't configured yet.</Alert>}
             <Button data-testid="membership-pay-btn" className="w-full" size="lg" loading={busy} disabled={!isStripeCheckoutConfigured()} onClick={pay}>Pay {money(buying.price_cents)}</Button>

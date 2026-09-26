@@ -26,7 +26,7 @@ import { AdminNotifications } from './pages/admin/Notifications'
 import { AdminSettings, AdminReports } from './pages/admin/Settings'
 
 function Loading() {
-  return <div className="flex min-h-[100dvh] items-center justify-center bg-[#0A0A0C]"><Loader2 size={32} className="animate-spin text-lions-400" /></div>
+  return <div className="flex min-h-[100dvh] items-center justify-center bg-app"><Loader2 size={32} className="animate-spin text-lions-400" /></div>
 }
 
 function RequireAuth({ children, admin }: { children: React.ReactNode; admin?: boolean }) {

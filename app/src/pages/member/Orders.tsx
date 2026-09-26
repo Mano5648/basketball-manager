@@ -34,8 +34,8 @@ export default function OrdersPage() {
                 <p className="flex items-center gap-2 text-sm font-semibold"><Package size={15} className="text-lions-300" /> {r.title}</p>
                 <Badge tone={TONE[r.status] ?? 'slate'}>{r.status}</Badge>
               </div>
-              <p className="text-xs text-slate-400">{r.lines.join(' · ')}</p>
-              <div className="flex items-center justify-between text-xs text-slate-500"><span>{fmtDateTime(r.when)}</span><span className="text-sm font-bold text-white">{money(r.amount)}</span></div>
+              <p className="text-xs text-muted">{r.lines.join(' · ')}</p>
+              <div className="flex items-center justify-between text-xs text-subtle"><span>{fmtDateTime(r.when)}</span><span className="text-sm font-bold text-fg">{money(r.amount)}</span></div>
             </Card>
           ))}
         </div>

@@ -46,10 +46,10 @@ export function AdminNotifications() {
         <Button data-testid="notif-send" type="submit" loading={busy}><Send size={16} /> Send notification</Button>
       </form>
       <section className="space-y-2">
-        <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Sent</h2>
+        <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-muted">Sent</h2>
         {q.loading && !q.data ? <Spinner /> : !q.data?.length ? <Empty icon={<Bell />} title="Nothing sent yet" /> : q.data.map((n) => (
           <Card key={n.id} testId={`sent-notif-${n.id}`} className="flex items-start gap-3 py-3">
-            <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{n.title}</p><p className="text-sm text-slate-300">{n.body}</p><p className="mt-1 text-[11px] text-slate-500">{fmtDateTime(n.created_at)} · {n.target === 'all' ? 'Everyone' : teams.find((t) => t.id === n.team_id)?.name ?? 'Team'}</p></div>
+            <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{n.title}</p><p className="text-sm text-muted">{n.body}</p><p className="mt-1 text-[11px] text-subtle">{fmtDateTime(n.created_at)} · {n.target === 'all' ? 'Everyone' : teams.find((t) => t.id === n.team_id)?.name ?? 'Team'}</p></div>
             <Badge tone="slate">{n.push_sent} push</Badge>
           </Card>
         ))}

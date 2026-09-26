@@ -52,7 +52,7 @@ export default function ProfilePage() {
       <PageHeader title="My profile" back="/app/more" />
       <div className="flex items-center gap-4">
         {form.avatar_url ? <img src={form.avatar_url} alt="" className="h-16 w-16 rounded-full object-cover" /> : <div className="flex h-16 w-16 items-center justify-center rounded-full bg-lions-500/20 font-display text-xl font-bold text-lions-100">{initials(profile.full_name || profile.email)}</div>}
-        <div><p className="font-semibold">{profile.full_name || 'Member'}</p><p className="text-sm text-slate-400">{profile.email}</p></div>
+        <div><p className="font-semibold">{profile.full_name || 'Member'}</p><p className="text-sm text-muted">{profile.email}</p></div>
       </div>
       <form onSubmit={save} className="space-y-4" data-testid="profile-form">
         <Field label="Full name"><Input data-testid="profile-name" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} required /></Field>
@@ -64,19 +64,19 @@ export default function ProfilePage() {
       </form>
 
       <section className="space-y-2">
-        <div className="flex items-center justify-between"><h2 className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">My children</h2><Button data-testid="add-child-btn" size="sm" variant="secondary" onClick={() => setAddChild(true)}><Plus size={14} /> Add child</Button></div>
-        {children.length === 0 ? <p className="text-sm text-slate-500">Add your children to buy their membership and get them assigned to a team.</p> : children.map((c) => (
+        <div className="flex items-center justify-between"><h2 className="text-xs font-bold uppercase tracking-[0.18em] text-muted">My children</h2><Button data-testid="add-child-btn" size="sm" variant="secondary" onClick={() => setAddChild(true)}><Plus size={14} /> Add child</Button></div>
+        {children.length === 0 ? <p className="text-sm text-subtle">Add your children to buy their membership and get them assigned to a team.</p> : children.map((c) => (
           <Card key={c.id} testId={`child-${c.id}`} className="flex items-center gap-3 py-3">
             <Baby size={18} className="text-lions-300" />
-            <div className="flex-1"><p className="text-sm font-semibold">{c.full_name}</p><p className="text-xs text-slate-400">{c.team_id ? teams.find((t) => t.id === c.team_id)?.name ?? 'Team' : 'Awaiting team assignment'}{c.dob ? ` · born ${c.dob}` : ''}</p></div>
-            <button data-testid={`remove-child-${c.id}`} onClick={() => removeChild(c.id)} className="p-2 text-slate-500 hover:text-rose-400"><Trash2 size={16} /></button>
+            <div className="flex-1"><p className="text-sm font-semibold">{c.full_name}</p><p className="text-xs text-muted">{c.team_id ? teams.find((t) => t.id === c.team_id)?.name ?? 'Team' : 'Awaiting team assignment'}{c.dob ? ` · born ${c.dob}` : ''}</p></div>
+            <button data-testid={`remove-child-${c.id}`} onClick={() => removeChild(c.id)} className="p-2 text-subtle hover:text-rose-400"><Trash2 size={16} /></button>
           </Card>
         ))}
       </section>
 
-      <section className="space-y-2 border-t border-white/[0.06] pt-5">
+      <section className="space-y-2 border-t border-line/[0.06] pt-5">
         <Button data-testid="profile-signout" variant="secondary" onClick={() => void signOut().then(() => nav('/login'))}><LogOut size={16} /> Sign out</Button>
-        <button data-testid="delete-account-btn" onClick={deleteAccount} className="block text-xs text-slate-500 underline hover:text-rose-400">Delete my account & data</button>
+        <button data-testid="delete-account-btn" onClick={deleteAccount} className="block text-xs text-subtle underline hover:text-rose-400">Delete my account & data</button>
       </section>
 
       <Sheet open={addChild} onClose={() => setAddChild(false)} title="Add a child" testId="add-child-sheet">

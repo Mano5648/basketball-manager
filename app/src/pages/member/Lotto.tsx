@@ -11,7 +11,7 @@ import { Alert, Badge, Button, Card, Empty, PageHeader, Spinner, cx } from '@/co
 export function Balls({ nums, hit }: { nums: number[]; hit?: number[] }) {
   return (
     <div className="flex flex-wrap gap-1.5">
-      {nums.map((n, i) => <span key={`${n}-${i}`} className={cx('flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold tabular-nums', hit?.includes(n) ? 'bg-emerald-500 text-white' : 'bg-white/10 text-white')}>{n}</span>)}
+      {nums.map((n, i) => <span key={`${n}-${i}`} className={cx('flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold tabular-nums', hit?.includes(n) ? 'bg-emerald-500 text-white' : 'bg-line/10 text-fg')}>{n}</span>)}
     </div>
   )
 }
@@ -66,13 +66,13 @@ export default function LottoPage() {
       {q.loading && !q.data ? <Spinner /> : !open ? <Empty icon={<Ticket />} title="No draw open right now" hint="Check back soon — the next draw will appear here." /> : (
         <Card className="space-y-4" testId="lotto-open-draw">
           <div className="flex items-start justify-between">
-            <div><p className="text-xs font-bold uppercase tracking-[0.18em] text-lions-300">{open.title}</p><p className="font-display mt-1 text-3xl font-bold">{money(open.jackpot_cents)}</p><p className="text-xs text-slate-400">Jackpot · draw {fmtDateTime(open.draw_at)}</p></div>
+            <div><p className="text-xs font-bold uppercase tracking-[0.18em] text-lions-300">{open.title}</p><p className="font-display mt-1 text-3xl font-bold">{money(open.jackpot_cents)}</p><p className="text-xs text-muted">Jackpot · draw {fmtDateTime(open.draw_at)}</p></div>
             <Badge>{money(open.ticket_price_cents)} / line</Badge>
           </div>
-          <p className="text-sm text-slate-300">Pick {open.numbers_count} numbers from 1–{open.max_number}.</p>
+          <p className="text-sm text-muted">Pick {open.numbers_count} numbers from 1–{open.max_number}.</p>
           <div className="grid grid-cols-8 gap-1.5">
             {Array.from({ length: open.max_number }, (_, i) => i + 1).map((n) => (
-              <button key={n} data-testid={`lotto-num-${n}`} onClick={() => toggle(n)} className={cx('aspect-square rounded-full text-sm font-semibold tabular-nums transition-colors', picks.includes(n) ? 'bg-lions-500 text-white' : 'bg-white/[0.06] text-slate-300 hover:bg-white/10')}>{n}</button>
+              <button key={n} data-testid={`lotto-num-${n}`} onClick={() => toggle(n)} className={cx('aspect-square rounded-full text-sm font-semibold tabular-nums transition-colors', picks.includes(n) ? 'bg-lions-500 text-white' : 'bg-line/[0.06] text-muted hover:bg-line/10')}>{n}</button>
             ))}
           </div>
           <div className="flex gap-2">
@@ -80,25 +80,25 @@ export default function LottoPage() {
             <Button data-testid="lotto-add-line" size="sm" disabled={picks.length !== open.numbers_count} onClick={addLine}>Add line</Button>
           </div>
           {lines.length > 0 && (
-            <div className="space-y-2 border-t border-white/10 pt-3">
-              {lines.map((l, i) => <div key={i} className="flex items-center justify-between" data-testid={`lotto-line-${i}`}><Balls nums={l} /><button onClick={() => setLines(lines.filter((_, n) => n !== i))} className="text-xs text-slate-400">Remove</button></div>)}
+            <div className="space-y-2 border-t border-line/10 pt-3">
+              {lines.map((l, i) => <div key={i} className="flex items-center justify-between" data-testid={`lotto-line-${i}`}><Balls nums={l} /><button onClick={() => setLines(lines.filter((_, n) => n !== i))} className="text-xs text-muted">Remove</button></div>)}
               {err && <Alert testId="lotto-error">{err}</Alert>}
               {!isStripeCheckoutConfigured() && <Alert tone="blue">Online payments aren't configured yet.</Alert>}
               <Button data-testid="lotto-pay-btn" className="w-full" size="lg" loading={busy} disabled={!isStripeCheckoutConfigured()} onClick={pay}>Pay {money(lines.length * open.ticket_price_cents)} for {lines.length} line{lines.length > 1 ? 's' : ''}</Button>
             </div>
           )}
-          {settings?.lotto_rules && <p className="text-[11px] leading-relaxed text-slate-500">{settings.lotto_rules}</p>}
+          {settings?.lotto_rules && <p className="text-[11px] leading-relaxed text-subtle">{settings.lotto_rules}</p>}
         </Card>
       )}
 
       {myTickets.length > 0 && (
         <section className="space-y-2">
-          <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">My tickets</h2>
+          <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-muted">My tickets</h2>
           {myTickets.slice(0, 10).map((t) => {
             const d = (q.data?.draws ?? []).find((x) => x.id === t.draw_id)
             return (
               <Card key={t.id} testId={`lotto-ticket-${t.id}`} className="flex items-center justify-between gap-3">
-                <div><p className="mb-1.5 text-xs text-slate-400">{d?.title ?? 'Draw'} · {d ? fmtDateTime(d.draw_at) : ''}</p><Balls nums={t.numbers} hit={d?.winning_numbers ?? undefined} /></div>
+                <div><p className="mb-1.5 text-xs text-muted">{d?.title ?? 'Draw'} · {d ? fmtDateTime(d.draw_at) : ''}</p><Balls nums={t.numbers} hit={d?.winning_numbers ?? undefined} /></div>
                 {d?.status === 'drawn' ? (t.is_winner ? <Badge tone="green">Winner!</Badge> : <Badge tone="slate">{t.matched} matched</Badge>) : <Badge>Entered</Badge>}
               </Card>
             )
@@ -108,10 +108,10 @@ export default function LottoPage() {
 
       {past.length > 0 && (
         <section className="space-y-2">
-          <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">Results</h2>
+          <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-muted">Results</h2>
           {past.map((d) => (
             <Card key={d.id} className="flex items-center justify-between gap-3">
-              <div><p className="text-sm font-semibold">{d.title}</p><p className="mb-1.5 text-xs text-slate-400">{fmtDateTime(d.drawn_at ?? d.draw_at)} · {money(d.jackpot_cents)}</p><Balls nums={d.winning_numbers ?? []} /></div>
+              <div><p className="text-sm font-semibold">{d.title}</p><p className="mb-1.5 text-xs text-muted">{fmtDateTime(d.drawn_at ?? d.draw_at)} · {money(d.jackpot_cents)}</p><Balls nums={d.winning_numbers ?? []} /></div>
               <Trophy size={18} className="text-warn-400" />
             </Card>
           ))}
