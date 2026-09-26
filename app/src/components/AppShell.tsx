@@ -1,4 +1,5 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom'
+import { motion } from 'motion/react'
 import { Bell, CalendarDays, Home, LayoutGrid, ShoppingBag, Trophy, ShieldCheck } from 'lucide-react'
 import { useClub } from '@/lib/ClubContext'
 import { useAuth } from '@/lib/AuthContext'
@@ -23,6 +24,7 @@ export default function AppShell() {
   const { settings, isFeatureOn } = useClub()
   const { user, role } = useAuth()
   const nav = useNavigate()
+  const { pathname } = useLocation()
   const unread = useUnreadCount(user?.id)
 
   const tabs = [
@@ -35,7 +37,7 @@ export default function AppShell() {
 
   return (
     <div className="min-h-[100dvh] bg-[#0A0A0C] text-white">
-      <header className="sticky top-0 z-30 border-b border-white/[0.06] bg-[#0A0A0C]/85 backdrop-blur-xl pt-[env(safe-area-inset-top)]">
+      <header className="sticky top-0 z-30 border-b border-white/[0.06] bg-[#0A0A0C]/85 backdrop-blur-xl pt-[calc(env(safe-area-inset-top)+0.75rem)]">
         <div className="mx-auto flex h-14 max-w-3xl items-center justify-between px-4">
           <button data-testid="header-club" onClick={() => nav('/app')} className="flex items-center gap-2.5">
             <img src={settings?.logo_url || './logo-lions-emblem.png'} alt="" className="h-9 w-9 rounded-lg bg-white object-contain" />
@@ -54,16 +56,38 @@ export default function AppShell() {
       </header>
 
       <main className="mx-auto max-w-3xl px-4 pb-28 pt-5">
-        <Outlet />
+        <motion.div
+          key={pathname}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <Outlet />
+        </motion.div>
       </main>
 
       <nav data-testid="bottom-tabs" className="fixed inset-x-0 bottom-0 z-30 border-t border-white/[0.06] bg-[#101012]/95 backdrop-blur-xl pb-[env(safe-area-inset-bottom)]">
         <div className="mx-auto flex max-w-3xl items-stretch justify-around">
           {tabs.map((t) => (
-            <NavLink key={t.to} to={t.to} end={t.end} data-testid={`tab-${t.label.toLowerCase()}`} className={({ isActive }) => cx('flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] font-semibold transition-colors', isActive ? 'text-lions-300' : 'text-slate-500 hover:text-slate-300')}>
+            <NavLink key={t.to} to={t.to} end={t.end} data-testid={`tab-${t.label.toLowerCase()}`} className={({ isActive }) => cx('flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] font-semibold transition-colors duration-300', isActive ? 'text-lions-300' : 'text-slate-500 hover:text-slate-300')}>
               {({ isActive }) => (
                 <>
-                  <span className={cx('rounded-full px-4 py-1 transition-colors', isActive && 'bg-lions-500/15')}><t.icon size={20} /></span>
+                  <span className="relative inline-flex rounded-full px-4 py-1">
+                    {isActive && (
+                      <motion.span
+                        layoutId="tab-pill"
+                        className="absolute inset-0 rounded-full bg-lions-500/20 ring-1 ring-lions-400/20"
+                        transition={{ type: 'spring', stiffness: 220, damping: 26, mass: 0.7 }}
+                      />
+                    )}
+                    <motion.span
+                      className="relative"
+                      animate={{ scale: isActive ? 1.16 : 1, y: isActive ? -2 : 0 }}
+                      transition={{ type: 'spring', stiffness: 300, damping: 18, mass: 0.6 }}
+                    >
+                      <t.icon size={20} />
+                    </motion.span>
+                  </span>
                   {t.label}
                 </>
               )}

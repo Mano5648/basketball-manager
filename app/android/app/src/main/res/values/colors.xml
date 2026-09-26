@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Match the web layer so the system bars blend into the app instead of
+         showing Android's default grey scrim. -->
+    <color name="appBackground">#0A0A0C</color>
+    <!-- The bottom tab bar's surface, so the gesture bar continues it. -->
+    <color name="navBackground">#101012</color>
+</resources>

@@ -56,7 +56,12 @@ export async function initNativeShell(): Promise<void> {
   try {
     const { StatusBar, Style } = await import('@capacitor/status-bar')
     await StatusBar.setStyle({ style: Style.Dark })
-    if (platform === 'android') await StatusBar.setBackgroundColor({ color: '#0A0A0C' })
+    if (platform === 'android') {
+      // Android 16 (targetSdk 36) forces edge-to-edge and ignores statusBarColor,
+      // painting a grey scrim instead. Drawing under the bars lets the app's own
+      // background show through; safe-area insets keep content clear of them.
+      await StatusBar.setOverlaysWebView({ overlay: true })
+    }
   } catch { /* plugin not available */ }
   try {
     const { SplashScreen } = await import('@capacitor/splash-screen')

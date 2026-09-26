@@ -66,5 +66,10 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<!-- The app is dark-only, so pin iOS system appearance to dark. Without this
+	     iOS renders scroll bounce areas and form controls in light appearance,
+	     which shows as grey edges against the app's black. -->
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
 </dict>
 </plist>

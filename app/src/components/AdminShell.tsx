@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { AnimatePresence, motion } from 'motion/react'
 import { BarChart3, Bell, CalendarDays, Dumbbell, Home, LayoutDashboard, Handshake, LogOut, Menu, Newspaper, Package, Settings, ShoppingBag, Ticket, Trophy, UserCog, Users, X, CreditCard } from 'lucide-react'
 import { useAuth } from '@/lib/AuthContext'
 import { useClub } from '@/lib/ClubContext'
@@ -54,18 +55,33 @@ export default function AdminShell() {
         {menu}
       </aside>
 
-      {open && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          <div className="absolute inset-0 bg-black/70" onClick={() => setOpen(false)} />
-          <aside className="absolute inset-y-0 left-0 flex w-72 flex-col bg-[#101012] pt-[env(safe-area-inset-top)]">
-            <div className="flex items-center justify-between px-4 py-4"><p className="font-display font-bold">Admin</p><button onClick={() => setOpen(false)} className="p-2 text-slate-400"><X size={20} /></button></div>
-            {menu}
-          </aside>
-        </div>
-      )}
+      <AnimatePresence>
+        {open && (
+          <motion.div key="admin-drawer" className="fixed inset-0 z-40 lg:hidden">
+            <motion.div
+              className="absolute inset-0 bg-black/70"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.25, ease: 'easeOut' }}
+              onClick={() => setOpen(false)}
+            />
+            <motion.aside
+              className="absolute inset-y-0 left-0 flex w-72 flex-col bg-[#101012] shadow-2xl shadow-black/60 pt-[calc(env(safe-area-inset-top)+0.75rem)]"
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', stiffness: 260, damping: 30, mass: 0.8 }}
+            >
+              <div className="flex items-center justify-between px-4 py-4"><p className="font-display font-bold">Admin</p><button onClick={() => setOpen(false)} className="p-2 text-slate-400"><X size={20} /></button></div>
+              {menu}
+            </motion.aside>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-white/[0.06] bg-[#0A0A0C]/85 px-4 backdrop-blur-xl pt-[env(safe-area-inset-top)] lg:hidden">
+        <header className="sticky top-0 z-30 flex min-h-14 items-center gap-3 border-b border-white/[0.06] bg-[#0A0A0C]/85 px-4 pb-2 backdrop-blur-xl pt-[calc(env(safe-area-inset-top)+0.75rem)] lg:hidden">
           <button data-testid="admin-menu-btn" onClick={() => setOpen(true)} className="rounded-full p-2 text-slate-300 hover:bg-white/10" aria-label="Menu"><Menu size={22} /></button>
           <p className="font-display text-sm font-bold">{settings?.club_name} · Admin</p>
         </header>

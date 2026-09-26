@@ -29,6 +29,8 @@ interface AuthContextValue {
   refreshProfile: () => Promise<void>
 }
 
+const EMAIL_TAKEN = 'An account with this email already exists. Sign in instead, or use "Forgot password?" if you can\'t remember it.'
+
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 async function loadProfileAndRole(user: User): Promise<{ profile: Profile | null; role: Role }> {
@@ -107,7 +109,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           data: { full_name: input.fullName.trim(), phone: input.phone?.trim() || null, member_type: input.memberType },
         },
       })
-      if (error) return { error: /invalid/i.test(error.message) && /email/i.test(error.message) ? 'Please use a real, working email address.' : error.message, needsConfirmation: false }
+      if (error) {
+        if (/already.*(registered|exists)/i.test(error.message)) return { error: EMAIL_TAKEN, needsConfirmation: false }
+        return { error: /invalid/i.test(error.message) && /email/i.test(error.message) ? 'Please use a real, working email address.' : error.message, needsConfirmation: false }
+      }
+      // With email confirmation on, Supabase hides duplicate signups rather than
+      // erroring: it returns a user with no identities instead.
+      if (data.user && (data.user.identities?.length ?? 0) === 0) return { error: EMAIL_TAKEN, needsConfirmation: false }
       return { error: null, needsConfirmation: !data.session }
     },
     async signOut() {
