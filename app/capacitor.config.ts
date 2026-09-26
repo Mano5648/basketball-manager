@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli'
 
 const config: CapacitorConfig = {
   appId: 'ie.dublinlions.app',
-  appName: 'Dublin Lions BC',
+  appName: 'Dublin Lions',
   webDir: 'dist',
   backgroundColor: '#0A0A0C',
   android: {
