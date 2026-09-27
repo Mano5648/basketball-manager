@@ -7,7 +7,7 @@ export function cx(...c: (string | false | null | undefined)[]) { return c.filte
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline'
 const variants: Record<Variant, string> = {
-  primary: 'bg-lions-500 text-white hover:bg-lions-600 shadow-[0_8px_24px_-8px_rgba(37,99,235,0.7)]',
+  primary: 'bg-lions-500 text-white hover:bg-lions-600 shadow-[0_8px_24px_-8px_var(--btn-shadow)]',
   secondary: 'bg-line/10 text-fg hover:bg-line/15 border border-line/10',
   ghost: 'bg-transparent text-muted hover:bg-line/10',
   danger: 'bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 border border-rose-500/30',

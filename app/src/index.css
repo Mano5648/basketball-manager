@@ -29,6 +29,8 @@
   /* Hairlines and translucent fills are tinted with this, so they stay
      light-on-dark and dark-on-light without per-component overrides. */
   --line: 255 255 255;
+  /* A strong glow lifts the primary button off a dark background. */
+  --btn-shadow: rgba(37, 99, 235, 0.7);
   color-scheme: dark;
 }
 
@@ -51,6 +53,9 @@
   --muted: 71 85 105;
   --subtle: 100 116 139;
   --line: 15 23 42;
+  /* The same glow on a light background reads as a blue smudge, so light mode
+     gets a restrained neutral drop shadow instead. */
+  --btn-shadow: rgba(15, 23, 42, 0.16);
   color-scheme: light;
 }
 
