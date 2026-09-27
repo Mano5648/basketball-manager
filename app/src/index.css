@@ -2,7 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+/* Surface, text and brand tokens. Every colour in the app resolves through
+   these, so a theme is a set of values rather than a second set of classes.
+   Light is the default on :root so the very first paint — before React mounts
+   and sets data-theme — already matches the app's default theme. */
+:root, [data-theme='light'] {
+  /* 500/600 are solid fills carrying white text, so they are identical in both
+     themes. The lower numbers are used as text: on a light background they
+     must be dark, hence the near-inversion against the dark theme below. */
+  --brand-100: 30 58 138;
+  --brand-200: 30 64 175;
+  --brand-300: 29 78 216;
+  --brand-400: 37 99 235;
+  --brand-500: 37 99 235;
+  --brand-600: 29 78 216;
+  --accent-300: 154 52 18;
+  --accent-400: 194 65 12;
+  --accent-500: 249 115 22;
+  --accent-600: 234 88 12;
+  --bg: 247 249 252;
+  --surface: 255 255 255;
+  --surface-2: 241 245 249;
+  --surface-3: 255 255 255;
+  --fg: 15 23 42;
+  --muted: 71 85 105;
+  --subtle: 100 116 139;
+  /* Hairlines and translucent fills are tinted with this, so they stay
+     dark-on-light and light-on-dark without per-component overrides. */
+  --line: 15 23 42;
+  /* A blue glow under a blue button reads as a smudge on a light background,
+     so light mode gets a restrained neutral drop shadow. */
+  --btn-shadow: rgba(15, 23, 42, 0.16);
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
   --brand-100: 219 234 254;
   --brand-200: 191 219 254;
   --brand-300: 147 197 253;
@@ -13,12 +47,6 @@
   --accent-400: 251 146 60;
   --accent-500: 249 115 22;
   --accent-600: 234 88 12;
-}
-
-/* Surface + text tokens. Every surface, text and border colour in the app
-   resolves through these, so flipping the theme is a matter of swapping the
-   values rather than touching components. */
-:root, [data-theme='dark'] {
   --bg: 10 10 12;
   --surface: 22 22 24;
   --surface-2: 16 16 18;
@@ -26,37 +54,10 @@
   --fg: 245 248 255;
   --muted: 148 163 184;
   --subtle: 100 116 139;
-  /* Hairlines and translucent fills are tinted with this, so they stay
-     light-on-dark and dark-on-light without per-component overrides. */
   --line: 255 255 255;
   /* A strong glow lifts the primary button off a dark background. */
   --btn-shadow: rgba(37, 99, 235, 0.7);
   color-scheme: dark;
-}
-
-[data-theme='light'] {
-  /* The brand and accent ramps are tuned as light-on-dark. Their low numbers
-     are used as text, so on a light background they must darken instead —
-     lions-300 at #93C5FD is about 1.7:1 on white and unreadable. 500/600 stay
-     put: they are solid fills carrying white text in both themes. */
-  --brand-100: 30 58 138;
-  --brand-200: 30 64 175;
-  --brand-300: 29 78 216;
-  --brand-400: 37 99 235;
-  --accent-300: 154 52 18;
-  --accent-400: 194 65 12;
-  --bg: 247 249 252;
-  --surface: 255 255 255;
-  --surface-2: 241 245 249;
-  --surface-3: 255 255 255;
-  --fg: 15 23 42;
-  --muted: 71 85 105;
-  --subtle: 100 116 139;
-  --line: 15 23 42;
-  /* The same glow on a light background reads as a blue smudge, so light mode
-     gets a restrained neutral drop shadow instead. */
-  --btn-shadow: rgba(15, 23, 42, 0.16);
-  color-scheme: light;
 }
 
 html, body, #root {

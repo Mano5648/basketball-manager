@@ -45,7 +45,9 @@ export default function AdminShell() {
           {theme === 'dark' ? <Moon size={18} /> : <Sun size={18} />}
           <span className="flex-1 text-left">{theme === 'dark' ? 'Dark mode' : 'Light mode'}</span>
           <span className={cx('relative h-5 w-9 shrink-0 rounded-full transition-colors', theme === 'light' ? 'bg-lions-500' : 'bg-line/20')}>
-            <span className={cx('absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform', theme === 'light' ? 'translate-x-[1.125rem]' : 'translate-x-0.5')} />
+            {/* Travel is track - knob - both insets (36 - 16 - 4 = 16px), so the
+                knob always lands inside the track. */}
+            <span className={cx('absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200', theme === 'light' ? 'translate-x-4' : 'translate-x-0')} />
           </span>
         </button>
         <button data-testid="admin-view-app" onClick={() => nav('/app')} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted hover:bg-line/5 hover:text-fg"><Home size={18} /> Member view</button>

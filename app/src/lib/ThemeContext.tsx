@@ -18,7 +18,9 @@ function readStoredTheme(): Theme {
     const v = localStorage.getItem(STORAGE_KEY)
     if (v === 'light' || v === 'dark') return v
   } catch { /* private mode / storage blocked */ }
-  return 'dark'
+  // First run defaults to light; the toggle in More -> Appearance overrides it
+  // and that choice is remembered.
+  return 'light'
 }
 
 /** Keep the native status and navigation bars in step with the web theme. */

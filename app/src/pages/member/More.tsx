@@ -57,7 +57,9 @@ export default function MorePage() {
           onClick={toggle}
           className={cx('relative h-7 w-12 shrink-0 rounded-full transition-colors', theme === 'light' ? 'bg-lions-500' : 'bg-line/15')}
         >
-          <span className={cx('absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-transform', theme === 'light' ? 'translate-x-6' : 'translate-x-1')} />
+          {/* Travel is track - knob - both insets (48 - 20 - 8 = 20px), so the
+              knob always lands inside the track. */}
+          <span className={cx('absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow transition-transform duration-200', theme === 'light' ? 'translate-x-5' : 'translate-x-0')} />
         </button>
       </Card>
       {settings?.about_text && <Card className="text-sm leading-relaxed text-muted"><p className="mb-1 text-xs font-bold uppercase tracking-[0.18em] text-muted">About the club</p><p className="whitespace-pre-wrap">{settings.about_text}</p></Card>}
