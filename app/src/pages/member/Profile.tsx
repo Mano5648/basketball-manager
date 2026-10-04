@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Baby, LogOut, Plus, Trash2 } from 'lucide-react'
+import { Baby, Download, LogOut, Plus, Trash2 } from 'lucide-react'
 import { useAuth } from '@/lib/AuthContext'
 import { useClub } from '@/lib/ClubContext'
 import { sb, type MemberType } from '@/lib/db'
@@ -12,8 +12,9 @@ export default function ProfilePage() {
   const { profile, refreshProfile, signOut } = useAuth()
   const { children, teams, refresh } = useClub()
   const nav = useNavigate()
-  const [form, setForm] = useState({ full_name: profile?.full_name ?? '', phone: profile?.phone ?? '', member_type: (profile?.member_type ?? 'supporter') as MemberType, avatar_url: profile?.avatar_url ?? null })
+  const [form, setForm] = useState({ full_name: profile?.full_name ?? '', phone: profile?.phone ?? '', member_type: (profile?.member_type ?? 'parent') as MemberType, avatar_url: profile?.avatar_url ?? null })
   const [saving, setSaving] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [addChild, setAddChild] = useState(false)
   const [child, setChild] = useState({ full_name: '', dob: '' })
@@ -38,6 +39,21 @@ export default function ProfilePage() {
     if (!confirm('Remove this child from your account?')) return
     await sb().from('children').delete().eq('id', id)
     void refresh()
+  }
+  /** GDPR right of access: hand the member a copy of everything we hold. */
+  const exportData = async () => {
+    setExporting(true); setMsg(null)
+    const { data, error } = await sb().rpc('export_my_data')
+    setExporting(false)
+    if (error) { setMsg({ ok: false, text: error.message }); return }
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `dublin-lions-my-data-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    setMsg({ ok: true, text: 'Your data has been downloaded.' })
   }
   const deleteAccount = async () => {
     if (!profile || !confirm('Delete your account and all your data? This cannot be undone.')) return
@@ -72,6 +88,12 @@ export default function ProfilePage() {
             <button data-testid={`remove-child-${c.id}`} onClick={() => removeChild(c.id)} className="p-2 text-subtle hover:text-rose-400"><Trash2 size={16} /></button>
           </Card>
         ))}
+      </section>
+
+      <section className="space-y-2 border-t border-line/[0.06] pt-5">
+        <p className="text-xs font-bold uppercase tracking-[0.18em] text-muted">Your data</p>
+        <p className="text-xs text-muted">Download everything the club holds about you and your children, as a JSON file.</p>
+        <Button data-testid="export-data-btn" variant="secondary" loading={exporting} onClick={exportData}><Download size={16} /> Download my data</Button>
       </section>
 
       <section className="space-y-2 border-t border-line/[0.06] pt-5">

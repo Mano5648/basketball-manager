@@ -12,6 +12,7 @@ export interface SignUpInput {
   password: string
   fullName: string
   phone?: string
+  dateOfBirth?: string
   memberType: MemberType
 }
 
@@ -106,7 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         password: input.password,
         options: {
           emailRedirectTo: externalAppUrl('/login'),
-          data: { full_name: input.fullName.trim(), phone: input.phone?.trim() || null, member_type: input.memberType },
+          data: { full_name: input.fullName.trim(), phone: input.phone?.trim() || null, member_type: input.memberType, date_of_birth: input.dateOfBirth || null },
         },
       })
       if (error) {

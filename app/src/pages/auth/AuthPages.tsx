@@ -44,6 +44,25 @@ function AuthFrame({ title, subtitle, children }: { title: string; subtitle?: st
  *  which is what actually enforces it — this is only the friendly half. */
 export const PASSWORD_MIN = 10
 
+/** Ireland's digital age of consent. Children do not hold accounts — a parent
+ *  registers and adds them under their own profile. */
+export const MIN_ACCOUNT_AGE = 16
+
+function maxDobForAge16(): string {
+  const d = new Date()
+  d.setFullYear(d.getFullYear() - MIN_ACCOUNT_AGE)
+  return d.toISOString().slice(0, 10)
+}
+
+function isOldEnough(dob: string): boolean {
+  if (!dob) return false
+  const birth = new Date(dob)
+  if (Number.isNaN(birth.getTime())) return false
+  const cutoff = new Date()
+  cutoff.setFullYear(cutoff.getFullYear() - MIN_ACCOUNT_AGE)
+  return birth <= cutoff
+}
+
 export function checkPassword(pw: string): { ok: boolean; problems: string[] } {
   const problems: string[] = []
   if (pw.length < PASSWORD_MIN) problems.push(`at least ${PASSWORD_MIN} characters`)
@@ -116,18 +135,22 @@ export function RegisterPage() {
   const { signUp } = useAuth()
   const { settings } = useClub()
   const nav = useNavigate()
-  const [form, setForm] = useState({ fullName: '', email: '', phone: '', password: '', memberType: 'parent' as MemberType, agree: false })
+  const [form, setForm] = useState({ fullName: '', email: '', phone: '', password: '', dateOfBirth: '', memberType: 'parent' as MemberType, agree: false })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [done, setDone] = useState<'confirm' | null>(null)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
+    if (!isOldEnough(form.dateOfBirth)) {
+      setErr(`You must be ${MIN_ACCOUNT_AGE} or over to create an account. A parent or guardian can register and add you as a child.`)
+      return
+    }
     if (!form.agree) { setErr('Please accept the privacy policy to continue.'); return }
     const strength = checkPassword(form.password)
     if (!strength.ok) { setErr(`Your password needs ${strength.problems.join(', ')}.`); return }
     setBusy(true); setErr(null)
-    const res = await signUp({ email: form.email, password: form.password, fullName: form.fullName, phone: form.phone, memberType: form.memberType })
+    const res = await signUp({ email: form.email, password: form.password, fullName: form.fullName, phone: form.phone, dateOfBirth: form.dateOfBirth, memberType: form.memberType })
     setBusy(false)
     if (res.error) { setErr(res.error); return }
     if (res.needsConfirmation) setDone('confirm')
@@ -161,6 +184,9 @@ export function RegisterPage() {
         <Field label="Full name"><Input data-testid="register-name" value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} required autoComplete="name" /></Field>
         <Field label="Email"><Input data-testid="register-email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required autoComplete="email" /></Field>
         <Field label="Phone (optional)"><Input data-testid="register-phone" type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} autoComplete="tel" /></Field>
+        <Field label="Date of birth" hint="Account holders must be 16 or over. Register your children once you're signed in.">
+          <Input data-testid="register-dob" type="date" value={form.dateOfBirth} max={maxDobForAge16()} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} required />
+        </Field>
         <Field label="Password">
           <PasswordInput testId="register-password" value={form.password} onChange={(v) => setForm({ ...form, password: v })} autoComplete="new-password" minLength={PASSWORD_MIN} />
           <PasswordRules value={form.password} />
