@@ -6,6 +6,25 @@
 <title>Privacy Policy · Dublin Lions</title>
 <meta name="description" content="Privacy policy for the Dublin Lions basketball club app." />
 <meta name="robots" content="index, follow" />
+<script>
+  // Stripe Checkout can only return to an https URL, so the app sends members
+  // here after paying. Anything under #/payment/ belongs to the app, not to
+  // this page: bounce it straight back in via the custom scheme, carrying the
+  // session id in the hash. Capacitor's appUrlOpen listener turns that into a
+  // route. Everything else just reads the privacy policy below.
+  (function () {
+    var hash = window.location.hash || '';
+    if (hash.indexOf('#/payment/') !== 0) return;
+    document.documentElement.style.visibility = 'hidden';
+    window.location.replace('ie.dublinlions.app://return' + hash);
+    // If the app is not installed the scheme does nothing, so show a fallback.
+    setTimeout(function () {
+      document.documentElement.style.visibility = '';
+      var el = document.getElementById('app-return');
+      if (el) el.hidden = false;
+    }, 1500);
+  })();
+</script>
 <style>
   :root {
     --bg: #ffffff; --fg: #17181c; --muted: #4a5568; --line: #e2e8f0; --link: #1d4ed8;
@@ -26,11 +45,19 @@
   h2 { font-size: 1.1rem; margin: 2rem 0 .5rem; }
   p { margin: 0 0 1rem; }
   a { color: var(--link); }
+  .panel { background: color-mix(in srgb, var(--link) 8%, transparent); border: 1px solid var(--line);
+           border-radius: .75rem; padding: 1rem 1.25rem; margin: 0 0 1.5rem; }
   footer { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; }
 </style>
 </head>
 <body>
 <main>
+  <div class="panel" id="app-return" hidden>
+    <p style="margin:0"><strong>Returning to the app…</strong> If nothing happens, open the
+    <strong>Dublin Lions</strong> app on your device — your payment has been received and your
+    order will appear under <em>More &rarr; My orders</em>.</p>
+  </div>
+
   <h1>Privacy Policy</h1>
   <p class="sub">Dublin Lions &middot; club app</p>
   <p class="updated">Last updated 27 September 2026</p>

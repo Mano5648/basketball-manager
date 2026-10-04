@@ -18,6 +18,17 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Lets the app be opened by ie.dublinlions.app:// links. Stripe can
+                 only return to an https URL, so checkout returns to the hosted
+                 page, which bounces back in here with the session in the hash.
+                 Capacitor's appUrlOpen listener turns that into a route. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="@string/custom_url_scheme" />
+            </intent-filter>
         </activity>
 
         <provider
