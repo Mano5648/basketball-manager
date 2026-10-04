@@ -29,12 +29,20 @@ function Loading() {
   return <div className="flex min-h-[100dvh] items-center justify-center bg-app"><Loader2 size={32} className="animate-spin text-lions-400" /></div>
 }
 
+/** Admin console and anything belonging to a person. Browsing is open. */
 function RequireAuth({ children, admin }: { children: React.ReactNode; admin?: boolean }) {
   const { user, role, loading } = useAuth()
   const loc = useLocation()
   if (loading || (user && !role)) return <Loading />
   if (!user) return <Navigate to="/login" replace state={{ from: loc.pathname }} />
   if (admin && role !== 'manager') return <Navigate to="/app" replace />
+  return <>{children}</>
+}
+
+/** Club content is public, so the shell itself only waits for auth to settle. */
+function OpenShell({ children }: { children: React.ReactNode }) {
+  const { user, role, loading } = useAuth()
+  if (loading || (user && !role)) return <Loading />
   return <>{children}</>
 }
 
@@ -50,7 +58,7 @@ export default function App() {
     <ErrorBoundary>
       <ScrollTop />
       <Routes>
-        <Route path="/" element={loading || (user && !role) ? <Loading /> : <Navigate to={user ? (role === 'manager' ? '/admin' : '/app') : '/login'} replace />} />
+        <Route path="/" element={loading || (user && !role) ? <Loading /> : <Navigate to={role === 'manager' ? '/admin' : '/app'} replace />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot" element={<ForgotPage />} />
@@ -59,7 +67,9 @@ export default function App() {
         <Route path="/payment/success" element={<PaymentSuccess />} />
         <Route path="/payment/cancel" element={<PaymentCancel />} />
 
-        <Route path="/app" element={<RequireAuth><AppShell /></RequireAuth>}>
+        {/* Club content browses without an account; the routes that show or
+            change a person's own data still require one. */}
+        <Route path="/app" element={<OpenShell><AppShell /></OpenShell>}>
           <Route index element={<HomeFeed />} />
           <Route path="news/:id" element={<NewsDetail />} />
           <Route path="events" element={<EventsPage />} />
@@ -67,15 +77,15 @@ export default function App() {
           <Route path="fixtures" element={<FixturesPage />} />
           <Route path="fixtures/:id" element={<FixtureDetail />} />
           <Route path="shop" element={<ShopPage />} />
-          <Route path="shop/cart" element={<CartPage />} />
+          <Route path="shop/cart" element={<RequireAuth><CartPage /></RequireAuth>} />
           <Route path="more" element={<MorePage />} />
           <Route path="membership" element={<MembershipPage />} />
           <Route path="lotto" element={<LottoPage />} />
-          <Route path="bookings" element={<BookingsPage />} />
-          <Route path="orders" element={<OrdersPage />} />
-          <Route path="inbox" element={<InboxPage />} />
+          <Route path="bookings" element={<RequireAuth><BookingsPage /></RequireAuth>} />
+          <Route path="orders" element={<RequireAuth><OrdersPage /></RequireAuth>} />
+          <Route path="inbox" element={<RequireAuth><InboxPage /></RequireAuth>} />
           <Route path="sponsors" element={<SponsorsPage />} />
-          <Route path="profile" element={<ProfilePage />} />
+          <Route path="profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />
         </Route>
 
         <Route path="/admin" element={<RequireAuth admin><AdminShell /></RequireAuth>}>

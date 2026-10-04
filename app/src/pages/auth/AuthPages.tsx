@@ -76,7 +76,6 @@ export function LoginPage() {
 const MEMBER_TYPES: { value: MemberType; label: string; hint: string }[] = [
   { value: 'adult', label: 'Adult player', hint: 'I play for the club' },
   { value: 'parent', label: 'Parent / guardian', hint: 'My child plays for the club' },
-  { value: 'supporter', label: 'Supporter', hint: 'I follow the club' },
 ]
 
 export function RegisterPage() {

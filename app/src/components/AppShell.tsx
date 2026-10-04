@@ -47,10 +47,14 @@ export default function AppShell() {
             {role === 'manager' && (
               <button data-testid="header-admin-btn" onClick={() => nav('/admin')} className="rounded-full p-2 text-lions-300 hover:bg-line/10" aria-label="Admin"><ShieldCheck size={20} /></button>
             )}
-            <button data-testid="header-inbox-btn" onClick={() => nav('/app/inbox')} className="relative rounded-full p-2 text-muted hover:bg-line/10" aria-label="Notifications">
-              <Bell size={20} />
-              {unread > 0 && <span data-testid="inbox-unread-badge" className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent-500 px-1 text-[10px] font-bold">{unread > 9 ? '9+' : unread}</span>}
-            </button>
+            {user ? (
+              <button data-testid="header-inbox-btn" onClick={() => nav('/app/inbox')} className="relative rounded-full p-2 text-muted hover:bg-line/10" aria-label="Notifications">
+                <Bell size={20} />
+                {unread > 0 && <span data-testid="inbox-unread-badge" className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent-500 px-1 text-[10px] font-bold">{unread > 9 ? '9+' : unread}</span>}
+              </button>
+            ) : (
+              <button data-testid="header-signin-btn" onClick={() => nav('/login')} className="rounded-full px-3 py-1.5 text-sm font-semibold text-lions-300 hover:bg-line/10">Sign in</button>
+            )}
           </div>
         </div>
       </header>
