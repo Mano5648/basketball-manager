@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, CheckCircle2 } from 'lucide-react'
+import { Eye, EyeOff, CheckCircle2, ChevronLeft } from 'lucide-react'
 import { useAuth } from '@/lib/AuthContext'
 import { useClub } from '@/lib/ClubContext'
 import { Alert, Button, Field, Input, Select, cx } from '@/components/ui'
@@ -9,10 +9,21 @@ import { supabase } from '@/lib/supabase'
 
 function AuthFrame({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
   const { settings } = useClub()
+  const nav = useNavigate()
   return (
     <div className="relative min-h-[100dvh] overflow-hidden bg-app text-fg">
       <div className="pointer-events-none absolute -top-32 left-1/2 h-72 w-[140%] -translate-x-1/2 rounded-[100%] bg-lions-500/25 blur-3xl" />
-      <div className="relative mx-auto flex min-h-[100dvh] max-w-md flex-col px-6 pb-10 pt-[calc(env(safe-area-inset-top)+3.5rem)]">
+      <div className="relative mx-auto flex min-h-[100dvh] max-w-md flex-col px-6 pb-10 pt-[calc(env(safe-area-inset-top)+1rem)]">
+        {/* Club content is browsable without an account, so signing in must
+            never be a dead end. */}
+        <button
+          type="button"
+          data-testid="auth-back"
+          onClick={() => nav('/app')}
+          className="-ml-2 mb-4 inline-flex w-fit items-center gap-1 rounded-full px-2 py-1.5 text-sm font-medium text-muted hover:bg-line/10 hover:text-fg"
+        >
+          <ChevronLeft size={18} /> Back to the club
+        </button>
         <div className="mb-8 flex flex-col items-start gap-4">
           <img src={settings?.logo_url || './logo-lions-emblem.png'} alt="" className="h-20 w-20 rounded-2xl bg-white object-contain shadow-lg" />
           <div>
@@ -27,14 +38,37 @@ function AuthFrame({ title, subtitle, children }: { title: string; subtitle?: st
   )
 }
 
-function PasswordInput({ value, onChange, testId, placeholder = 'Password', autoComplete = 'current-password' }: { value: string; onChange: (v: string) => void; testId: string; placeholder?: string; autoComplete?: string }) {
+/** Minimum 10 characters with a mix. Length does more for strength than any
+ *  single character class, so the floor is raised rather than demanding
+ *  punctuation. Must match the password policy set on the Supabase project,
+ *  which is what actually enforces it — this is only the friendly half. */
+export const PASSWORD_MIN = 10
+
+export function checkPassword(pw: string): { ok: boolean; problems: string[] } {
+  const problems: string[] = []
+  if (pw.length < PASSWORD_MIN) problems.push(`at least ${PASSWORD_MIN} characters`)
+  if (!/[a-z]/.test(pw)) problems.push('a lower-case letter')
+  if (!/[A-Z]/.test(pw)) problems.push('an upper-case letter')
+  if (!/[0-9]/.test(pw)) problems.push('a number')
+  return { ok: problems.length === 0, problems }
+}
+
+function PasswordInput({ value, onChange, testId, placeholder = 'Password', autoComplete = 'current-password', minLength = 6 }: { value: string; onChange: (v: string) => void; testId: string; placeholder?: string; autoComplete?: string; minLength?: number }) {
   const [show, setShow] = useState(false)
   return (
     <div className="relative">
-      <Input data-testid={testId} type={show ? 'text' : 'password'} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} required minLength={6} autoComplete={autoComplete} className="pr-11" />
+      <Input data-testid={testId} type={show ? 'text' : 'password'} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} required minLength={minLength} autoComplete={autoComplete} className="pr-11" />
       <button type="button" onClick={() => setShow(!show)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted" aria-label="Toggle password">{show ? <EyeOff size={18} /> : <Eye size={18} />}</button>
     </div>
   )
+}
+
+/** Live feedback while choosing a new password. */
+function PasswordRules({ value }: { value: string }) {
+  const { ok, problems } = checkPassword(value)
+  if (!value) return <span className="block text-xs text-subtle">At least {PASSWORD_MIN} characters, with upper and lower case and a number.</span>
+  if (ok) return <span className="block text-xs font-medium text-emerald-500">Strong enough.</span>
+  return <span className="block text-xs text-subtle">Still needs {problems.join(', ')}.</span>
 }
 
 export function LoginPage() {
@@ -90,6 +124,8 @@ export function RegisterPage() {
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     if (!form.agree) { setErr('Please accept the privacy policy to continue.'); return }
+    const strength = checkPassword(form.password)
+    if (!strength.ok) { setErr(`Your password needs ${strength.problems.join(', ')}.`); return }
     setBusy(true); setErr(null)
     const res = await signUp({ email: form.email, password: form.password, fullName: form.fullName, phone: form.phone, memberType: form.memberType })
     setBusy(false)
@@ -125,7 +161,10 @@ export function RegisterPage() {
         <Field label="Full name"><Input data-testid="register-name" value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} required autoComplete="name" /></Field>
         <Field label="Email"><Input data-testid="register-email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required autoComplete="email" /></Field>
         <Field label="Phone (optional)"><Input data-testid="register-phone" type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} autoComplete="tel" /></Field>
-        <Field label="Password" hint="At least 6 characters"><PasswordInput testId="register-password" value={form.password} onChange={(v) => setForm({ ...form, password: v })} autoComplete="new-password" /></Field>
+        <Field label="Password">
+          <PasswordInput testId="register-password" value={form.password} onChange={(v) => setForm({ ...form, password: v })} autoComplete="new-password" minLength={PASSWORD_MIN} />
+          <PasswordRules value={form.password} />
+        </Field>
         <label className="flex items-start gap-3 text-sm text-muted">
           <input data-testid="register-agree" type="checkbox" checked={form.agree} onChange={(e) => setForm({ ...form, agree: e.target.checked })} className="mt-1 h-4 w-4 accent-lions-500" />
           <span>I agree to the <Link to="/privacy" className="text-lions-300 underline">privacy policy</Link> and consent to the club storing my details.</span>
@@ -167,7 +206,10 @@ export function ResetPasswordPage() {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const submit = async (e: FormEvent) => {
-    e.preventDefault(); setBusy(true); setErr(null)
+    e.preventDefault()
+    const strength = checkPassword(password)
+    if (!strength.ok) { setErr(`Your password needs ${strength.problems.join(', ')}.`); return }
+    setBusy(true); setErr(null)
     const { error } = await supabase!.auth.updateUser({ password })
     setBusy(false)
     if (error) { setErr(error.message); return }
@@ -176,7 +218,10 @@ export function ResetPasswordPage() {
   return (
     <AuthFrame title="Choose a new password">
       <form onSubmit={submit} className="space-y-4">
-        <Field label="New password"><PasswordInput testId="reset-password" value={password} onChange={setPassword} autoComplete="new-password" /></Field>
+        <Field label="New password">
+          <PasswordInput testId="reset-password" value={password} onChange={setPassword} autoComplete="new-password" minLength={PASSWORD_MIN} />
+          <PasswordRules value={password} />
+        </Field>
         {err && <Alert>{err}</Alert>}
         <Button data-testid="reset-submit" type="submit" loading={busy} className="w-full">Update password</Button>
       </form>
