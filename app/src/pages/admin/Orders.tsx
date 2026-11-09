@@ -23,8 +23,11 @@ export function AdminOrders() {
 
   const setOrderStatus = async (o: Order, status: Order['status']) => {
     setErr(null)
-    const { error } = await sb().from('orders').update({ status, updated_at: new Date().toISOString() }).eq('id', o.id)
+    // Only change it from the status this manager was looking at, so marking an
+    // order fulfilled can't overwrite a refund that landed in the meantime.
+    const { data, error } = await sb().from('orders').update({ status, updated_at: new Date().toISOString() }).eq('id', o.id).eq('status', o.status).select('id')
     if (error) setErr(error.message)
+    else if (!data?.length) setErr('This order changed while you were looking at it. Check its new status and try again.')
     void q.refresh()
   }
   const refund = async (p: Purchase) => {

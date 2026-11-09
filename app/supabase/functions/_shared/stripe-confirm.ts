@@ -94,20 +94,25 @@ export async function confirmStripePurchaseAndSendEmail(
       ? session.payment_intent
       : session.payment_intent?.id ?? null
 
-  if (row.status !== 'paid' || !row.paid_at) {
-    const { error: updateError } = await supabase
-      .from('purchases')
-      .update({
-        status: 'paid',
-        paid_at: new Date().toISOString(),
-        stripe_payment_intent: paymentIntentId,
-      })
-      .eq('stripe_session_id', sessionId)
+  if (row.status === 'refunded' || row.status === 'refunding' || row.status === 'cancelled') {
+    return { confirmed: false, emailSent: false, reason: `Purchase is ${row.status}` }
+  }
 
-    if (updateError) {
-      console.error('Failed to mark purchase paid', updateError.message)
-      return { confirmed: false, emailSent: false, reason: updateError.message }
-    }
+  // Guarded on the current status so a late or retried confirmation can never
+  // flip a refunded purchase back to paid.
+  const { error: updateError } = await supabase
+    .from('purchases')
+    .update({
+      status: 'paid',
+      paid_at: new Date().toISOString(),
+      stripe_payment_intent: paymentIntentId,
+    })
+    .eq('stripe_session_id', sessionId)
+    .in('status', ['pending', 'failed'])
+
+  if (updateError) {
+    console.error('Failed to mark purchase paid', updateError.message)
+    return { confirmed: false, emailSent: false, reason: updateError.message }
   }
 
   try {
@@ -116,11 +121,22 @@ export async function confirmStripePurchaseAndSendEmail(
     console.error('fulfilment failed', (e as Error).message)
   }
 
-  if (row.confirmation_email_sent_at) {
+  // Claim the email before sending it. The webhook and the in-app confirmation
+  // often arrive together; only the call whose update matches a row sends.
+  const claimedAt = new Date().toISOString()
+  const { data: claimed } = await supabase
+    .from('purchases')
+    .update({ confirmation_email_sent_at: claimedAt })
+    .eq('stripe_session_id', sessionId)
+    .is('confirmation_email_sent_at', null)
+    .select('id')
+  if (!claimed?.length) {
     return { confirmed: true, emailSent: false, reason: 'Confirmation email already sent' }
   }
 
   const items = Array.isArray(row.items) ? row.items : []
+  // A thrown send (network error) must still release the claim below, or this
+  // purchase would never get its email.
   const emailResult = await sendPurchaseEmail({
     customerName: row.customer_name,
     customerEmail: row.customer_email,
@@ -134,13 +150,15 @@ export async function confirmStripePurchaseAndSendEmail(
       imageUrl: item.imageUrl,
     })),
     planLabel: row.metadata?.plan_label,
-  })
+  }).catch((e: unknown) => ({ sent: false, skipped: false, error: e instanceof Error ? e.message : 'Email send failed' }))
 
-  if (emailResult.sent) {
+  if (!emailResult.sent) {
+    // Release the claim so the next confirmation can try again.
     await supabase
       .from('purchases')
-      .update({ confirmation_email_sent_at: new Date().toISOString() })
+      .update({ confirmation_email_sent_at: null })
       .eq('stripe_session_id', sessionId)
+      .eq('confirmation_email_sent_at', claimedAt)
   }
 
   return {

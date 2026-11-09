@@ -13,34 +13,15 @@ type PurchaseRow = {
 export async function fulfilPurchase(supabase: SupabaseClient, p: PurchaseRow): Promise<void> {
   const md = p.metadata ?? {}
   if (p.purchase_type === 'store') {
-    await supabase.from('orders').update({ status: 'paid', purchase_id: p.id, updated_at: new Date().toISOString() }).eq('id', p.reference_id).eq('status', 'pending')
-    const { data: order } = await supabase.from('orders').select('items').eq('id', p.reference_id).maybeSingle()
-    for (const item of ((order?.items ?? []) as { product_id: string; quantity: number }[])) {
-      const { data: prod } = await supabase.from('products').select('stock').eq('id', item.product_id).maybeSingle()
-      if (prod && typeof prod.stock === 'number') {
-        await supabase.from('products').update({ stock: Math.max(0, prod.stock - item.quantity) }).eq('id', item.product_id)
-      }
-    }
+    // Stock was reserved when checkout started; this only flips the order to paid.
+    const { error } = await supabase.rpc('mark_order_paid', { p_order_id: p.reference_id, p_purchase_id: p.id })
+    if (error) throw new Error(error.message)
     return
   }
   if (p.purchase_type === 'membership') {
-    const { data: existing } = await supabase.from('memberships').select('id').eq('purchase_id', p.id).maybeSingle()
-    if (existing) return
-    const months = Math.max(1, Number(md.duration_months || 12))
-    const start = new Date()
-    const end = new Date(start)
-    end.setMonth(end.getMonth() + months)
-    await supabase.from('memberships').insert({
-      profile_id: md.profile_id,
-      child_id: md.child_id || null,
-      package_id: md.package_id || null,
-      package_name: md.package_name || 'Membership',
-      amount_cents: p.amount_cents,
-      starts_at: start.toISOString().slice(0, 10),
-      expires_at: end.toISOString().slice(0, 10),
-      status: 'active',
-      purchase_id: p.id,
-    })
+    // One per purchase, and only while the purchase is still paid (see grant_membership).
+    const { error } = await supabase.rpc('grant_membership', { p_purchase_id: p.id })
+    if (error) throw new Error(error.message)
     return
   }
   if (p.purchase_type === 'lotto') {
@@ -68,7 +49,10 @@ export async function reversePurchase(supabase: SupabaseClient, p: PurchaseRow):
 /** Cancel pending domain rows when checkout expires / is abandoned. */
 export async function abandonPurchase(supabase: SupabaseClient, p: PurchaseRow): Promise<void> {
   const md = p.metadata ?? {}
-  if (p.purchase_type === 'store') await supabase.from('orders').update({ status: 'cancelled' }).eq('id', p.reference_id).eq('status', 'pending')
+  if (p.purchase_type === 'store') {
+    await supabase.from('orders').update({ status: 'cancelled' }).eq('id', p.reference_id).eq('status', 'pending')
+    await supabase.rpc('release_order_checkout', { p_order_id: p.reference_id })
+  }
   if (p.purchase_type === 'lotto') {
     const ids = (md.ticket_ids ?? '').split(',').filter(Boolean)
     if (ids.length) await supabase.from('lotto_tickets').delete().in('id', ids).eq('status', 'pending')

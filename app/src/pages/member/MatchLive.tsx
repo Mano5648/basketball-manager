@@ -54,10 +54,17 @@ export function MatchControl({ fx, onChanged }: { fx: Fixture; onChanged: () => 
       onChanged()
     } catch (e) { setErr(e instanceof Error ? e.message : 'Update failed') } finally { setBusy(false) }
   }
-  const score = (side: 'home' | 'away', delta: number) => {
-    const h = Math.max(0, side === 'home' ? home + delta : home)
-    const a = Math.max(0, side === 'away' ? away + delta : away)
-    void patch({ home_score: h, away_score: a })
+  // The increment runs in the database, so taps never overwrite each other:
+  // the buttons stay live while earlier taps are in flight, and two scorers
+  // tapping at once both count.
+  const score = async (side: 'home' | 'away', delta: number) => {
+    setErr(null)
+    try {
+      const { data, error } = await sb().rpc('bump_fixture_score', { p_fixture_id: fx.id, p_side: side, p_delta: delta })
+      if (error) throw error
+      if (!(data as unknown[] | null)?.length) throw new Error('You are not allowed to update this score')
+      onChanged()
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Update failed') }
   }
   const label = `${fx.is_home ? teamName : fx.opponent} vs ${fx.is_home ? fx.opponent : teamName}`
   const ours = fx.is_home ? home : away

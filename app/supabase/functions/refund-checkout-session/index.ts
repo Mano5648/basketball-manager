@@ -62,9 +62,21 @@ Deno.serve(async (req) => {
     if (purchase.status === 'refunded') {
       return json({ ok: true, alreadyRefunded: true }, 200)
     }
-    if (purchase.status !== 'paid') {
-      return json({ error: `Only paid purchases can be refunded (status: ${purchase.status})` }, 400)
+
+    // --- Claim the refund ------------------------------------------------------
+    // Two managers (or a double click) both read 'paid'. Only the call whose
+    // paid -> refunding update matches carries on to Stripe.
+    const { data: claimed, error: claimErr } = await adminClient
+      .from('purchases')
+      .update({ status: 'refunding' })
+      .eq('id', purchaseId)
+      .eq('status', 'paid')
+      .select('id')
+    if (claimErr) return json({ error: 'Could not start the refund' }, 500)
+    if (!claimed?.length) {
+      return json({ error: `This purchase is ${purchase.status === 'paid' ? 'already being refunded' : purchase.status} and can't be refunded now` }, 409)
     }
+    const releaseClaim = () => adminClient.from('purchases').update({ status: 'paid' }).eq('id', purchaseId).eq('status', 'refunding')
 
     // --- Resolve the Stripe payment_intent, fall back to session lookup -------
     let paymentIntentId = purchase.stripe_payment_intent as string | null
@@ -78,18 +90,26 @@ Deno.serve(async (req) => {
       }
     }
     if (!paymentIntentId) {
+      await releaseClaim()
       return json({ error: 'No Stripe payment_intent recorded for this purchase' }, 400)
     }
 
     // --- Issue the refund ------------------------------------------------------
-    const refund = await stripe.refunds.create({
-      payment_intent: paymentIntentId,
-      reason: 'requested_by_customer',
-      metadata: reason ? { reason } : undefined,
-    })
+    let refund: Stripe.Refund
+    try {
+      refund = await stripe.refunds.create({
+        payment_intent: paymentIntentId,
+        reason: 'requested_by_customer',
+        metadata: reason ? { reason } : undefined,
+      })
+    } catch (e) {
+      // Nothing was refunded: hand the purchase back so it can be retried now.
+      await releaseClaim()
+      throw e
+    }
 
     // --- Update the DB (service role, guarded so double-clicks are safe) -----
-    const { error: updateErr } = await adminClient
+    const { data: flipped, error: updateErr } = await adminClient
       .from('purchases')
       .update({
         status: 'refunded',
@@ -99,15 +119,18 @@ Deno.serve(async (req) => {
         stripe_refund_id: refund.id,
       })
       .eq('id', purchaseId)
-      .eq('status', 'paid') // no-op if some other tab already flipped it
+      .eq('status', 'refunding') // no-op if the charge.refunded webhook got here first
+      .select('*')
 
     if (updateErr) {
       console.error('purchases update failed', updateErr.message)
       return json({ error: 'Refund succeeded on Stripe but DB update failed. Contact admin.' }, 500)
     }
 
-    const { data: full } = await adminClient.from('purchases').select('*').eq('id', purchaseId).maybeSingle()
-    if (full) await reversePurchase(adminClient, full)
+    // Reverse only if this call flipped the row; the charge.refunded webhook
+    // has already reversed it otherwise.
+    if (flipped?.length) await reversePurchase(adminClient, flipped[0])
+    else await adminClient.from('purchases').update({ refund_reason: reason ?? null, stripe_refund_id: refund.id }).eq('id', purchaseId).eq('status', 'refunded')
 
     return json({ ok: true, refundId: refund.id, amountCents: refund.amount }, 200)
   } catch (err) {

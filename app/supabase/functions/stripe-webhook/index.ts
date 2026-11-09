@@ -37,19 +37,28 @@ Deno.serve(async (req) => {
 
   if (event.type === 'checkout.session.expired') {
     const session = event.data.object as Stripe.Checkout.Session
-    const { data: row } = await supabase.from('purchases').select('*').eq('stripe_session_id', session.id).maybeSingle()
-    await supabase.from('purchases').update({ status: 'cancelled' }).eq('stripe_session_id', session.id).eq('status', 'pending')
-    if (row) await abandonPurchase(supabase, row)
+    // Only the delivery that actually moves the purchase out of 'pending' cleans up.
+    const { data: rows } = await supabase.from('purchases').update({ status: 'cancelled' })
+      .eq('stripe_session_id', session.id).eq('status', 'pending').select('*')
+    if (rows?.length) await abandonPurchase(supabase, rows[0])
   }
 
   if (event.type === 'charge.refunded') {
     const charge = event.data.object as Stripe.Charge
     const pi = typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id
     if (pi) {
-      const { data: row } = await supabase.from('purchases').select('*').eq('stripe_payment_intent', pi).maybeSingle()
-      if (row && row.status === 'paid') {
-        await supabase.from('purchases').update({ status: 'refunded', refunded_at: new Date().toISOString(), refund_reason: 'Refunded in Stripe dashboard' }).eq('id', row.id)
-        await reversePurchase(supabase, row)
+      if (charge.amount_refunded < charge.amount) {
+        // Partial refund from the Stripe dashboard: the member keeps what they
+        // bought, so record the amount and leave the purchase paid.
+        await supabase.from('purchases').update({ refund_amount_cents: charge.amount_refunded })
+          .eq('stripe_payment_intent', pi).in('status', ['paid', 'refunding'])
+      } else {
+        // Matches 'refunding' too: this can arrive before the app's own refund
+        // call finishes. Whichever update flips the row reverses it, once.
+        const { data: rows } = await supabase.from('purchases')
+          .update({ status: 'refunded', refunded_at: new Date().toISOString(), refund_amount_cents: charge.amount_refunded, refund_reason: 'Refunded in Stripe' })
+          .eq('stripe_payment_intent', pi).in('status', ['paid', 'refunding']).select('*')
+        if (rows?.length) await reversePurchase(supabase, rows[0])
       }
     }
   }

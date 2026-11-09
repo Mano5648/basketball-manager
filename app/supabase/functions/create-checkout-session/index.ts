@@ -114,37 +114,67 @@ Deno.serve(async (req) => {
       verification_token: verificationToken,
     }
 
+    // Store orders: claim the order and take its stock in one transaction, so a
+    // double click can't open two sessions and two buyers can't both get the
+    // last item. Released again below if checkout can't be started.
+    const reservesStock = purchaseType === 'store'
+    if (reservesStock) {
+      const { error: claimError } = await supabase.rpc('claim_order_checkout', { p_order_id: referenceId })
+      if (claimError) {
+        // P0001 is our own RAISE in claim_order_checkout, written for members;
+        // anything else is an internal database error and stays in the logs.
+        if (claimError.code !== 'P0001') console.error('claim_order_checkout failed', claimError.message)
+        const message = claimError.code === 'P0001' ? claimError.message : 'Could not start checkout. Please try again.'
+        return new Response(JSON.stringify({ error: message }), {
+          status: 409,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+    }
+    const releaseStock = async () => {
+      if (reservesStock) await supabase.rpc('release_order_checkout', { p_order_id: referenceId })
+    }
+
     const stripe = new Stripe(stripeKey, { apiVersion: '2023-10-16' })
 
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      customer_email: customerEmail,
-      // `payment_method_types` intentionally omitted → Stripe Checkout picks the
-      // full set enabled on this account (card, Google Pay, Apple Pay, Link, etc.).
-      // Google Pay is a wallet on top of "card", so it appears automatically when
-      // the buyer's device supports it and the Checkout is served from Stripe's
-      // domain (no domain verification needed for Checkout-hosted flow).
-      payment_method_options: {
-        card: { request_three_d_secure: 'automatic' },
-      },
-      line_items: pricedItems.map((item) => ({
-        price_data: {
-          currency: 'eur',
-          unit_amount: item.amountCents,
-          product_data: { name: item.name },
+    let session: Stripe.Checkout.Session
+    try {
+      session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        customer_email: customerEmail,
+        // Reserved stock comes back on checkout.session.expired, so don't hold
+        // it for Stripe's default 24 hours. 30 minutes is Stripe's minimum.
+        ...(reservesStock ? { expires_at: Math.floor(Date.now() / 1000) + 31 * 60 } : {}),
+        // `payment_method_types` intentionally omitted → Stripe Checkout picks the
+        // full set enabled on this account (card, Google Pay, Apple Pay, Link, etc.).
+        // Google Pay is a wallet on top of "card", so it appears automatically when
+        // the buyer's device supports it and the Checkout is served from Stripe's
+        // domain (no domain verification needed for Checkout-hosted flow).
+        payment_method_options: {
+          card: { request_three_d_secure: 'automatic' },
         },
-        quantity: item.quantity,
-      })),
-      success_url: `${siteOrigin}${successPath}?session_id={CHECKOUT_SESSION_ID}&vt=${verificationToken}`,
-      cancel_url: `${siteOrigin}${cancelPath}?reference_id=${encodeURIComponent(referenceId)}`,
-      metadata: {
-        reference_id: referenceId,
-        purchase_type: purchaseType,
-        customer_name: customerName || customerEmail,
-        player_id: playerId ?? '',
-        verification_token: verificationToken,
-      },
-    })
+        line_items: pricedItems.map((item) => ({
+          price_data: {
+            currency: 'eur',
+            unit_amount: item.amountCents,
+            product_data: { name: item.name },
+          },
+          quantity: item.quantity,
+        })),
+        success_url: `${siteOrigin}${successPath}?session_id={CHECKOUT_SESSION_ID}&vt=${verificationToken}`,
+        cancel_url: `${siteOrigin}${cancelPath}?reference_id=${encodeURIComponent(referenceId)}`,
+        metadata: {
+          reference_id: referenceId,
+          purchase_type: purchaseType,
+          customer_name: customerName || customerEmail,
+          player_id: playerId ?? '',
+          verification_token: verificationToken,
+        },
+      })
+    } catch (e) {
+      await releaseStock()
+      throw e
+    }
 
     const { error: insertError } = await supabase.from('purchases').insert({
       reference_id: referenceId,
@@ -161,6 +191,8 @@ Deno.serve(async (req) => {
 
     if (insertError) {
       console.error('purchases insert failed', insertError.message)
+      await stripe.checkout.sessions.expire(session.id).catch(() => {})
+      await releaseStock()
       return new Response(JSON.stringify({ error: 'Could not create purchase record' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
