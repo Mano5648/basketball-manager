@@ -15,7 +15,9 @@ const fail = (error: string): Result => ({ ok: false, error })
 /** Server-side pricing: never trust client amounts. Every type reads its price from the DB. */
 export async function validateCheckoutPricing(
   supabase: SupabaseClient,
-  input: { purchaseType: PurchaseType; referenceId: string; customerEmail: string; metadata?: Record<string, string> },
+  // profileId is the verified auth user id (profiles.id). It is the identity key for
+  // ownership checks: never resolve the buyer by email pattern.
+  input: { purchaseType: PurchaseType; referenceId: string; customerEmail: string; profileId: string; metadata?: Record<string, string> },
 ): Promise<Result> {
   const metadata = { ...(input.metadata ?? {}) }
 
@@ -27,16 +29,22 @@ export async function validateCheckoutPricing(
     const ids = (order.items as { product_id: string; quantity: number; size?: string }[]).map((i) => i.product_id)
     const { data: products } = await supabase.from('products').select('*').in('id', ids)
     const lineItems: LineItem[] = []
+    // The order's items are rewritten from the products table, so the list staff
+    // fulfil from always matches what was charged (the client only picks
+    // product, size and quantity).
+    const pricedItems: { product_id: string; name: string; price_cents: number; quantity: number; size?: string }[] = []
     for (const item of order.items as { product_id: string; quantity: number; size?: string }[]) {
       const p = (products ?? []).find((x) => x.id === item.product_id)
       if (!p || !p.active) return fail('A product in your cart is no longer available')
-      if (typeof p.stock === 'number' && p.stock < item.quantity) return fail(`Not enough stock for ${p.name}`)
-      const qty = Math.max(1, Math.min(50, Math.floor(item.quantity)))
-      lineItems.push({ name: item.size ? `${p.name} (${item.size})` : p.name, amountCents: p.price_cents, quantity: qty, imageUrl: p.image_url ?? undefined })
+      const qty = Math.max(1, Math.min(50, Math.floor(Number(item.quantity) || 1)))
+      if (typeof p.stock === 'number' && p.stock < qty) return fail(`Not enough stock for ${p.name}`)
+      const size = typeof item.size === 'string' && item.size.trim() ? item.size.trim().slice(0, 20) : undefined
+      lineItems.push({ name: size ? `${p.name} (${size})` : p.name, amountCents: p.price_cents, quantity: qty, imageUrl: p.image_url ?? undefined })
+      pricedItems.push({ product_id: p.id, name: p.name, price_cents: p.price_cents, quantity: qty, ...(size ? { size } : {}) })
     }
     const totalCents = lineItems.reduce((s, i) => s + i.amountCents * i.quantity, 0)
     if (totalCents <= 0) return fail('Invalid order total')
-    await supabase.from('orders').update({ total_cents: totalCents }).eq('id', order.id)
+    await supabase.from('orders').update({ total_cents: totalCents, items: pricedItems }).eq('id', order.id)
     metadata.order_id = order.id
     return { ok: true, checkout: { lineItems, totalCents, metadata } }
   }
@@ -63,7 +71,7 @@ export async function validateCheckoutPricing(
     const { data: pkg } = await supabase.from('membership_packages').select('*').eq('id', input.referenceId).maybeSingle()
     if (!pkg || !pkg.active) return fail('This membership package is not available')
     if (pkg.price_cents <= 0) return fail('This package is free — contact the club')
-    const { data: profile } = await supabase.from('profiles').select('id').ilike('email', input.customerEmail).maybeSingle()
+    const { data: profile } = await supabase.from('profiles').select('id').eq('id', input.profileId).maybeSingle()
     if (!profile) return fail('Member profile not found')
     if (metadata.child_id) {
       const { data: child } = await supabase.from('children').select('id, parent_id, full_name').eq('id', metadata.child_id).maybeSingle()
@@ -85,7 +93,7 @@ export async function validateCheckoutPricing(
     if (!draw || draw.status !== 'open' || new Date(draw.draw_at) <= new Date()) return fail('This draw is closed')
     const ids = (metadata.ticket_ids ?? '').split(',').map((s) => s.trim()).filter(Boolean)
     if (ids.length === 0 || ids.length > 50) return fail('Select between 1 and 50 lines')
-    const { data: profile } = await supabase.from('profiles').select('id').ilike('email', input.customerEmail).maybeSingle()
+    const { data: profile } = await supabase.from('profiles').select('id').eq('id', input.profileId).maybeSingle()
     if (!profile) return fail('Member profile not found')
     const { data: tickets } = await supabase.from('lotto_tickets').select('id, numbers, status, profile_id').in('id', ids).eq('draw_id', draw.id)
     if (!tickets || tickets.length !== ids.length) return fail('Some lines could not be found')
@@ -102,6 +110,7 @@ export async function validateCheckoutPricing(
   if (input.purchaseType === 'booking') {
     const { data: booking } = await supabase.from('facility_bookings').select('*, facilities(*)').eq('id', input.referenceId).maybeSingle()
     if (!booking || booking.status !== 'pending') return fail('Booking is not payable')
+    if (booking.profile_id !== input.profileId) return fail('Booking not found')
     const facility = booking.facilities as { name: string; price_cents: number; active: boolean }
     if (!facility?.active || facility.price_cents <= 0) return fail('Facility is not bookable')
     const when = new Date(booking.starts_at).toLocaleString('en-IE', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Dublin' })

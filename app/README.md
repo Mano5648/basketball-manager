@@ -6,7 +6,7 @@ A ClubSpot-style club app built with React + Vite + Capacitor on a Supabase back
 | --- | --- |
 | Member app (bottom tabs) | `src/pages/member/*` — News feed, Events + RSVP, Fixtures & results + match tickets, Shop + cart, Membership packages, Club Lotto, Facility booking, Sponsors, Purchases, Notifications inbox, Profile + children |
 | Admin console | `src/pages/admin/*` — Dashboard, News, Events, Fixtures, Members (team assignment, make admin, remove), Teams, Memberships, Lotto (run draw), Facilities + bookings, Products, Sponsors, Orders & refunds, Push notifications, Reports, Settings (branding, features on/off, contact, all app text, admins) |
-| Database | `supabase/00-full-setup.sql` — one paste, safe to re-run |
+| Database | `supabase/00-full-setup.sql`, then the add-on files in §1 step 2 — each safe to re-run, but always re-run the add-ons after 00 |
 | Edge functions | `supabase/functions/*` — Stripe checkout / verify / webhook / refund, `send-push`, `delete-account` |
 | Native shell | `capacitor.config.ts`, `android/`, `ios/` |
 
@@ -14,6 +14,8 @@ A ClubSpot-style club app built with React + Vite + Capacitor on a Supabase back
 
 1. Create a project at https://supabase.com/dashboard (EU region recommended) or restore your existing one.
 2. **SQL editor → New query → paste `supabase/00-full-setup.sql` → Run.** Creates every table, RLS policy, storage bucket, realtime publication and the `manager@dublinlions.ie` admin seed. Change that email in the first `insert into public.managers` line if your admin email is different.
+   Then run these add-ons, in this order, in the same SQL editor: `public-browsing.sql`, `age-gate-and-export.sql`, `race-condition-fixes.sql`, `security-fixes.sql`. Re-running 00 replaces some of their definitions, so always re-run all four after it.
+   **Authentication → Providers → Email:** keep *Confirm email* and *Secure email change* on. Admin and coach rights are granted by login email, so an unconfirmed email must never reach a session.
 3. **Authentication → URL configuration**: set *Site URL* to your web URL (e.g. `https://<user>.github.io/<repo>/`) and add these *Redirect URLs*:
    - `https://<your-web-url>/#/login`
    - `https://<your-web-url>/#/reset-password`

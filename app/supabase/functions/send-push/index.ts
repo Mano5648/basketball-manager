@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
       }
       for (const k of kids ?? []) ids.add(k.parent_id)
       if (team?.coach_email) {
-        const { data: coach } = await admin.from('profiles').select('id').ilike('email', team.coach_email).maybeSingle()
+        const { data: coach } = await admin.from('profiles').select('id').eq('email', team.coach_email.toLowerCase()).maybeSingle()
         if (coach) ids.add(coach.id)
       }
       profileIds = [...ids]

@@ -57,7 +57,18 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
-    const playerId: string | undefined = userData.user?.id
+    const playerId: string = userData.user!.id
+
+    // Return paths are appended to the allowlisted origin, so they must be plain
+    // relative app paths: a value like '.evil.example/' or '@evil.example/' would
+    // otherwise change the redirect host.
+    const SAFE_PATH = /^\/(#\/)?[A-Za-z0-9/_-]*$/
+    if (!SAFE_PATH.test(successPath) || !SAFE_PATH.test(cancelPath)) {
+      return new Response(JSON.stringify({ error: 'Invalid return path' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
 
     if (!purchaseType || !referenceId || !origin) {
       return new Response(JSON.stringify({ error: 'Missing required checkout fields' }), {
@@ -98,6 +109,7 @@ Deno.serve(async (req) => {
       purchaseType,
       referenceId,
       customerEmail,
+      profileId: playerId,
       metadata,
     })
     if (!validated.ok) {

@@ -28,6 +28,7 @@ export async function closeInAppBrowser(): Promise<void> {
 }
 
 let pushRegisteredFor: string | null = null
+let pushToken: string | null = null
 
 /** Register for push notifications and store the device token against the user. */
 export async function registerPushForUser(userId: string): Promise<void> {
@@ -38,7 +39,10 @@ export async function registerPushForUser(userId: string): Promise<void> {
     let perm = await PushNotifications.checkPermissions()
     if (perm.receive === 'prompt') perm = await PushNotifications.requestPermissions()
     if (perm.receive !== 'granted') return
+    // Drop listeners from a previous account on this device before adding new ones.
+    await PushNotifications.removeAllListeners()
     await PushNotifications.addListener('registration', async ({ value }) => {
+      pushToken = value
       await supabase!.from('push_tokens').upsert({ token: value, profile_id: userId, platform, updated_at: new Date().toISOString() })
     })
     await PushNotifications.addListener('pushNotificationActionPerformed', ({ notification }) => {
@@ -48,6 +52,25 @@ export async function registerPushForUser(userId: string): Promise<void> {
     await PushNotifications.register()
   } catch (e) {
     console.warn('push registration failed', e)
+  }
+}
+
+/**
+ * Unbind this device from the signed-in member. Call before signing out (the
+ * delete needs the member's session) so their team notifications stop arriving
+ * here and the next account on the device can register the same token.
+ */
+export async function unregisterPush(): Promise<void> {
+  if (!isNative || !supabase) return
+  const token = pushToken
+  pushRegisteredFor = null
+  pushToken = null
+  try {
+    if (token) await supabase.from('push_tokens').delete().eq('token', token)
+    const { PushNotifications } = await import('@capacitor/push-notifications')
+    await PushNotifications.removeAllListeners()
+  } catch (e) {
+    console.warn('push unregister failed', e)
   }
 }
 

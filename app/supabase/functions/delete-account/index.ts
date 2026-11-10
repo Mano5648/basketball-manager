@@ -25,17 +25,25 @@ Deno.serve(async (req) => {
     }
 
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const { data: target } = await admin.from('profiles').select('email').eq('id', targetId).maybeSingle()
-    if (target?.email) {
+    // Use the verified login email from auth.users, never profiles.email, so a
+    // member cannot point this cleanup at someone else's admin grant.
+    const { data: authTarget } = await admin.auth.admin.getUserById(targetId)
+    const targetEmail = authTarget.user?.email?.toLowerCase()
+    if (targetEmail) {
       const { count } = await admin.from('managers').select('*', { count: 'exact', head: true })
-      const { data: isTargetAdmin } = await admin.from('managers').select('email').eq('email', target.email).maybeSingle()
+      const { data: isTargetAdmin } = await admin.from('managers').select('email').eq('email', targetEmail).maybeSingle()
       if (isTargetAdmin && (count ?? 0) <= 1) return json({ error: 'Cannot delete the last club admin' }, 400)
-      await admin.from('managers').delete().eq('email', target.email)
     }
+    // Erase the profile photo too, as the deletion page promises.
+    const { data: prof } = await admin.from('profiles').select('avatar_url').eq('id', targetId).maybeSingle()
+    const avatarPath = prof?.avatar_url?.split('/club-media/')[1]
+    if (avatarPath) await admin.storage.from('club-media').remove([decodeURIComponent(avatarPath)])
     // profiles row cascades to children, team_members, memberships, tickets, bookings, tokens, rsvps.
     await admin.from('chat_messages').update({ sender_name: 'Deleted member' }).eq('user_id', targetId)
     const { error } = await admin.auth.admin.deleteUser(targetId)
     if (error) return json({ error: error.message }, 500)
+    // Revoke admin only after the account is really gone.
+    if (targetEmail) await admin.from('managers').delete().eq('email', targetEmail)
     return json({ ok: true })
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : 'Delete failed' }, 500)

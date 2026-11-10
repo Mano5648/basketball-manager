@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useCallback, useState, t
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase, isSupabaseConfigured, isManagerEmail } from './supabase'
 import type { MemberType, Profile } from './db'
-import { registerPushForUser } from './native'
+import { registerPushForUser, unregisterPush } from './native'
 import { externalAppUrl } from './routing'
 
 export type Role = 'manager' | 'member'
@@ -120,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: null, needsConfirmation: !data.session }
     },
     async signOut() {
+      await unregisterPush()
       if (supabase) await supabase.auth.signOut()
       setSession(null)
       setUser(null)

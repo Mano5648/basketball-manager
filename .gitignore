@@ -30,3 +30,7 @@ app/android/app/src/main/assets/public/
 # Firebase client config (Google API keys trip GitHub push protection) — keep local, see README §4
 app/android/app/google-services.json
 app/ios/App/App/GoogleService-Info.plist
+
+# Agent/test artifacts that held live passwords — keep local, never commit
+memory/test_credentials.md
+test_reports/
