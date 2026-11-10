@@ -174,3 +174,19 @@ create policy "club_media_read" on storage.objects for select to authenticated
 drop policy if exists "club_media_delete" on storage.objects;
 create policy "club_media_delete" on storage.objects for delete to authenticated
   using (bucket_id = 'club-media' and (public.is_manager() or owner = auth.uid()));
+
+-- 8) Realtime: don't broadcast per-person RSVP and read-receipt rows ------------
+-- Realtime DELETE events are not filtered by RLS and carry the primary key, which
+-- for these tables is (event/notification, profile). The app refreshes these
+-- after its own writes, so dropping them from the feed only loses cross-device
+-- live updates of your own RSVPs and read markers.
+do $$
+declare t text;
+begin
+  foreach t in array array['event_rsvps', 'notification_reads']
+  loop
+    if exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+      execute format('alter publication supabase_realtime drop table public.%I', t);
+    end if;
+  end loop;
+end $$;

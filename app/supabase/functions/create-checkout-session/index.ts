@@ -1,6 +1,6 @@
 import Stripe from 'https://esm.sh/stripe@14.21.0?target=deno'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
-import { assertHumanRequest } from '../_shared/security.ts'
+import { enforceRateLimit } from '../_shared/security.ts'
 import { validateCheckoutPricing } from '../_shared/catalog.ts'
 import { resolveCheckoutOrigin } from '../_shared/origin.ts'
 
@@ -32,7 +32,6 @@ Deno.serve(async (req) => {
       successPath = '/#/payment/success',
       cancelPath = '/#/payment/cancel',
       origin,
-      turnstileToken,
     } = body as {
       purchaseType: 'store' | 'ticket' | 'membership' | 'lotto' | 'booking'
       referenceId: string
@@ -41,7 +40,6 @@ Deno.serve(async (req) => {
       successPath?: string
       cancelPath?: string
       origin: string
-      turnstileToken?: string
     }
 
     // Caller must be a signed-in member — the email is taken from the verified JWT, never the body.
@@ -90,16 +88,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
 
-    const remoteIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-    const humanCheck = await assertHumanRequest(supabase, {
-      action: 'checkout',
-      identifier: customerEmail,
-      turnstileToken,
-      remoteIp,
-      maxAttempts: 10,
-    })
-    if (!humanCheck.ok) {
-      return new Response(JSON.stringify({ error: humanCheck.error }), {
+    // The caller is a signed-in member, so a per-member rate limit is the abuse
+    // control. (The app has no Turnstile widget; requiring a token here made every
+    // checkout fail once the function counted as production.)
+    const rate = await enforceRateLimit(supabase, 'checkout', customerEmail, 10)
+    if (!rate.allowed) {
+      return new Response(JSON.stringify({ error: rate.reason || 'Too many requests.' }), {
         status: 429,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
@@ -149,14 +143,23 @@ Deno.serve(async (req) => {
 
     const stripe = new Stripe(stripeKey, { apiVersion: '2023-10-16' })
 
+    // Session lifetime. Store: short, because stock is held (30 min is Stripe's
+    // minimum). Lotto: must close by the draw, so a line can't be paid for after
+    // the numbers are drawn (catalog.ts refuses draws closer than 31 min).
+    const nowSec = Math.floor(Date.now() / 1000)
+    let expiresAt: number | undefined
+    if (reservesStock) expiresAt = nowSec + 31 * 60
+    else if (purchaseType === 'lotto' && serverMetadata.draw_at) {
+      expiresAt = Math.min(Math.floor(Date.parse(serverMetadata.draw_at) / 1000), nowSec + 23 * 60 * 60)
+    }
+
     let session: Stripe.Checkout.Session
     try {
       session = await stripe.checkout.sessions.create({
         mode: 'payment',
         customer_email: customerEmail,
-        // Reserved stock comes back on checkout.session.expired, so don't hold
-        // it for Stripe's default 24 hours. 30 minutes is Stripe's minimum.
-        ...(reservesStock ? { expires_at: Math.floor(Date.now() / 1000) + 31 * 60 } : {}),
+        // Reserved stock comes back on checkout.session.expired.
+        ...(expiresAt ? { expires_at: expiresAt } : {}),
         // `payment_method_types` intentionally omitted → Stripe Checkout picks the
         // full set enabled on this account (card, Google Pay, Apple Pay, Link, etc.).
         // Google Pay is a wallet on top of "card", so it appears automatically when

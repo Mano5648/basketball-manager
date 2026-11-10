@@ -91,6 +91,8 @@ export async function validateCheckoutPricing(
   if (input.purchaseType === 'lotto') {
     const { data: draw } = await supabase.from('lotto_draws').select('*').eq('id', input.referenceId).maybeSingle()
     if (!draw || draw.status !== 'open' || new Date(draw.draw_at) <= new Date()) return fail('This draw is closed')
+    // Checkout must be able to expire before the draw (Stripe's minimum session is 30 min).
+    if (new Date(draw.draw_at).getTime() < Date.now() + 31 * 60 * 1000) return fail('Ticket sales for this draw have closed')
     const ids = (metadata.ticket_ids ?? '').split(',').map((s) => s.trim()).filter(Boolean)
     if (ids.length === 0 || ids.length > 50) return fail('Select between 1 and 50 lines')
     const { data: profile } = await supabase.from('profiles').select('id').eq('id', input.profileId).maybeSingle()
@@ -104,6 +106,7 @@ export async function validateCheckoutPricing(
     }
     metadata.ticket_ids = ids.join(',')
     metadata.draw_title = draw.title
+    metadata.draw_at = new Date(draw.draw_at).toISOString()
     return { ok: true, checkout: { lineItems: [{ name: `${draw.title} — lotto line`, amountCents: draw.ticket_price_cents, quantity: ids.length }], totalCents: draw.ticket_price_cents * ids.length, metadata } }
   }
 

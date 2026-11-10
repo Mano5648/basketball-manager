@@ -1,32 +1,31 @@
 import Stripe from 'https://esm.sh/stripe@14.21.0?target=deno'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 import { confirmStripePurchaseAndSendEmail, isStripePaymentReceived } from '../_shared/stripe-confirm.ts'
-import { assertHumanRequest } from '../_shared/security.ts'
+import { enforceRateLimit } from '../_shared/security.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
 
 type PurchaseRow = {
   reference_id: string
   purchase_type: string
-  customer_name: string
   customer_email: string
   amount_cents: number
-  items: { name: string; quantity: number; amountCents?: number; imageUrl?: string }[]
+  items: { name: string; quantity: number; amountCents?: number }[]
   metadata: Record<string, string> | null
 }
 
-function sanitizePurchase(row: PurchaseRow) {
+/** Only what the payment result page shows. No email, name or metadata. */
+function receipt(row: PurchaseRow) {
   return {
     reference_id: row.reference_id,
     purchase_type: row.purchase_type,
-    customer_name: row.customer_name,
-    customer_email: row.customer_email,
     amount_cents: row.amount_cents,
-    items: row.items,
-    metadata: row.metadata,
+    items: (row.items ?? []).map((i) => ({ name: i.name, quantity: i.quantity, amountCents: i.amountCents ?? 0 })),
   }
 }
 
@@ -37,51 +36,39 @@ Deno.serve(async (req) => {
 
   try {
     const { sessionId, verificationToken } = await req.json()
-    if (!sessionId || !verificationToken) {
-      return new Response(JSON.stringify({ error: 'sessionId and verificationToken required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
+    if (typeof sessionId !== 'string' || typeof verificationToken !== 'string' || !/^cs_(test|live)_[A-Za-z0-9]{1,200}$/.test(sessionId)) {
+      return json({ error: 'sessionId and verificationToken required' }, 400)
     }
+
+    // The buyer must be signed in: the session id and token travel through
+    // redirect URLs (and a custom app scheme on mobile), so on their own they
+    // must not be enough to read the purchase.
+    const userClient = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
+      global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } },
+    })
+    const { data: userData } = await userClient.auth.getUser()
+    const buyerEmail = userData.user?.email?.toLowerCase()
+    if (!userData.user || !buyerEmail) return json({ error: 'Please sign in to see this payment' }, 401)
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
 
-    const remoteIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-    const humanCheck = await assertHumanRequest(supabase, {
-      action: 'checkout-verify',
-      identifier: sessionId,
-      remoteIp,
-      maxAttempts: 20,
-    })
-    if (!humanCheck.ok) {
-      return new Response(JSON.stringify({ error: humanCheck.error }), {
-        status: 429,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
+    const rate = await enforceRateLimit(supabase, 'checkout-verify', userData.user.id, 30)
+    if (!rate.allowed) return json({ error: rate.reason || 'Too many requests.' }, 429)
 
     const { data: purchase, error: purchaseError } = await supabase
       .from('purchases')
       .select('*')
       .eq('stripe_session_id', sessionId)
       .maybeSingle()
+    const row = purchase as PurchaseRow | null
+    const storedToken = row?.metadata?.verification_token
 
-    if (purchaseError || !purchase) {
-      return new Response(JSON.stringify({ error: 'Purchase not found' }), {
-        status: 404,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
-    }
-
-    const storedToken = (purchase.metadata as Record<string, string> | null)?.verification_token
-    if (!storedToken || storedToken !== verificationToken) {
-      return new Response(JSON.stringify({ error: 'Invalid verification token' }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      })
+    // One answer for "not found", "wrong token" and "someone else's purchase".
+    if (purchaseError || !row || !storedToken || storedToken !== verificationToken || row.customer_email.toLowerCase() !== buyerEmail) {
+      return json({ error: 'Purchase not found' }, 404)
     }
 
     const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY')!, { apiVersion: '2023-10-16' })
@@ -92,29 +79,19 @@ Deno.serve(async (req) => {
       const confirmResult = await confirmStripePurchaseAndSendEmail(supabase, stripe, sessionId)
       emailSent = confirmResult.emailSent
       if (!confirmResult.confirmed) {
-        return new Response(JSON.stringify({ error: confirmResult.reason || 'Payment not confirmed' }), {
-          status: 402,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
+        return json({ error: confirmResult.reason || 'Payment not confirmed' }, 402)
       }
     }
 
-    const row = purchase as PurchaseRow
-    return new Response(
-      JSON.stringify({
-        status: session?.payment_status ?? 'unpaid',
-        confirmed: received,
-        emailSent,
-        reason: received ? undefined : reason,
-        purchase: sanitizePurchase(row),
-        metadata: row.metadata,
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-    )
-  } catch (err) {
-    return new Response(JSON.stringify({ error: err instanceof Error ? err.message : 'Lookup failed' }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    return json({
+      status: session?.payment_status ?? 'unpaid',
+      confirmed: received,
+      emailSent,
+      reason: received ? undefined : reason,
+      purchase: receipt(row),
     })
+  } catch (err) {
+    console.error('get-checkout-session failed', err)
+    return json({ error: 'Lookup failed' }, 500)
   }
 })

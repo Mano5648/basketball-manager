@@ -26,6 +26,14 @@ export async function fulfilPurchase(supabase: SupabaseClient, p: PurchaseRow): 
   }
   if (p.purchase_type === 'lotto') {
     const ids = (md.ticket_ids ?? '').split(',').filter(Boolean)
+    // Only enter lines into a draw that is still open. A payment that lands after
+    // the draw leaves the lines pending (never scored, never a "winner"); the
+    // purchase stays paid so an admin can refund it from Orders.
+    const { data: draw } = await supabase.from('lotto_draws').select('status').eq('id', p.reference_id).maybeSingle()
+    if (draw?.status !== 'open') {
+      console.warn('lotto payment after draw closed; lines not entered', p.id)
+      return
+    }
     if (ids.length) await supabase.from('lotto_tickets').update({ status: 'paid', purchase_id: p.id }).in('id', ids).eq('status', 'pending')
     return
   }
